@@ -1167,4 +1167,542 @@ def in_roll_window(day: date, rule_key: str, rules: dict) -> bool:
     if r["rule"] == "prior_month_from_day":
         nxt = 1 if day.month == 12 else day.month + 1
         return nxt in r["months"] and day.day >= int(r["from_day"])
-    # --- PASTE TRUNCATED HERE (chat 50,000 character limit). Part 2 continues from this line. ---
+    if r["rule"] == "day_range":
+        return day.month in r["months"] and int(r["from_day"]) <= day.day <= int(r["to_day"])
+    return False
+
+
+def roll_flag(inst: Instrument, dfd: pd.DataFrame, imp: Optional[Impulse], cfg: dict) -> str:
+    if not inst.roll:
+        return ""
+    rules = cfg.get("roll_rules", {})
+    n = int(rules.get("lookback_daily_bars", 10))
+    days = [ts.date() for ts in dfd.index[-n:]]
+    if imp is not None:
+        a, b = pd.Timestamp(imp.a_time).date(), pd.Timestamp(imp.b_time).date()
+        days += [a + timedelta(days=i) for i in range((b - a).days + 1)]
+    hit = sorted({d for d in days if in_roll_window(d, inst.roll, rules)})
+    return f"roll window {hit[0]}..{hit[-1]} (approx.)" if hit else ""
+
+
+# =============================================================================
+# Scoring one instrument
+# =============================================================================
+
+@dataclass
+class Row:
+    symbol: str
+    group: str
+    direction: str
+    section: str = "not shown"     # qualified | developing | not shown
+    rank: Optional[int] = None
+    c1: bool = False
+    c2: bool = False
+    c3: bool = False
+    c4: bool = False
+    c5: bool = False
+    c6: bool = False
+    technical: int = 0
+    cot_points: int = 0
+    sentiment_points: int = 0
+    total: int = 0
+    ref_price: Optional[float] = None
+    ref_time: str = ""
+    zone_level: Optional[float] = None
+    zone_kind: str = ""
+    zone_half_width: Optional[float] = None
+    daily_bias: str = ""
+    bias_invalidation: Optional[float] = None
+    structure_4h: str = ""
+    impulse: Optional[dict] = None
+    impulse_note: str = ""
+    ladder_in_zone: dict = field(default_factory=dict)
+    candle: str = ""
+    trendline: str = ""
+    cot: dict = field(default_factory=dict)
+    sentiment: dict = field(default_factory=dict)
+    calendar: dict = field(default_factory=dict)
+    short_test: Optional[bool] = None
+    same_underlying: bool = False
+    roll: str = ""
+    flags: list = field(default_factory=list)
+    reason: str = ""
+
+
+@dataclass
+class InstrumentResult:
+    inst: Instrument
+    rows: list[Row]
+    errors: list[str]
+    provider: str
+    last_bar: dict
+    c2_reject: bool = False
+
+
+def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict, cot_reading: CotReading,
+                     sent: dict, cal: dict, sent_engine: SentimentEngine) -> list[Row]:
+    f = cfg["features"]
+    dfd, df4, df2 = bars[TF_D], bars[TF_4H], bars[TF_2H]
+    w = int(f["pivot_width"])
+    piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)
+    atr4 = atr(df4, int(f["atr_period"]))
+    atr2 = atr(df2, int(f["atr_period"]))
+    c2h = df2["close"].values
+    e_fast, e_slow = (ema(c2h, int(n)) for n in f["ema_2h"])
+    ed20, ed50 = (ema(dfd["close"].values, int(n)) for n in f["ema_daily"])
+    bias = daily_bias(dfd, piv_d)
+    s4 = structure(alternating_upto(piv_4, len(df4) - 1))
+    sd_struct = structure(alternating_upto(piv_d, len(dfd) - 1))
+    P = float(c2h[-1])
+    rows = []
+    for direction in (LONG, SHORT):
+        r = Row(inst.symbol, inst.group, direction)
+        r.ref_price, r.ref_time = P, str(df2.index[-1] + TF_DELTA[TF_2H])
+        r.daily_bias, r.bias_invalidation = bias.bias or "neutral", bias.invalidation
+        r.structure_4h = s4 or "mixed"
+        if bias.invalidated_on_last_bar:
+            r.flags.append("Daily bias invalidated on latest Daily bar")
+        # C1 [v1.0 D01 + D02]
+        r.c1 = bias.bias == direction and s4 == direction
+        # Impulse [v1.0 I01]
+        imp, note = select_impulse(df4, piv_4, atr4, direction, f)
+        r.impulse_note = note
+        hw_atr = imp.atr_at_recognition if imp else atr4[-1]
+        hw = zone_half_width(inst, hw_atr, f)
+        r.zone_half_width = hw
+        # C2 [v1.0 Z01 / C2] at the latest completed 2H close  [Add 6.1]
+        ok, lvl, kind = in_psych_zone(inst, P, hw)
+        r.c2, r.zone_level, r.zone_kind = ok, lvl, kind
+        # C3 Fibonacci
+        if imp:
+            r.impulse = {"A": imp.a_price, "B": imp.b_price, "A_time": imp.a_time, "B_time": imp.b_time,
+                         "span": imp.span, "efficiency": round(imp.efficiency, 3),
+                         **{f"fib_{int(round(x * 1000))}": imp.fib(float(x)) for x in f["fib_levels"]}}
+            fibs = [imp.fib(float(x)) for x in f["fib_levels"]]
+            r.c3 = any(abs(P - fv) <= hw for fv in fibs)
+            for x, fv in zip(f["fib_levels"], fibs):
+                r.ladder_in_zone[f"{float(x) * 100:.1f}"] = in_psych_zone(inst, fv, hw)[0]
+        # C4 candle, C5 EMA, C6 trend line
+        r.candle = candle_signal(df2, atr2, inst, direction, f["candle"])
+        r.c4 = bool(r.candle)
+        if np.isfinite(e_fast[-1]) and np.isfinite(e_slow[-1]):
+            r.c5 = e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1]
+        r.c6, r.trendline = trendline_signal(df4, piv_4, df2, direction, hw)
+        r.technical = int(sum([r.c1, r.c2, r.c3, r.c4, r.c5, r.c6]))
+        # Overlays [Add 6.2, 6.3]: rank, never qualify
+        r.cot_points = cot_points(cot_reading, direction, cfg["cot"])
+        cr = asdict(cot_reading)
+        if cr["index"] is not None:
+            cr["index_for_direction"] = round(cr["index"] if direction == LONG else 100 - cr["index"], 1)
+        cr["crowding"] = ("" if cot_reading.index is None else
+                          "crowded long" if cot_reading.index >= cfg["cot"]["crowded_long"] else
+                          "crowded short" if cot_reading.index <= cfg["cot"]["crowded_short"] else "")
+        r.cot = cr
+        r.sentiment_points = sent_engine.points(sent.get("S"), sent.get("thin", True), direction)
+        r.sentiment = dict(sent)
+        r.calendar = dict(cal)
+        r.total = r.technical + r.cot_points + r.sentiment_points
+        # Section [Add 8]
+        if r.c1 and r.c2 and r.technical >= 3:
+            r.section = "qualified"
+        elif r.c1 and r.c2 and r.technical == 2:
+            r.section = "developing"
+        # v1.0 short experiment flag for gold and S&P [Add 3]
+        if inst.short_test and direction == SHORT:
+            dclose = float(dfd["close"].values[-1])
+            r.short_test = bool(sd_struct == SHORT and s4 == SHORT and np.isfinite(ed20[-1]) and np.isfinite(ed50[-1])
+                                and dclose < ed20[-1] and dclose < ed50[-1] and r.technical >= 4)
+        r.roll = roll_flag(inst, dfd, imp, cfg)
+        if r.roll:
+            r.flags.append(r.roll)
+        if cot_reading.status != "ok":
+            r.flags.append("COT unavailable" if cot_reading.status == "unavailable" else "COT stale")
+        if sent.get("thin", True):
+            r.flags.append("thin news")
+        if cal.get("event_risk"):
+            r.flags.append("event risk")
+        rows.append(r)
+    return rows
+
+
+def rejection_reason(rows: list[Row]) -> str:
+    bias = rows[0].daily_bias
+    if bias == "neutral":
+        return "Daily bias neutral"
+    r = next(x for x in rows if x.direction == bias)
+    if r.structure_4h != bias:
+        return "4H disagrees"
+    if not r.c2:
+        return "C2 outside zone"
+    return f"technical score {r.technical}"
+
+
+def rank(rows: list[Row], top_n: int = 5) -> list[Row]:
+    """[Add 8] Qualified before developing; total desc; ties: technical, COT points, symbol. Never pad."""
+    cands = [r for r in rows if r.section in ("qualified", "developing")]
+    cands.sort(key=lambda r: (0 if r.section == "qualified" else 1, -r.total, -r.technical, -r.cot_points, r.symbol))
+    top = cands[:top_n]
+    for i, r in enumerate(top, 1):
+        r.rank = i
+    return top
+
+
+def mark_same_underlying(top: list[Row], universe: dict[str, Instrument]) -> None:
+    groups: dict[str, list[Row]] = {}
+    for r in top:
+        u = universe[r.symbol].underlying
+        if u:
+            groups.setdefault(u, []).append(r)
+    for g in groups.values():
+        if len(g) > 1:
+            for r in g:
+                r.same_underlying = True
+
+
+# =============================================================================
+# Output
+# =============================================================================
+
+def _fmt(v, nd=5):
+    if v is None or (isinstance(v, float) and not math.isfinite(v)):
+        return "–"
+    if isinstance(v, float):
+        return f"{v:.{nd}g}"
+    return str(v)
+
+
+def _ck(b: bool) -> str:
+    return '<span class="ok">✓</span>' if b else '<span class="no">·</span>'
+
+
+def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict]) -> str:
+    e = html.escape
+    css = """
+    :root{--bg:#fff;--fg:#1b1f24;--muted:#5b6470;--line:#e3e6ea;--card:#f6f8fa;--good:#1a7f37;--warn:#9a6700;--bad:#cf222e;--acc:#0b5cad}
+    @media (prefers-color-scheme: dark){:root{--bg:#0f1216;--fg:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;--card:#161b22;--good:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff}}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    main{max-width:1280px;margin:0 auto;padding:20px 16px 40px} h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:28px 0 8px}
+    .muted{color:var(--muted)} .meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin:8px 0 14px;font-size:13px}
+    .wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+    table{border-collapse:collapse;width:100%;font-size:13px} th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+    th{background:var(--card);font-weight:600;position:sticky;top:0} td.wrapc{white-space:normal;min-width:260px}
+    .ok{color:var(--good);font-weight:700} .no{color:var(--muted)} .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;border:1px solid var(--line);margin:1px 3px 1px 0}
+    .q{background:color-mix(in srgb,var(--good) 15%,transparent)} .d{background:color-mix(in srgb,var(--warn) 15%,transparent)}
+    .long{color:var(--good);font-weight:600} .short{color:var(--bad);font-weight:600} .num{text-align:right;font-variant-numeric:tabular-nums}
+    .warn{color:var(--warn)} details{margin-top:10px} summary{cursor:pointer;color:var(--acc)} ul{margin:4px 0;padding-left:18px}
+    .banner{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);margin:10px 0}
+    """
+    fr = "".join(f"<span><b>{e(k)}:</b> {e(str(v))}</span>" for k, v in meta["freshness"].items())
+    head = (f"<h1>Daily Instrument Scanner · {e(meta['run_type'])}</h1>"
+            f"<div class='muted'>{e(meta['asof_utc'])} UTC · {e(meta['asof_local'])} · addendum {e(meta['addendum_version'])}"
+            f" · config {e(meta['config_version'])} · code {e(meta['code_version'])}</div>"
+            f"<div class='meta muted'>{fr}</div>")
+    if meta.get("demo"):
+        head += "<div class='banner warn'><b>DEMO DATA.</b> Synthetic prices, COT, calendar and headlines. Not a market view.</div>"
+    head += ("<div class='banner'>Watchlist only: no orders, no trade levels, no sizing. Overlays rank setups; "
+             "they never qualify them. Scores are research outputs, not a validated edge.</div>")
+    n = len(top)
+    body = f"<h2>Top {n} setups</h2>"
+    if n < 5:
+        body += f"<p class='muted'>{n} setup(s) met the qualified or developing definition; the list is not padded.</p>"
+    if n:
+        body += "<div class='wrap'><table><tr><th>#</th><th>Section</th><th>Instrument</th><th>Group</th><th>Dir</th>" \
+                "<th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th><th class='num'>Tech</th>" \
+                "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Ladder in zone</th>" \
+                "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th></tr>"
+        for r in top:
+            lad = " ".join(f"{k}{'✓' if v else '·'}" for k, v in r.ladder_in_zone.items()) or "no impulse"
+            c = r.cot
+            cot_txt = ("unavailable" if c.get("index") is None else
+                       f"idx {c['index']:.0f} · Δnet {_fmt(c.get('weekly_change'), 4)} {c.get('crowding','')}<br>"
+                       f"<span class='muted'>{e(c.get('family',''))} · pub {e(str(c.get('publication',''))[:10])} · {e(c.get('status',''))}</span>")
+            s = r.sentiment
+            news = f"S {_fmt(s.get('S'), 3)}{' · thin news' if s.get('thin') else ''}"
+            if s.get("drivers"):
+                news += "<ul>" + "".join(f"<li>{e(d['title'][:110])} <span class='muted'>({e(d['theme'] or '')}, {e(d['source'])})</span></li>"
+                                         for d in s["drivers"]) + "</ul>"
+            cal = r.calendar
+            cal_txt = ("none this week" if not cal.get("event") else
+                       f"{e(cal['currency'])} {e(cal['event'])}<br><span class='{'warn' if cal.get('event_risk') else 'muted'}'>in {cal['hours']}h</span>")
+            flags = list(r.flags)
+            if r.same_underlying:
+                flags.insert(0, "same underlying")
+            if r.short_test is not None:
+                flags.append(f"v1.0 short test: {r.short_test}")
+            cls = "q" if r.section == "qualified" else "d"
+            body += (f"<tr><td>{r.rank}</td><td><span class='tag {cls}'>{e(r.section)}</span></td><td><b>{e(r.symbol)}</b><br>"
+                     f"<span class='muted'>{_fmt(r.ref_price, 6)}</span></td><td>{e(r.group)}</td><td class='{r.direction}'>{r.direction}</td>"
+                     + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
+                     + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td>"
+                     f"<td class='num'><b>{r.total}</b></td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
+                     f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td></tr>")
+        body += "</table></div>"
+    # all scored candidates
+    cands = sorted([r for r in all_rows if r.section != "not shown"], key=lambda r: (r.section != "qualified", -r.total))
+    body += f"<details><summary>All qualified and developing setups ({len(cands)})</summary><div class='wrap'><table>" \
+            "<tr><th>Instrument</th><th>Dir</th><th>Section</th><th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Notes</th></tr>"
+    for r in cands:
+        body += (f"<tr><td>{e(r.symbol)}</td><td class='{r.direction}'>{r.direction}</td><td>{e(r.section)}</td><td class='num'>{r.technical}</td>"
+                 f"<td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td><td class='num'>{r.total}</td>"
+                 f"<td class='wrapc'>{e('; '.join(r.flags))}</td></tr>")
+    body += "</table></div></details>"
+    # footer
+    body += "<h2>Every instrument scanned</h2><div class='wrap'><table><tr><th>Instrument</th><th>Group</th><th>Daily bias</th><th>4H</th><th>Status / rejection reason</th><th>Bars</th></tr>"
+    for f in footer:
+        body += (f"<tr><td>{e(f['symbol'])}</td><td>{e(f['group'])}</td><td>{e(f['bias'])}</td><td>{e(f['h4'])}</td>"
+                 f"<td class='wrapc'>{e(f['status'])}</td><td class='muted'>{e(f['provider'])}</td></tr>")
+    body += "</table></div>"
+    body += ("<p class='muted' style='margin-top:18px'>Rules: Scanner Addendum v0.1 on Trading Algorithm Specification v1.0. "
+             "C2 and C3 are tested at the latest completed 2H close. TradingView and Forex Factory access are unofficial and may stop "
+             "without notice. FinBERT tone on FX and commodity headlines is untested.</p>")
+    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>Scanner {e(meta['asof_utc'])}</title><style>{css}</style></head><body><main>{head}{body}</main></body></html>")
+
+
+def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict]) -> dict[str, Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"scan_{meta['stamp']}_{meta['run_type'].replace(' ', '')}"
+    paths = {"html": out_dir / f"{stem}.html", "json": out_dir / f"{stem}.json", "csv": out_dir / f"{stem}.csv"}
+    paths["html"].write_text(render_html(meta, top, all_rows, footer), encoding="utf-8")
+    payload = {"meta": meta, "top": [asdict(r) for r in top], "rows": [asdict(r) for r in all_rows], "instruments": footer}
+    paths["json"].write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
+    flat_keys = ["symbol", "group", "direction", "section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical",
+                 "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
+                 "zone_half_width", "daily_bias", "bias_invalidation", "structure_4h", "candle", "trendline",
+                 "impulse_note", "short_test", "same_underlying", "roll"]
+    with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(["run_utc", "run_type", "config_version"] + flat_keys + ["cot_index", "cot_status", "sentiment_S",
+                                                                         "thin_news", "next_event", "event_risk", "flags"])
+        for r in all_rows:
+            d = asdict(r)
+            wr.writerow([meta["asof_utc"], meta["run_type"], meta["config_version"]] + [d[k] for k in flat_keys]
+                        + [r.cot.get("index"), r.cot.get("status"), r.sentiment.get("S"), r.sentiment.get("thin"),
+                           r.calendar.get("event"), r.calendar.get("event_risk"), "; ".join(r.flags)])
+    return paths
+
+
+def append_c2_log(log_dir: Path, meta: dict, results: list[InstrumentResult]) -> None:
+    """[Add 5] Log C2 rejection counts per instrument so a tighter grid can be tested on evidence."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    p = log_dir / "c2_rejections.csv"
+    new = not p.exists()
+    with open(p, "a", newline="", encoding="utf-8") as fh:
+        wr = csv.writer(fh)
+        if new:
+            wr.writerow(["run_utc", "run_type", "config_version", "symbol", "c2", "ref_price", "zone_level", "zone_half_width", "distance"])
+        for res in results:
+            if not res.rows:
+                continue
+            r = res.rows[0]
+            wr.writerow([meta["asof_utc"], meta["run_type"], meta["config_version"], r.symbol, int(r.c2), r.ref_price,
+                         r.zone_level, r.zone_half_width, None if r.zone_level is None else abs(r.ref_price - r.zone_level)])
+
+
+# =============================================================================
+# Run orchestration
+# =============================================================================
+
+def resolve_run(run: str, asof: pd.Timestamp) -> tuple[str, pd.Timestamp]:
+    """Return (run_type, daily_cutoff). Daily bias is computed from bars complete at the evening run."""
+    if run == "auto":
+        run = "evening" if asof.hour < 6 or asof.hour >= 18 else "preny"
+    if run == "evening":
+        return "evening", asof
+    evening = asof.normalize() + pd.Timedelta(minutes=5)
+    if evening > asof:
+        evening -= pd.Timedelta(days=1)
+    return "pre NY", evening
+
+
+def run_scan(cfg: dict, base: Path, run: str, asof: pd.Timestamp, source: str, demo: bool,
+             out_dir: Optional[Path] = None) -> dict[str, Path]:
+    run_type, daily_cutoff = resolve_run(run, asof)
+    universe = build_universe(cfg)
+    by_sym = {i.symbol: i for i in universe}
+    LOG.info("run %s at %s UTC, %d instruments, config %s", run_type, asof, len(universe), cfg["config_version"])
+
+    if demo:
+        src: BarSource = DemoSource(asof)
+    elif source == "csv":
+        src = CsvSource(cfg, base)
+    else:
+        src = TradingViewSource(cfg)
+
+    # COT
+    if demo:
+        cot = demo_cot(asof, cfg)
+        cot_status = "demo"
+    else:
+        try:
+            cot = CotSource(cfg, base).load()
+            cot_status = f"{len(cot)} markets"
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("COT load failed: %s", exc)
+            cot, cot_status = {}, f"failed: {exc}"
+    # calendar
+    events, cal_status = load_calendar(cfg, base, asof, demo)
+    # headlines + tone + theme
+    heads, head_status = load_headlines(cfg, base, asof, demo)
+    tone_cfg = cfg if not demo else {**cfg, "sentiment": {**cfg["sentiment"], "model": "lexicon"}}
+    tone = ToneModel(tone_cfg)
+    engine = SentimentEngine(cfg)
+    recent = [h for h in heads if 0 <= (asof - pd.Timestamp(h.published)).total_seconds() / 3600 <= float(cfg["sentiment"]["window_hours"])]
+    for h, s in zip(recent, tone.score([h.title for h in recent])):
+        h.tone = s
+        h.theme = engine.tag_theme(h.title)
+
+    results: list[InstrumentResult] = []
+    all_rows: list[Row] = []
+    latest = {TF_D: None, TF_4H: None, TF_2H: None}
+    for inst in universe:
+        try:
+            bars, errs = load_instrument_bars(src, inst, cfg, asof, daily_cutoff)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("%s: data load failed: %s", inst.symbol, exc)
+            results.append(InstrumentResult(inst, [], [f"data load failed: {exc}"], src.provider(inst), {}))
+            continue
+        last = {tf: (str(b.index[-1] + TF_DELTA[tf]) if len(b) else "") for tf, b in bars.items()}
+        for tf, b in bars.items():
+            if len(b):
+                t = b.index[-1] + TF_DELTA[tf]
+                latest[tf] = t if latest[tf] is None or t > latest[tf] else latest[tf]
+        if errs:
+            LOG.warning("%s: data checks failed: %s", inst.symbol, "; ".join(errs))
+            results.append(InstrumentResult(inst, [], errs, src.provider(inst), last))
+            continue
+        reading = cot_for_instrument(inst, cot, asof, cfg["cot"])
+        sent = engine.score(inst, recent, asof) if tone.kind != "off" else {"S": None, "weight_sum": 0, "thin": True, "drivers": []}
+        cal = next_event(events, inst.calendar_currencies, asof, cfg.get("calendar", {}))
+        rows = score_instrument(inst, bars, cfg, reading, sent, cal, engine)
+        results.append(InstrumentResult(inst, rows, [], src.provider(inst), last))
+        all_rows += rows
+
+    top = rank(all_rows, 5)
+    mark_same_underlying(top, by_sym)
+    shown = {(r.symbol, r.direction) for r in top}
+    footer = []
+    for res in results:
+        if res.errors:
+            status = "data error: " + "; ".join(res.errors)
+            bias = h4 = "–"
+        else:
+            hit = [r for r in res.rows if (r.symbol, r.direction) in shown]
+            if hit:
+                status = f"shown: rank {hit[0].rank}, {hit[0].section}, {hit[0].direction}"
+            else:
+                elig = [r for r in res.rows if r.section != "not shown"]
+                status = (f"{elig[0].section} {elig[0].direction}, ranked below top 5" if elig else rejection_reason(res.rows))
+            bias, h4 = res.rows[0].daily_bias, res.rows[0].structure_4h
+        footer.append({"symbol": res.inst.symbol, "group": res.inst.group, "bias": bias, "h4": h4,
+                       "status": status, "provider": res.provider})
+        for r in res.rows:
+            if (r.symbol, r.direction) not in shown and not r.reason:
+                r.reason = status
+
+    disp_tz = ZoneInfo(cfg.get("display_timezone", "America/Chicago"))
+    meta = {"run_type": run_type, "asof_utc": asof.strftime("%Y-%m-%d %H:%M"),
+            "asof_local": asof.tz_convert(disp_tz).strftime("%Y-%m-%d %I:%M %p %Z"),
+            "stamp": asof.strftime("%Y%m%dT%H%MZ"), "addendum_version": cfg["addendum_version"],
+            "config_version": cfg["config_version"], "code_version": SCANNER_CODE_VERSION, "demo": demo,
+            "daily_cutoff_utc": daily_cutoff.strftime("%Y-%m-%d %H:%M"),
+            "freshness": {
+                "Bars": f"{src.name}; last D close {fmt_ts(latest[TF_D])}, 4H {fmt_ts(latest[TF_4H])}, 2H {fmt_ts(latest[TF_2H])}",
+                "COT": cot_status + latest_cot_pub(cot, asof),
+                "Calendar": cal_status,
+                "Headlines": f"{head_status}; {len(recent)} in last {cfg['sentiment']['window_hours']}h; tone model {tone.status}",
+            },
+            "instruments_scanned": len(universe), "instruments_with_errors": sum(1 for r in results if r.errors)}
+    od = out_dir or (base / cfg["paths"]["output_dir"])
+    paths = write_outputs(od, meta, top, all_rows, footer)
+    append_c2_log(base / cfg["paths"]["log_dir"], meta, results)
+    LOG.info("top %d: %s", len(top), ", ".join(f"{r.symbol} {r.direction} {r.total}" for r in top) or "none")
+    LOG.info("wrote %s", paths["html"])
+    return paths
+
+
+def fmt_ts(t) -> str:
+    return "–" if t is None else pd.Timestamp(t).strftime("%Y-%m-%d %H:%M")
+
+
+def latest_cot_pub(cot: dict[str, CotSeries], asof: pd.Timestamp) -> str:
+    pubs = [s.frame[s.frame["publication_ts"] <= asof]["publication_ts"].max() for s in cot.values() if len(s.frame)]
+    pubs = [p for p in pubs if pd.notna(p)]
+    return f"; latest published {pd.Timestamp(max(pubs)).strftime('%Y-%m-%d %H:%M')} UTC" if pubs else ""
+
+
+def demo_cot(asof: pd.Timestamp, cfg: dict) -> dict[str, CotSeries]:
+    rng = np.random.default_rng(11)
+    out = {}
+    end = (asof - pd.Timedelta(days=3)).normalize()
+    end -= pd.Timedelta(days=(end.dayofweek - 1) % 7)  # previous Tuesday
+    dates = pd.date_range(end=end.tz_localize(None), periods=70, freq="7D")
+    for mkt, m in cfg["cot"]["markets"].items():
+        net = np.cumsum(rng.normal(0, 8000, len(dates))) + rng.normal(0, 30000)
+        df = pd.DataFrame({"report_date": dates, "net": net, "open_interest": 400000.0})
+        df["publication_ts"] = [cot_publication_ts(pd.Timestamp(d), cfg["cot"]) for d in dates]
+        out[mkt] = CotSeries(mkt, m["family"], df, f"demo {mkt}")
+    return out
+
+
+def parse_asof(s: Optional[str]) -> pd.Timestamp:
+    if not s:
+        return pd.Timestamp.now(tz=UTC).floor("min")
+    t = pd.Timestamp(s.replace("Z", "+00:00"))
+    return (t.tz_localize(UTC) if t.tzinfo is None else t.tz_convert(UTC)).floor("min")
+
+
+def daemon(cfg: dict, base: Path, source: str) -> None:
+    """Simple scheduler fixed in UTC so it never drifts with daylight saving [Add 4]."""
+    times = {"evening": cfg.get("runs", {}).get("evening", "00:05"), "preny": cfg.get("runs", {}).get("preny", "12:05")}
+    LOG.info("daemon started; runs at %s UTC", ", ".join(f"{k} {v}" for k, v in times.items()))
+    while True:
+        now = pd.Timestamp.now(tz=UTC)
+        nxt = []
+        for k, hm in times.items():
+            hh, mm = (int(x) for x in hm.split(":"))
+            t = now.normalize() + pd.Timedelta(hours=hh, minutes=mm)
+            if t <= now:
+                t += pd.Timedelta(days=1)
+            nxt.append((t, k))
+        t, k = min(nxt)
+        LOG.info("next run %s at %s UTC", k, t)
+        time.sleep(max(1.0, (t - pd.Timestamp.now(tz=UTC)).total_seconds()))
+        try:
+            run_scan(cfg, base, k, parse_asof(None), source, demo=False)
+        except Exception:  # noqa: BLE001
+            LOG.exception("scan failed")
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description="Daily Instrument Scanner (Addendum v0.1)")
+    ap.add_argument("--config", default="scanner_config.yaml")
+    ap.add_argument("--run", default="auto", choices=["auto", "evening", "preny"])
+    ap.add_argument("--source", default=None, choices=["tradingview", "csv"], help="override bars.source")
+    ap.add_argument("--asof", default=None, help="decision time, e.g. 2026-10-02T12:05Z (default: now)")
+    ap.add_argument("--demo", action="store_true", help="synthetic data, no network")
+    ap.add_argument("--daemon", action="store_true", help="stay running and scan at 00:05 and 12:05 UTC")
+    ap.add_argument("--out-dir", default=None)
+    ap.add_argument("-v", "--verbose", action="store_true")
+    a = ap.parse_args(argv)
+
+    cfg_path = Path(a.config).resolve()
+    base = cfg_path.parent
+    cfg = load_config(cfg_path)
+    log_dir = base / cfg["paths"]["log_dir"]
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
+                        handlers=[logging.StreamHandler(), logging.FileHandler(log_dir / "scanner.log", encoding="utf-8")])
+    source = a.source or cfg["bars"].get("source", "tradingview")
+    demo = a.demo or source == "demo"
+    if a.daemon:
+        daemon(cfg, base, source)
+        return 0
+    paths = run_scan(cfg, base, a.run, parse_asof(a.asof), source, demo, Path(a.out_dir) if a.out_dir else None)
+    print(paths["html"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
