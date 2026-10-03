@@ -1,2 +1,9 @@
-numpy
-pandas
+pandas>=2.1
+numpy>=1.26
+pyyaml>=6.0
+requests>=2.31
+pytest>=8.0
+# TradingView bars (unofficial library; install from GitHub):
+#   pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
+# FinBERT sentiment (large download, about 2 GB with torch):
+#   pip install transformers torch

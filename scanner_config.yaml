@@ -1,0 +1,200 @@
+# Daily Instrument Scanner configuration
+# Implements: Daily Instrument Scanner Addendum v0.1 (parent: Trading Algorithm Specification v1.0)
+# Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
+# config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
+
+config_version: "cfg-0.1.0"
+addendum_version: "v0.1"
+display_timezone: "America/Chicago"
+
+changelog:
+  - {version: "cfg-0.1.0", date: "2026-10-02", change: "Initial config from Scanner Addendum v0.1", reason: "Owner design decisions, October 2, 2026"}
+
+# Run times fixed in UTC (Addendum Section 4); used by --daemon
+runs:
+  evening: "00:05"
+  preny: "12:05"
+
+paths:
+  output_dir: output          # HTML dashboards + JSON/CSV copies
+  data_dir: data              # calendar snapshots, headline archive, COT cache
+  log_dir: logs
+
+# ---------------------------------------------------------------- bars
+bars:
+  source: tradingview         # tradingview | csv | demo
+  csv_dir: data/bars          # used when source = csv  (files: <SYMBOL>_<TF>.csv, TF in 1H,2H,4H,D)
+  # v1.0 Section 2 anchors bars at 00:00 UTC. TradingView's native 2H/4H bars follow each venue's
+  # session start (for example 17:00 New York for FX), so the default rebuilds 2H and 4H from 1H bars
+  # on a 00:00 UTC grid. Daily bars stay native (5,000 1H bars is not enough for 250 Daily bars).
+  intraday_mode: resample_1h  # resample_1h | native
+  n_bars_1h: 5000             # tvDatafeed maximum per request
+  n_bars_native: 1500
+  n_bars_daily: 400
+  min_completed_bars: 250     # v1.0 Section 2
+  request_pause_sec: 1.0
+  retries: 3
+
+# ---------------------------------------------------------------- features (v1.0 values)
+features:
+  pivot_width: 2
+  ema_daily: [20, 50]
+  ema_2h: [8, 14]
+  atr_period: 14
+  impulse:
+    max_age_4h_bars: 6        # B confirmed within the most recent six completed 4H bars
+    min_span_bars: 3
+    max_span_bars: 30
+    min_atr_mult: 2.0
+    min_efficiency: 0.60
+    void_beyond_origin: true  # scanner test default: drop an impulse once a 4H close passes A
+  zone_atr_fraction: 0.10
+  zone_min_ticks: 2
+  fib_levels: [0.382, 0.5, 0.618]
+  candle:
+    engulf_body_atr: 0.25
+    rejection_range_atr: 0.50
+    rejection_close_top: 0.25
+
+# ---------------------------------------------------------------- psychological grid (Addendum Section 5)
+grids:
+  fx:   {major: 0.0500, mid: 0.0250}
+  jpy:  {major: 5.00,   mid: 2.50}
+  gold: {major: 100,    mid: 50}
+  spx:  {major: 100,    mid: 50}
+  oil:  {major: 5.00,   mid: 2.50}   # new proposal, untested
+
+# ---------------------------------------------------------------- universe (Addendum Section 3)
+# FX pairs are expanded automatically: base/quote from the symbol, tick 0.001 for JPY pairs and
+# 0.00001 otherwise, grid jpy or fx. tv_exchange is the TradingView feed (open item: confirm provider).
+fx:
+  tv_exchange: OANDA
+  majors: [EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, NZDUSD]
+  crosses: [EURGBP, EURJPY, EURCHF, EURCAD, EURAUD, EURNZD, GBPJPY, GBPCHF, GBPCAD, GBPAUD, GBPNZD,
+            AUDJPY, AUDCHF, AUDCAD, AUDNZD, NZDJPY, NZDCHF, NZDCAD, CADJPY, CADCHF, CHFJPY]
+
+other_instruments:
+  # Open item: confirm the TradingView provider symbol for each CFD.
+  - {symbol: XAUUSD, group: CFD,     tv_symbol: XAUUSD,    tv_exchange: OANDA,    tick: 0.01,  grid: gold, asset: gold, underlying: GOLD, cot: GOLD, short_test: true}
+  - {symbol: SPX500, group: CFD,     tv_symbol: SPX500USD, tv_exchange: OANDA,    tick: 0.1,   grid: spx,  asset: spx,  underlying: SPX,  cot: SPX,  short_test: true}
+  - {symbol: WTI,    group: CFD,     tv_symbol: WTICOUSD,  tv_exchange: OANDA,    tick: 0.01,  grid: oil,  asset: oil,  underlying: WTI,  cot: WTI}
+  - {symbol: GC,     group: Futures, tv_symbol: GC,        tv_exchange: COMEX,    fut_contract: 1, tick: 0.1,  grid: gold, asset: gold, underlying: GOLD, cot: GOLD, short_test: true, roll: gc}
+  - {symbol: ES,     group: Futures, tv_symbol: ES,        tv_exchange: CME_MINI, fut_contract: 1, tick: 0.25, grid: spx,  asset: spx,  underlying: SPX,  cot: SPX,  short_test: true, roll: es}
+  - {symbol: CL,     group: Futures, tv_symbol: CL,        tv_exchange: NYMEX,    fut_contract: 1, tick: 0.01, grid: oil,  asset: oil,  underlying: WTI,  cot: WTI, roll: cl}
+
+# Approximate continuous contract roll windows (flag only; verify against exchange calendars)
+roll_rules:
+  es: {months: [3, 6, 9, 12], rule: third_friday_minus, days_before: 8}
+  gc: {months: [2, 4, 6, 8, 10, 12], rule: prior_month_from_day, from_day: 20}
+  cl: {months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], rule: day_range, from_day: 15, to_day: 22}
+  lookback_daily_bars: 10
+
+# ---------------------------------------------------------------- COT overlay (Addendum 6.2, v1.0 Section 10)
+cot:
+  source: cftc_api            # cftc_api | csv | off
+  csv_path: data/cot/cot.csv  # columns: market,report_date,publication_ts(optional),long,short,open_interest,report_family
+  api_base: https://publicreporting.cftc.gov/resource
+  datasets:
+    TFF: gpe5-46if            # Traders in Financial Futures, futures only
+    Disaggregated: 72hh-3qpy  # Disaggregated, futures only
+  # Assumed release: Friday 15:30 Eastern for Tuesday positions. Verify against the CFTC release schedule.
+  publication_offset_days: 3
+  publication_time_et: "15:30"
+  stale_days: 10
+  index_weeks: 52
+  fetch_weeks: 70
+  # Contract market codes: believed correct; the scanner logs the market name it receives so you can verify.
+  markets:
+    EUR:  {family: TFF,           code: "099741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    GBP:  {family: TFF,           code: "096742", long: lev_money_positions_long,   short: lev_money_positions_short}
+    JPY:  {family: TFF,           code: "097741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    CHF:  {family: TFF,           code: "092741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    CAD:  {family: TFF,           code: "090741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    AUD:  {family: TFF,           code: "232741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    NZD:  {family: TFF,           code: "112741", long: lev_money_positions_long,   short: lev_money_positions_short}
+    SPX:  {family: TFF,           code: "13874A", long: lev_money_positions_long,   short: lev_money_positions_short}
+    GOLD: {family: Disaggregated, code: "088691", long: m_money_positions_long_all, short: m_money_positions_short_all}
+    WTI:  {family: Disaggregated, code: "067651", long: m_money_positions_long_all, short: m_money_positions_short_all}
+  crowded_long: 90
+  elevated_long: 80
+  neutral_low: 20
+  crowded_short: 10
+
+# ---------------------------------------------------------------- calendar (Addendum 6.4)
+calendar:
+  source: forexfactory        # forexfactory | off
+  url: https://nfs.faireconomy.media/ff_calendar_thisweek.json
+  impact: High
+  event_risk_hours: 24
+  snapshot: true              # store weekly snapshots, since the feed keeps no history
+
+# ---------------------------------------------------------------- sentiment (Addendum 6.3 and 7)
+sentiment:
+  model: finbert              # finbert | lexicon | off   (lexicon = crude word list, for testing only)
+  finbert_model: ProsusAI/finbert
+  window_hours: 24
+  half_life_hours: 12
+  min_weight_sum: 1.0
+  points: {plus2: 0.50, plus1: 0.20, minus1: -0.20, minus2: -0.50}
+  # Open item: choose headline sources and confirm each allows scripted access. RSS or Atom URLs.
+  feeds: []
+  #  - {name: Federal Reserve press releases, url: "https://www.federalreserve.gov/feeds/press_all.xml"}
+  #  - {name: ECB press releases, url: "https://www.ecb.europa.eu/rss/press.html"}
+  theme_weights:              # asset classes: fx, gold, oil, spx (S&P weights not yet confirmed by owner)
+    central_bank:   {fx: 1.0, gold: 1.0, oil: 0.4, spx: 1.0}
+    inflation:      {fx: 0.8, gold: 0.9, oil: 0.3, spx: 0.8}
+    employment:     {fx: 0.8, gold: 0.8, oil: 0.3, spx: 0.7}
+    growth:         {fx: 0.7, gold: 0.5, oil: 0.7, spx: 0.8}
+    geopolitical:   {fx: 0.4, gold: 0.9, oil: 1.0, spx: 0.5}
+    energy_supply:  {fx: 0.3, gold: 0.2, oil: 1.0, spx: 0.3}
+    trade:          {fx: 0.6, gold: 0.5, oil: 0.5, spx: 0.6}
+    fiscal:         {fx: 0.6, gold: 0.5, oil: 0.2, spx: 0.5}
+    earnings:       {fx: 0.0, gold: 0.0, oil: 0.0, spx: 0.9}
+  currency_overrides:
+    CAD: {energy_supply: 0.6}
+    JPY: {geopolitical: 0.7}
+    CHF: {geopolitical: 0.7}
+  # One theme per headline: the theme with the most keyword hits wins; ties go to the earlier theme.
+  theme_keywords:
+    central_bank:  [central bank, rate decision, rate cut, rate hike, interest rate, monetary policy, FOMC, Fed, Federal Reserve, ECB, BOE, Bank of England, BOJ, Bank of Japan, SNB, Bank of Canada, BOC, RBA, RBNZ, Powell, Lagarde, Bailey, Ueda, Macklem, policy rate]
+    inflation:     [inflation, CPI, PCE, consumer prices, producer prices, PPI, price pressures]
+    employment:    [payrolls, nonfarm, NFP, jobless, unemployment, employment, labor market, jobs report, wages]
+    growth:        [GDP, PMI, retail sales, recession, economic growth, industrial production, manufacturing, consumer spending]
+    geopolitical:  [war, conflict, attack, missile, strike, invasion, military, sanctions, ceasefire, escalation, troops, drone]
+    energy_supply: [OPEC, OPEC+, crude inventories, oil output, production cut, supply cut, refinery, pipeline, outage, barrels, oil supply, EIA]
+    trade:         [tariff, tariffs, trade war, trade deal, export controls, import duties, trade talks]
+    fiscal:        [budget, deficit, fiscal, stimulus, debt ceiling, government spending, tax cut, Treasury issuance]
+    earnings:      [earnings, quarterly results, revenue, profit warning, guidance, EPS]
+  # Which headlines mention which currency or asset. Short all caps keywords match case sensitively.
+  entity_keywords:
+    USD:  [Fed, Federal Reserve, FOMC, Powell, US, U.S., United States, dollar, greenback, Treasury, Washington, American]
+    EUR:  [ECB, euro, eurozone, euro zone, Lagarde, Germany, German, France, French, Italy, EU]
+    GBP:  [BOE, Bank of England, sterling, pound, UK, U.K., Britain, British, Bailey]
+    JPY:  [BOJ, Bank of Japan, yen, Japan, Japanese, Ueda, Tokyo]
+    CHF:  [SNB, Swiss National Bank, franc, Switzerland, Swiss]
+    CAD:  [Bank of Canada, BOC, loonie, Canada, Canadian, Macklem]
+    AUD:  [RBA, Reserve Bank of Australia, Aussie, Australia, Australian]
+    NZD:  [RBNZ, Reserve Bank of New Zealand, kiwi, New Zealand]
+    GOLD: [gold, bullion, precious metals, XAU]
+    OIL:  [oil, crude, WTI, Brent, OPEC, barrels]
+    SPX:  [S&P, S&P 500, stocks, equities, Wall Street, Nasdaq, Dow, stock market, Fed, Federal Reserve, FOMC, Powell]
+  # Headlines of these themes count for the entity even without a direct mention
+  entity_auto_themes:
+    GOLD: [geopolitical]
+    OIL:  [energy_supply]
+  oil_producer_regions: [Middle East, Iran, Iraq, Israel, Saudi, Gulf, Hormuz, Red Sea, Yemen, Houthi, Libya, Russia, Ukraine, Venezuela, Nigeria, Kuwait, UAE, Qatar]
+  # Tone is not direction. Modes: tone | invert_tone | hawk | invert_hawk | supply
+  # entity CURRENCY applies to all eight currencies. Unlisted pairs use plain tone.
+  direction_rules:
+    - {entity: GOLD,     theme: geopolitical,  mode: invert_tone}
+    - {entity: GOLD,     theme: central_bank,  mode: invert_hawk}
+    - {entity: OIL,      theme: geopolitical,  mode: invert_tone}
+    - {entity: OIL,      theme: energy_supply, mode: supply}
+    - {entity: CURRENCY, theme: central_bank,  mode: hawk}
+    - {entity: SPX,      theme: central_bank,  mode: invert_hawk}
+  hawk_words: [hawkish, rate hike, raises rates, raised rates, hikes, tightening, tighter policy, higher for longer, inflation fight, rate increase, balance sheet reduction]
+  dove_words: [dovish, rate cut, cuts rates, cut rates, lowers rates, easing, looser policy, stimulus, pause, pivot, rate reduction, accommodative]
+  supply_cut_words: [cut, cuts, outage, disruption, halt, shut, sanctions, blockade, attack, lower output, curb, draw, drawdown]
+  supply_increase_words: [increase output, raise output, boost output, ramp up, surge in inventories, build, glut, oversupply, higher output, restart]
+  lexicon_positive: [rise, rises, rally, gain, gains, beat, beats, strong, stronger, surge, record high, upbeat, growth, improve, improves, optimism, boost]
+  lexicon_negative: [fall, falls, drop, drops, slump, miss, misses, weak, weaker, plunge, fear, fears, recession, decline, declines, worries, escalation, crisis]
