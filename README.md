@@ -44,6 +44,23 @@ Safety rules:
   `logs/trade_decisions.csv` and `tickets/<id>.json`, and show on `output/journal.html`. Orders sent
   by the gate carry magic number 5110001 and the ticket id in the order comment.
 
+## Red-folder news (Forex Factory)
+
+`news.py` reads the Forex Factory calendar (https://www.forexfactory.com/calendar; High impact = red
+folder) through its weekly data feed, because the HTML page blocks scripts. The feed has date, time,
+currency, impact, forecast and previous, for the current week only and without actual values.
+
+- **Scanner dashboard:** upcoming red events with the instruments they affect, and how recent red events
+  moved each currency (15m / 1h / 4h, from MT5 5-minute bars, logged to `logs/news_reactions.csv`).
+- **Trade gate:** lists red events for the trade's currencies and blocks algo orders within 30 minutes
+  of one (v1.0 Section 9). Manual tickets are allowed with a warning.
+- **Backtest:** `python news.py --export-backtest data/news/ff_high_impact.csv` writes the file for
+  `broker_v11_algo.py --news`. History starts with the first saved calendar snapshot.
+
+```powershell
+python news.py --upcoming     # red events for the rest of this week
+```
+
 ## Broker backtest script (research)
 
 `broker_v11_algo.py` packages the BROKER-v1.1 research and backtest script (release v1.0.0). It is a

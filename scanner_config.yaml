@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.5.0"
+config_version: "cfg-0.6.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -17,6 +17,7 @@ changelog:
   - {version: "cfg-0.4.0", date: "2026-10-06", change: "C4 also checks 4H and Daily candles plus double top/bottom and head and shoulders (neckline close); qualified now requires C4; developing = C1 + C2 + 2 checks awaiting reversal; C4 timeframe breaks ties", reason: "Owner: in zone and reversal candle closed (2H minimum, 4H/Daily better) required to qualify; owner chart pattern rules"}
   - {version: "cfg-0.4.1", date: "2026-10-06", change: "Engulfing counts only if the engulfing candle itself wicks into the zone; confirmation close beyond the zone stays valid", reason: "Owner: pattern initiates at the zone, the close tells you which way it decided"}
   - {version: "cfg-0.5.0", date: "2026-10-06", change: "Currency pair bars come from the MT5 terminal (Forex.com); CFDs and futures stay on TradingView. Dashboard adds MT5 broker prices and open positions; new journal page with balance history and positions matched to the confluences logged before entry", reason: "Owner: MT5 for currency data only, TradingView for futures; monitor balance and journal every position"}
+  - {version: "cfg-0.6.0", date: "2026-10-06", change: "Forex Factory red-folder news: dashboard list of upcoming High impact events with affected instruments; reaction tracker (currency strength move 15m/1h/4h after each red event, MT5 5 minute bars); trade gate news check; backtest news CSV export", reason: "Owner: use Forex Factory red folders for upcoming news across scanner and trading scripts and track how news moves currencies"}
 
 # Run times fixed in UTC (Addendum Section 4); used by --daemon
 runs:
@@ -173,8 +174,14 @@ cot:
 # ---------------------------------------------------------------- calendar (Addendum 6.4)
 calendar:
   source: forexfactory        # forexfactory | off
+  # Forex Factory calendar (https://www.forexfactory.com/calendar). The HTML page blocks scripts
+  # (Cloudflare), so this is its machine readable weekly export: same events, this week only, no actuals.
   url: https://nfs.faireconomy.media/ff_calendar_thisweek.json
-  impact: High
+  impact: High                # red folder
+  impacts_tracked: [High]     # cfg-0.6.0: dashboard list, reaction tracker, gate warnings, backtest export
+  upcoming_hours: 192         # dashboard list horizon (the export ends with the week)
+  reaction_lookback_days: 10  # measure red events up to this old (MT5 5 minute bars)
+  news_window_minutes: 30     # v1.0 Section 9: no new entries within this many minutes of a red event
   event_risk_hours: 24
   snapshot: true              # store weekly snapshots, since the feed keeps no history
 

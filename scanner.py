@@ -97,12 +97,14 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+import news as newsmod
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.5.0"
+SCANNER_CODE_VERSION = "0.6.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -457,7 +459,7 @@ class Mt5Client:
 
     def rates(self, symbol: str, tf: str, n: int) -> pd.DataFrame:
         m = self.mt5
-        tfc = {TF_1H: m.TIMEFRAME_H1, TF_2H: m.TIMEFRAME_H2, TF_4H: m.TIMEFRAME_H4, TF_D: m.TIMEFRAME_D1}[tf]
+        tfc = {"M5": m.TIMEFRAME_M5, TF_1H: m.TIMEFRAME_H1, TF_2H: m.TIMEFRAME_H2, TF_4H: m.TIMEFRAME_H4, TF_D: m.TIMEFRAME_D1}[tf]
         m.symbol_select(symbol, True)
         r = m.copy_rates_from_pos(symbol, tfc, 0, int(n))
         if r is None or len(r) == 0:
@@ -1860,6 +1862,88 @@ def render_broker(broker: Optional[dict]) -> str:
     return out + "</table></div></details>"
 
 
+def build_news_view(cfg: dict, base: Path, asof: pd.Timestamp, events: list[dict], universe: list[Instrument],
+                    client: Optional[Mt5Client], demo: bool) -> dict:
+    """[OWNER cfg-0.6.0] Upcoming red-folder events with the instruments they affect, and how recent
+    red events moved each currency (MT5 5 minute bars). Never raises: news must not stop a scan."""
+    ccfg = cfg.get("calendar", {})
+    impacts = tuple(ccfg.get("impacts_tracked", ["High"]))
+    view: dict = {"impacts": impacts, "upcoming": pd.DataFrame(), "events": pd.DataFrame(), "currencies": pd.DataFrame(),
+                  "status": ""}
+    try:
+        snap = base / cfg["paths"]["data_dir"] / "calendar_snapshots"
+        arch = newsmod.parse_events(events, asof) if demo else newsmod.load_archive(snap, events, asof)
+        amap = newsmod.affected_map([(i.symbol, i.calendar_currencies) for i in universe])
+        up = newsmod.upcoming(arch, asof, float(ccfg.get("upcoming_hours", 192)), impacts).copy()
+        up["affects"] = up["currency"].map(lambda c: amap.get(c, []))
+        view["upcoming"] = up
+        log = base / cfg["paths"]["log_dir"] / "news_reactions.csv"
+        if client and client.mt5 and not demo:
+            fx = [i.symbol for i in universe if i.asset == "fx"]
+            n = newsmod.update_reactions(arch, fx, lambda p: client.rates(client.mt5_symbol(p), "M5", 3500), log, asof,
+                                         float(ccfg.get("reaction_lookback_days", 10)), impacts)
+            view["status"] = f"{n} new pair reactions measured"
+        else:
+            view["status"] = "reactions need MT5"
+        view["events"], view["currencies"] = newsmod.summarize_reactions(log)
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("news view failed: %s", exc)
+        view["status"] = f"failed: {exc}"
+    return view
+
+
+def render_news(view: Optional[dict], disp_tz: ZoneInfo) -> str:
+    e = html.escape
+    if not view:
+        return ""
+    out = ("<h2>Red-folder news (Forex Factory)</h2><p class='muted'>Source: forexfactory.com/calendar (High impact = red "
+           "folder), read from its weekly export, which covers this week only and has no actual values. Times in "
+           f"{e(str(disp_tz))}. v1.0 blocks new entries within 30 minutes of a red event for either currency.</p>")
+    up = view["upcoming"]
+    if up.empty:
+        out += "<p class='muted'>No red-folder events left this week.</p>"
+    else:
+        out += ("<div class='wrap'><table><tr><th>When</th><th class='num'>In</th><th>Currency</th><th>Event</th>"
+                "<th>Forecast</th><th>Previous</th><th>Affects</th></tr>")
+        now = pd.Timestamp.now(tz=UTC)
+        for _, r in up.iterrows():
+            hrs = (r["event_time"] - now).total_seconds() / 3600
+            cls = "warn" if 0 <= hrs <= 24 else "muted"
+            out += (f"<tr><td>{e(r['event_time'].tz_convert(disp_tz).strftime('%a %b %d %I:%M %p'))}</td>"
+                    f"<td class='num {cls}'>{'now' if hrs < 0 else f'{hrs:.1f}h'}</td><td><b>{e(r['currency'])}</b></td>"
+                    f"<td>{e(r['title'])}</td><td>{e(r['forecast'] or '–')}</td><td>{e(r['previous'] or '–')}</td>"
+                    f"<td class='wrapc muted'>{e(', '.join(r['affects']))}</td></tr>")
+        out += "</table></div>"
+    ev, cur = view["events"], view["currencies"]
+    out += (f"<h2>How recent red news moved currencies</h2><p class='muted'>Currency move = average strength change "
+            f"of the currency across its tracked pairs (base +, quote −) from the last 5-minute close before the "
+            f"release. MT5 Forex.com bars. {e(view.get('status', ''))}. Full log: logs/news_reactions.csv</p>")
+    if ev.empty:
+        out += "<p class='muted'>No reactions measured yet. Each red event is measured once its 4-hour window has closed.</p>"
+        return out
+    if not cur.empty:
+        out += ("<div class='wrap'><table><tr><th>Currency</th><th class='num'>Red events</th><th class='num'>Avg move 1h</th>"
+                "<th class='num'>Avg move 4h</th><th>Last event (UTC)</th></tr>")
+        for _, r in cur.iterrows():
+            out += (f"<tr><td><b>{e(r['currency'])}</b></td><td class='num'>{int(r['events'])}</td>"
+                    f"<td class='num'>{r['avg_abs_1h']:.2f}%</td><td class='num'>{r['avg_abs_4h']:.2f}%</td>"
+                    f"<td class='muted'>{e(str(r['last_event']))}</td></tr>")
+        out += "</table></div>"
+
+    def mv(v) -> str:
+        return f"<span class='{'long' if v > 0 else 'short' if v < 0 else 'muted'}'>{v:+.2f}%</span>"
+    out += ("<details open><summary>Per event (newest first, last 30)</summary><div class='wrap'><table><tr><th>Time (UTC)</th>"
+            "<th>Currency</th><th>Event</th><th>Fcst / prev</th><th class='num'>15m</th><th class='num'>1h</th>"
+            "<th class='num'>4h</th><th class='num'>Pairs agree (1h)</th><th>Biggest pair move (1h)</th></tr>")
+    for _, r in ev.head(30).iterrows():
+        fp = " / ".join(str(x) if isinstance(x, str) and x else "–" for x in (r["forecast"], r["previous"]))
+        out += (f"<tr><td>{e(str(r['event_time']))}</td><td><b>{e(r['currency'])}</b></td><td>{e(r['title'])}</td>"
+                f"<td class='muted'>{e(fp)}</td><td class='num'>{mv(r['move_15m'])}</td><td class='num'>{mv(r['move_1h'])}</td>"
+                f"<td class='num'>{mv(r['move_4h'])}</td><td class='num'>{int(r['agree_1h'])} of {int(r['pairs'])}</td>"
+                f"<td>{e(r['biggest_1h'])}</td></tr>")
+    return out + "</table></div></details>"
+
+
 _CSS = """
     :root{--bg:#fff;--fg:#1b1f24;--muted:#5b6470;--line:#e3e6ea;--card:#f6f8fa;--good:#1a7f37;--warn:#9a6700;--bad:#cf222e;--acc:#0b5cad}
     @media (prefers-color-scheme: dark){:root{--bg:#0f1216;--fg:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;--card:#161b22;--good:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff}}
@@ -1880,7 +1964,8 @@ _CSS = """
     """
 
 
-def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict], broker: Optional[dict] = None) -> str:
+def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict], broker: Optional[dict] = None,
+                news_view: Optional[dict] = None) -> str:
     e = html.escape
     css = _CSS
     fr ="".join(f"<span><b>{e(k)}:</b> {e(str(v))}</span>" for k, v in meta["freshness"].items())
@@ -1933,6 +2018,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                      f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td></tr>")
         body += "</table></div>"
     body += render_broker(broker)
+    if news_view:
+        body += render_news(news_view, ZoneInfo(news_view.get("tz", "America/Chicago")))
     # all scored candidates
     cands = sorted([r for r in all_rows if r.section != "not shown"], key=lambda r: (r.section != "qualified", -r.total))
     body += ("<p class='muted'>Qualified: C1 + a reversal closed in a key level zone (C4, 2H or higher) + at least 3 of C1-C6. "
@@ -1963,11 +2050,11 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
 
 
 def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict],
-                  broker: Optional[dict] = None) -> dict[str, Path]:
+                  broker: Optional[dict] = None, news_view: Optional[dict] = None) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"scan_{meta['stamp']}_{meta['run_type'].replace(' ', '')}"
     paths = {"html": out_dir / f"{stem}.html", "json": out_dir / f"{stem}.json", "csv": out_dir / f"{stem}.csv"}
-    paths["html"].write_text(render_html(meta, top, all_rows, footer, broker), encoding="utf-8")
+    paths["html"].write_text(render_html(meta, top, all_rows, footer, broker, news_view), encoding="utf-8")
     payload = {"meta": meta, "top": [asdict(r) for r in top], "rows": [asdict(r) for r in all_rows], "instruments": footer}
     if broker:
         payload["broker"] = {k: v for k, v in broker.items() if k != "account"}
@@ -2418,7 +2505,9 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         else:
             meta["freshness"]["MT5"] = f"unavailable: {client.status}"
     od = out_dir or (base / cfg["paths"]["output_dir"])
-    paths = write_outputs(od, meta, top, all_rows, footer, broker)
+    news_view = build_news_view(cfg, base, asof, events, universe, client, demo)
+    news_view["tz"] = cfg.get("display_timezone", "America/Chicago")
+    paths = write_outputs(od, meta, top, all_rows, footer, broker, news_view)
     append_c2_log(base / cfg["paths"]["log_dir"], meta, results)
     if client:
         try:

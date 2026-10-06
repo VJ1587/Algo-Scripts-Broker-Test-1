@@ -54,6 +54,7 @@ import pandas as pd
 import yaml
 
 import broker_v11_algo as bv
+import news as newsmod
 import scanner as sc
 
 GATE_VERSION = "0.1.0"
@@ -490,15 +491,66 @@ def apply_mods(t: Ticket, text: str, tick: Decimal) -> list[str]:
 
 class Gate:
     def __init__(self, accounts: list[Account], settings: dict, cfg: dict, base: Path = BASE,
-                 prompter: Optional[Prompter] = None, session_factory: Callable[[Account], Mt5Session] = Mt5Session):
+                 prompter: Optional[Prompter] = None, session_factory: Callable[[Account], Mt5Session] = Mt5Session,
+                 news_loader: Optional[Callable[[], pd.DataFrame]] = None):
         self.accounts, self.settings, self.cfg, self.base = accounts, settings, cfg, base
         self.p = prompter or Prompter()
         self.universe = {i.symbol: i for i in sc.build_universe(cfg)}
         self.session_factory = session_factory
         self.sessions: dict[str, Mt5Session] = {}
+        self.news_loader = news_loader
+        self._news: Optional[pd.DataFrame] = None
+        self.news_status = ""
 
     def now(self) -> pd.Timestamp:
         return pd.Timestamp.now(tz=sc.UTC)
+
+    # ----------------------------------------------------------------- news [OWNER cfg-0.6.0]
+    def news(self) -> pd.DataFrame:
+        """Forex Factory red-folder events, fetched fresh once per gate run (decision time, not scan time)."""
+        if self._news is None:
+            try:
+                if self.news_loader:
+                    self._news = self.news_loader()
+                else:
+                    now = self.now()
+                    events, self.news_status = sc.load_calendar(self.cfg, self.base, now, False)
+                    snap = self.base / self.cfg["paths"]["data_dir"] / "calendar_snapshots"
+                    self._news = newsmod.load_archive(snap, events or None, now)
+            except Exception as exc:  # noqa: BLE001
+                self.news_status = f"calendar unavailable: {exc}"
+                self._news = newsmod.parse_events([], self.now())
+        return self._news
+
+    def news_check(self, inst: sc.Instrument, t: Ticket) -> Optional[str]:
+        """Show red events for the trade's currencies; return a blackout reason inside the v1.0 window."""
+        ccfg = self.cfg.get("calendar", {})
+        impacts = tuple(ccfg.get("impacts_tracked", ["High"]))
+        window = float(ccfg.get("news_window_minutes", 30))
+        df, now, ccys = self.news(), self.now(), inst.calendar_currencies
+        if df.empty:
+            t.notes.append(f"news not checked ({self.news_status or 'no calendar data'}): check forexfactory.com/calendar")
+            return None
+        horizon = self.settings["ladder_expiry_hours"] if t.route == "L" else 4
+        soon = newsmod.red(df, impacts)
+        soon = soon[soon["currency"].isin(ccys) & (soon["event_time"] >= now - pd.Timedelta(minutes=window))
+                    & (soon["event_time"] <= now + pd.Timedelta(hours=max(horizon, 48)))]
+        for _, e in soon.iterrows():
+            hrs = (e["event_time"] - now).total_seconds() / 3600
+            self.p.say(f"    red news: {e['currency']} {e['title']} {'NOW' if abs(hrs) * 60 <= window else f'in {hrs:.1f}h'}"
+                       f" (forecast {e['forecast'] or '-'}, previous {e['previous'] or '-'})")
+        near = newsmod.events_near(df, ccys, now, window, impacts)
+        if not near.empty:
+            e = near.iloc[0]
+            why = f"v1.0 news blackout: {e['currency']} {e['title']} within {window:.0f} min"
+            t.notes.append(why)
+            return why
+        during = soon[(soon["event_time"] > now) & (soon["event_time"] <= now + pd.Timedelta(hours=horizon))]
+        if t.route == "L" and not during.empty:
+            e = during.iloc[0]
+            t.notes.append(f"red event {e['currency']} {e['title']} falls inside the ladder's {horizon:.0f}h life: v1.0 "
+                           "cancels pending legs in a blackout; the gate does not, so cancel them by hand if unfilled")
+        return None
 
     def session(self, acct: Account) -> Optional[Mt5Session]:
         if acct.platform != "mt5":
@@ -651,10 +703,16 @@ class Gate:
                 break
             for e in apply_mods(t, text, tick):
                 say(f"  ! {e}")
+        # news at decision time [OWNER cfg-0.6.0]
+        blackout = self.news_check(inst, t)
+        if blackout:
+            say(f"  ! {blackout}. A manual ticket is allowed but v1.0 would not enter now.")
         # who places it
         ok, why = algo_permission(acct, self.settings, sess.mode if sess else None, sess.algo_on if sess else None)
         if ok and t.over_risk():
             ok, why = False, "risk is above the 2% / 5% ceiling; algo orders must stay inside it"
+        if ok and blackout:
+            ok, why = False, blackout
         choice = self.p.ask(f"Who places it? m = manual (you place it), a = algo{'' if ok else ' (unavailable: ' + why + ')'}", "m")
         t.mode = "algo" if choice.lower().startswith("a") and ok else "manual"
         if choice.lower().startswith("a") and not ok:

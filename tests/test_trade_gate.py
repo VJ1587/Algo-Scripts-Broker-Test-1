@@ -15,6 +15,7 @@ import trade_gate as tg  # noqa: E402
 
 CFG = sc.load_config(ROOT / "scanner_config.yaml")
 UNIVERSE = {i.symbol: i for i in sc.build_universe(CFG)}
+NO_NEWS = tg.newsmod.parse_events([], pd.Timestamp("2026-10-06", tz="UTC"))
 SETTINGS = {"allow_live_algo": False, "max_scan_age_hours": 1e9, "ladder_expiry_hours": 24, "max_quote_age_seconds": 30}
 
 
@@ -156,7 +157,7 @@ def scan_file(tmp_path, rows):
     return p
 
 
-def run_gate(tmp_path, answers, accounts, rows=None, mode="demo"):
+def run_gate(tmp_path, answers, accounts, rows=None, mode="demo", news_df=None):
     said = []
     it = iter(answers)
     prompter = tg.Prompter(lambda q: next(it), said.append)
@@ -166,7 +167,8 @@ def run_gate(tmp_path, answers, accounts, rows=None, mode="demo"):
         s = FakeSession(a, mode)
         sessions.append(s)
         return s
-    gate = tg.Gate(accounts, SETTINGS, CFG, base=tmp_path, prompter=prompter, session_factory=factory)
+    gate = tg.Gate(accounts, SETTINGS, CFG, base=tmp_path, prompter=prompter, session_factory=factory,
+                   news_loader=lambda: news_df if news_df is not None else NO_NEWS)
     done = gate.run(scan_file(tmp_path, rows or [row()]))
     log = pd.read_csv(tmp_path / "logs" / "trade_decisions.csv")
     return done, log, said, sessions
@@ -234,6 +236,26 @@ def test_zero_balance_gives_no_budget_note(tmp_path):
     said = []
     it = iter(["y", "1", "cancel"])
     gate = tg.Gate([tg.Account("d", "Demo", "mt5", allow_algo=True)], SETTINGS, CFG, base=tmp_path,
-                   prompter=tg.Prompter(lambda q: next(it), said.append), session_factory=lambda a: Broke(a))
+                   prompter=tg.Prompter(lambda q: next(it), said.append), session_factory=lambda a: Broke(a),
+                   news_loader=lambda: NO_NEWS)
     gate.run(scan_file(tmp_path, [row()]))
     assert any("no risk budget" in s for s in said)
+
+
+def test_red_news_inside_window_blocks_algo(tmp_path):
+    now = pd.Timestamp.now(tz="UTC")
+    news_df = tg.newsmod.parse_events([{"title": "Non-Farm Employment Change", "country": "USD",
+                                        "date": (now + pd.Timedelta(minutes=10)).isoformat(), "impact": "High"}], now)
+    acct = tg.Account("d", "Demo", "mt5", allow_algo=True)
+    done, log, said, sessions = run_gate(tmp_path, ["y", "1", "", "a", "CONFIRM"], [acct], news_df=news_df)
+    assert log["decision"].iloc[-1] == "approved (manual)" and sessions[0].mt5.sent == []
+    assert any("news blackout" in s for s in said) and "blackout" in log["notes"].iloc[-1]
+
+
+def test_red_news_for_other_currency_does_not_block(tmp_path):
+    now = pd.Timestamp.now(tz="UTC")
+    news_df = tg.newsmod.parse_events([{"title": "BOJ Policy Rate", "country": "JPY",
+                                        "date": (now + pd.Timedelta(minutes=10)).isoformat(), "impact": "High"}], now)
+    acct = tg.Account("d", "Demo", "mt5", allow_algo=True)
+    _, log, _, sessions = run_gate(tmp_path, ["y", "1", "", "a", "CONFIRM"], [acct], news_df=news_df)
+    assert log["decision"].iloc[-1] == "sent (algo)" and sessions[0].mt5.sent
