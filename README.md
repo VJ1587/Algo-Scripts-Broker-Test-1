@@ -1,11 +1,16 @@
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.1.0, config `cfg-0.1.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.5.0, config `cfg-0.5.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
 top 5 setups (qualified first, then developing). It places no orders and sizes no positions.
+
+Qualification (cfg-0.4.0): qualified = C1 + C4 (a reversal closed in a key level zone, 2H or higher) +
+at least 3 of C1-C6. Developing = C1 + C2 (price in the zone) + 2 or more checks, reversal not closed
+yet. COT and sentiment affect ranking only. The full rule set is in the `scanner.py` docstring and the
+config changelog.
 
 ## Files
 
@@ -13,7 +18,7 @@ top 5 setups (qualified first, then developing). It places no orders and sizes n
 | --- | --- |
 | `scanner.py` | The scanner (single module) |
 | `scanner_config.yaml` | Versioned parameters: universe, grids, COT codes, theme weights, keywords |
-| `tests/test_scanner.py` | 39 unit tests (pivots, bias, impulse, zones, candles, COT, sentiment, ranking) |
+| `tests/test_scanner.py` | Unit tests (pivots, bias, impulse, zones, candles, COT, sentiment, ranking, MT5 time and routing, journal) |
 | `requirements.txt` | Dependencies |
 
 ## Install
@@ -21,10 +26,14 @@ top 5 setups (qualified first, then developing). It places no orders and sizes n
 ```
 python -m venv .venv
 .venv\Scripts\activate            # Windows   (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt
+pip install -r requirements.txt  # includes MetaTrader5 on Windows
 pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
 pip install transformers torch    # only if you want FinBERT sentiment now
 ```
+
+MetaTrader 5 needs Windows and the MT5 desktop terminal installed, open and logged in to the broker
+account. Without it (or with `mt5.enabled: false`) every instrument uses TradingView and the
+dashboard and journal note that MT5 is unavailable.
 
 Optional TradingView login (more history, fewer limits): set `TV_USERNAME` and `TV_PASSWORD`
 environment variables. Without them the library runs in anonymous mode.
@@ -36,6 +45,7 @@ python scanner.py --demo                         # offline, synthetic data: chec
 python scanner.py --run evening                  # live: TradingView + CFTC API + Forex Factory
 python scanner.py --run preny
 python scanner.py --daemon                       # stays running; fires at 00:05 and 12:05 UTC
+python scanner.py --journal                      # rebuild only the journal and balance page from MT5
 python scanner.py --source csv --asof 2026-10-02T12:05Z   # point in time from your own CSV bars
 python -m pytest -q                              # tests
 ```
@@ -50,11 +60,34 @@ or 6:05 PM CST; pre NY 12:05 UTC is 7:05 AM CDT or 6:05 AM CST). The simplest op
 so if you use them, either update the trigger at each DST change or set two triggers per run and let
 `--run auto` decide. On Linux with cronie: `CRON_TZ=UTC` then `5 0 * * *` and `5 12 * * *`.
 
+## MetaTrader 5 (cfg-0.5.0, read only)
+
+Open and log in to the MT5 terminal before a run; the scanner attaches to it (`mt5.enabled` in the
+config). Nothing in the scanner sends, changes or closes orders.
+
+- **Currency pairs** use Forex.com bars from MT5 (`bars.fx_source: mt5`). **CFDs and futures** always
+  use TradingView.
+- Before a pair's first MT5 fetch the scanner checks the broker's history depth (250+ Daily bars and
+  enough 1H bars for 250 4H bars). A pair that fails the check or the fetch comes entirely from
+  TradingView, so one pair never mixes feeds. The dashboard's Bars column and the MT5 line in the
+  header show which pairs fell back and why. As of 2026-10-06 Forex.com keeps too little Daily history
+  for AUDJPY, CADJPY, CADCHF, AUDNZD and AUDCHF.
+- MT5 stamps time in server time. `mt5.server_time: ny_close` converts it (server = New York + 7h);
+  each run checks a live tick against that rule and warns in the header if they disagree.
+- The first request for a pair makes the terminal download its history, which can take minutes.
+  Later runs read it from the terminal's cache.
+- Broker symbol names that differ from the scanner's go in `mt5.symbol_map`.
+
 ## Outputs
 
 - `output/scan_<UTC stamp>_<run>.html`: self contained dashboard (header with versions and data
   freshness, top 5 table, all candidates, every instrument with its rejection reason)
 - `output/scan_<UTC stamp>_<run>.json` and `.csv`: every row, for later backtest comparison
+- The dashboard also shows MT5 open positions and broker bid, ask and spread for the 28 pairs
+- `output/journal.html`: account balance, equity and margin; a balance snapshot per run; every MT5
+  position (from deal history, `journal.history_days`) with open and close time, prices, net P/L, and
+  the confluences the last live scan before the entry logged for that instrument and direction
+- `logs/mt5_account.csv`: balance snapshot log; `logs/trade_journal.csv`: the journal as a table
 - `logs/c2_rejections.csv`: C2 pass/fail and distance to the nearest level per instrument per run
 - `logs/scanner.log`: run log, including the CFTC market name returned for each COT code
 - `data/calendar_snapshots/`: Forex Factory snapshots (the feed keeps no history)
@@ -89,6 +122,34 @@ so if you use them, either update the trigger at each DST change or set two trig
    beyond the new invalidation level (otherwise the broken bias re-arms on the same bar).
 4. **Impulse void.** An impulse is dropped once a 4H close passes its origin A (config switch).
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
+5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
+   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $20 (XAUUSD
+   and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
+   grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
+   to the ATR width and is flagged "zone width not set". C3 and C6 tolerance still use the ATR width.
+5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
+   reaches into the zone and is rejected in the trade direction (wick at least the body and the
+   opposite wick, close not through the zone). Two or more adds a "zone tested: N wicks" flag. It never
+   changes C1 to C6, the score, or qualification. Wait for the reversal candle to close (C4).
+5c. **C4 candlestick patterns, zone only (cfg-0.3.0).** C4 passes when the just-closed 2H candle
+   completes a reversal pattern from the candlestick guide and the pattern's candles traded inside the
+   key level zone. Outside a zone C4 is always false. Long: hammer, inverted hammer, bullish engulfing,
+   tweezer bottom, morning star (an engulfing candle must itself wick into the zone; its close may
+   finish beyond it). Short: shooting star, hanging man, bearish engulfing, tweezer top,
+   evening star. Pins, tweezers and stars need the matching trend before them (2H close vs 6 bars
+   earlier). A directional marubozu right after a zone pattern also counts ("hammer + marubozu").
+   Doji alone is indecision and does not count. Thresholds live under `features.candle`.
+5d. **C4 timeframes and chart patterns (cfg-0.4.0).** C4 checks the latest completed Daily, then 4H,
+   then 2H bar and keeps the highest timeframe found (shown as e.g. "4H hammer"). On Daily and 4H it
+   also checks double bottom/top and (inverse) head and shoulders: bottoms/tops or shoulders within
+   100 pips (Daily) / 40 pips (4H) on FX, at least 5 bars apart, head at least 50 / 20 pips beyond both
+   shoulders, the bottom or head in a key level zone, and a candle CLOSE beyond the neckline within the
+   last 3 bars (a wick does not count). Distances scale with each instrument's zone width
+   (`features.chart_patterns`).
+5e. **Qualification (cfg-0.4.0).** Qualified = C1 + C4 + at least 3 checks: no setup qualifies without
+   a reversal closed in a key level zone. Developing = C1 + C2 (price in the zone) + 2 or more checks,
+   reversal not closed yet. On equal totals a Daily confirmation ranks above 4H, and 4H above 2H.
+   `qualification.require_close_in_zone: true` would also demand the latest close sit inside the zone.
 6. **COT publication time.** Assumed position date + 3 days at 15:30 Eastern; holiday delays not
    modelled. Live, the CFTC API only returns published data, so this matters mainly for CSV
    backtests. Cross pair "weekly change" is the change in the rescaled cross index.

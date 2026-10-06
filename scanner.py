@@ -11,20 +11,68 @@ What it does
     against the v1.0 confluences C1 to C6, adds a COT overlay (+/-2) and a headline sentiment
     overlay (+/-2), and ranks the top 5 setups (qualified first, then developing).
 
+Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
+    Entry sequence the scanner screens for:
+        wick forming in a key level zone -> reversal candle CLOSES -> at least 3 confluences.
+    The zone is where the market makes its decision; the confirmation close only tells you which
+    way it decided, so that close may (and often will) finish outside the zone.
+
+    1. Key levels are zones, not lines.                       psych_zone_half_width, in_psych_zone
+       Every major and mid grid level gets a box of fixed half-width (grids.*.zone_half_width):
+         market        major / mid level spacing      zone half-width
+         FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
+         JPY pairs     5.00 / 2.50                    0.15      (15 pips)
+         Gold          $100 / $50                     $20       (3,300 -> 3,280 to 3,320)
+         S&P           100 / 50 points                20 points (follows gold for now)
+         Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
+       Why: institutions' orders sit spread around a round number, so price reacts across an area.
+       Gold gets a wider box because news-driven overshoots of $15-25 are not breaks.
+       C2 = latest completed 2H close inside the zone. Fib (C3) and trend line (C6) tolerance still
+       use the v1.0 ATR width (zone_half_width).
+
+    2. Wick principle (early alert, never scored).           zone_wick_tests
+       Recent 2H candles whose wick reaches into the zone and is rejected in the trade direction.
+       Two or more in the last 6 bars adds the flag "zone tested: N wicks". Not an entry.
+
+    3. C4 = reversal confirmation that started AT the zone.   candle_signal, _pattern_at, chart_pattern
+       Checked on the latest completed Daily, then 4H, then 2H bar; the highest timeframe wins.
+       Candles (any timeframe): hammer, inverted hammer, shooting star, hanging man, engulfing,
+       tweezer top/bottom, morning/evening star, and a marubozu closing right after one of those.
+       Pins, tweezers and stars need the matching prior trend (hammer vs hanging man).
+       Engulfing: the engulfing candle itself must wick into the zone; its close may be beyond it.
+       Doji alone is indecision and never counts. Outside a zone, C4 is always false.
+       Chart patterns (Daily and 4H): double bottom/top and (inverse) head and shoulders. A bottom
+       (or the head) must sit in a key level zone; the confirmation is a candle CLOSE beyond the
+       neckline (a wick through it is a fakeout), within the last 3 bars of that timeframe.
+
+    4. Qualification.                                          setup_section, rank
+       Qualified  = C1 + C4 + at least 3 of C1-C6. Nothing qualifies without a zone reversal.
+       Developing = C1 + C2 (price in the zone) + 2 or more checks, reversal not closed yet.
+       Equal totals rank Daily confirmations above 4H, and 4H above 2H.
+
 What it does NOT do
-    It places no orders, sizes no positions and changes no v1.0 trade rule. Overlays rank,
-    they never qualify (Addendum 6, test default).
+    It places no orders or sizes no positions. The qualification rule is a screening change, not a
+    change to v1.0 execution requirements. COT and sentiment overlays rank; they never qualify.
 
 Usage
     python scanner.py --demo                      # offline run on synthetic data
     python scanner.py --run evening               # live run (TradingView + CFTC + Forex Factory)
     python scanner.py --run preny
     python scanner.py --daemon                    # stay running, fire at 00:05 and 12:05 UTC
+    python scanner.py --journal                   # rebuild only output/journal.html from MT5
+
+MetaTrader 5 (cfg-0.5.0, read only)
+    Currency pairs use Forex.com bars from the running MT5 terminal; CFDs and futures use TradingView.
+    The dashboard shows MT5 broker prices and open positions. output/journal.html shows balance,
+    a balance snapshot per run, and every MT5 position with the confluences the last scan before the
+    entry logged for that instrument and direction. Nothing here sends, changes or closes orders.
     python scanner.py --source csv --asof 2026-10-02T12:05Z
 
 Rule labels
     Comments tagged [v1.0 ...] or [Add ...] cite the governing section. Comments tagged
-    [IMPL] mark implementation choices the documents leave open; they are test defaults.
+    [OWNER cfg-x.y.z] are trading-method rules the owner set, with the config version that added
+    them (see the changelog in scanner_config.yaml). Comments tagged [IMPL] mark implementation
+    choices the documents leave open; they are test defaults.
 """
 from __future__ import annotations
 
@@ -54,7 +102,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.1.0"
+SCANNER_CODE_VERSION = "0.5.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -86,6 +134,7 @@ class Instrument:
     cot: Optional[str] = None     # COT market key for non FX
     short_test: bool = False      # gold and S&P: carry v1.0 short experiment flag
     roll: Optional[str] = None
+    psych_zone_hw: Optional[float] = None  # fixed zone half-width around grid levels; None = not set
 
     @property
     def calendar_currencies(self) -> list[str]:
@@ -116,6 +165,16 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
+def _grid_zone_hw(g: dict) -> Optional[float]:
+    v = g.get("zone_half_width")
+    if v is None:
+        return None
+    v = float(v)
+    if v <= 0:
+        raise ValueError(f"grid zone_half_width must be positive, got {v}")
+    return v
+
+
 def build_universe(cfg: dict) -> list[Instrument]:
     out: list[Instrument] = []
     grids = cfg["grids"]
@@ -126,13 +185,13 @@ def build_universe(cfg: dict) -> list[Instrument]:
             g = grids["jpy" if jpy else "fx"]
             out.append(Instrument(symbol=sym, group=grp, asset="fx", tick=0.001 if jpy else 0.00001,
                                   grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                                  tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
+                                  psych_zone_hw=_grid_zone_hw(g), tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
                                   base=base, quote=quote))
     for it in cfg.get("other_instruments", []):
         g = grids[it["grid"]]
         out.append(Instrument(symbol=it["symbol"], group=it["group"], asset=it["asset"], tick=float(it["tick"]),
                               grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                              tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
+                              psych_zone_hw=_grid_zone_hw(g), tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
                               fut_contract=it.get("fut_contract"), underlying=it.get("underlying"),
                               cot=it.get("cot"), short_test=bool(it.get("short_test", False)),
                               roll=it.get("roll"), base=it.get("base"), quote=it.get("quote")))
@@ -308,6 +367,208 @@ class DemoSource(BarSource):
 
     def provider(self, inst: Instrument) -> str:
         return f"demo:{inst.symbol}"
+
+
+# =============================================================================
+# MetaTrader 5  [OWNER cfg-0.5.0]  read only: this module never sends orders
+# =============================================================================
+
+def mt5_to_utc(server_secs, server_time: Any = "ny_close") -> pd.DatetimeIndex:
+    """MT5 stamps bars, ticks and deals in broker server time written as if it were UTC.
+    ny_close: server clock = New York time + 7h (UTC+3 in US summer, UTC+2 in winter), so the daily
+    bar opens at the 17:00 New York close. An integer is a fixed server offset in hours."""
+    naive = pd.to_datetime(np.asarray(server_secs, dtype="int64"), unit="s")
+    if server_time == "ny_close":
+        et = pd.DatetimeIndex(naive - pd.Timedelta(hours=7)).tz_localize(ET_TZ, ambiguous=False, nonexistent="shift_forward")
+        return et.tz_convert(UTC)
+    return pd.DatetimeIndex(naive - pd.Timedelta(hours=float(server_time))).tz_localize(UTC)
+
+
+def pip_size(symbol: str) -> float:
+    return 0.01 if "JPY" in symbol else 0.0001
+
+
+class Mt5Client:
+    """Thin wrapper over the MetaTrader5 package, attached to the terminal already running and logged in."""
+
+    def __init__(self, cfg: dict):
+        self.cfg = cfg.get("mt5", {})
+        self.server_time = self.cfg.get("server_time", "ny_close")
+        self.symbol_map: dict[str, str] = dict(self.cfg.get("symbol_map") or {})
+        self.reverse_map = {v: k for k, v in self.symbol_map.items()}
+        self.mt5 = None
+        self.status = "not connected"
+        self.clock_note = ""
+
+    def connect(self) -> bool:
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            self.status = "MetaTrader5 package not installed"
+            return False
+        path = self.cfg.get("terminal_path")
+        ok = mt5.initialize(path) if path else mt5.initialize()
+        if not ok:
+            self.status = f"initialize failed: {mt5.last_error()}"
+            return False
+        self.mt5 = mt5
+        term, acct = mt5.terminal_info(), mt5.account_info()
+        self.status = (f"{acct.server if acct else '?'}, terminal build {mt5.version()[1]}, "
+                       f"{'connected' if term and term.connected else 'NOT connected to broker'}")
+        self._check_clock()
+        return True
+
+    def _check_clock(self) -> None:
+        """Compare a live tick with the configured server_time rule; warn when they disagree."""
+        sym = self.mt5_symbol("EURUSD")
+        self.mt5.symbol_select(sym, True)
+        tk = self.mt5.symbol_info_tick(sym)
+        if not tk:
+            self.clock_note = "server clock unchecked (no tick)"
+            return
+        observed = (tk.time - time.time()) / 3600
+        now = pd.Timestamp.now(tz=UTC)
+        expected = (now.tz_convert(ET_TZ).utcoffset().total_seconds() / 3600 + 7 if self.server_time == "ny_close"
+                    else float(self.server_time))
+        if abs(observed - expected) < 0.1:
+            self.clock_note = f"server clock UTC{expected:+.0f}h verified"
+        elif abs(observed - round(observed)) < 0.1:
+            self.clock_note = f"server clock UTC{observed:+.1f}h but config expects UTC{expected:+.0f}h: CHECK mt5.server_time"
+            LOG.warning("MT5 %s", self.clock_note)
+        else:
+            self.clock_note = f"server clock unchecked (last tick {observed - expected:+.1f}h old)"
+
+    def shutdown(self) -> None:
+        if self.mt5:
+            self.mt5.shutdown()
+            self.mt5 = None
+
+    def mt5_symbol(self, scanner_symbol: str) -> str:
+        return self.symbol_map.get(scanner_symbol, scanner_symbol)
+
+    def scanner_symbol(self, mt5_symbol: str) -> str:
+        return self.reverse_map.get(mt5_symbol, mt5_symbol)
+
+    def to_utc(self, secs) -> pd.DatetimeIndex:
+        return mt5_to_utc(secs, self.server_time)
+
+    def ts(self, secs: int) -> pd.Timestamp:
+        return self.to_utc([secs])[0]
+
+    def rates(self, symbol: str, tf: str, n: int) -> pd.DataFrame:
+        m = self.mt5
+        tfc = {TF_1H: m.TIMEFRAME_H1, TF_2H: m.TIMEFRAME_H2, TF_4H: m.TIMEFRAME_H4, TF_D: m.TIMEFRAME_D1}[tf]
+        m.symbol_select(symbol, True)
+        r = m.copy_rates_from_pos(symbol, tfc, 0, int(n))
+        if r is None or len(r) == 0:
+            raise RuntimeError(f"no MT5 bars: {m.last_error()}")
+        df = pd.DataFrame({k: r[k] for k in ("open", "high", "low", "close")}, index=self.to_utc(r["time"]))
+        return normalize_bars(df)
+
+    def prices(self, symbols: list[str]) -> list[dict]:
+        out = []
+        for s in symbols:
+            ms = self.mt5_symbol(s)
+            self.mt5.symbol_select(ms, True)
+            tk = self.mt5.symbol_info_tick(ms)
+            if not tk or not tk.bid or not tk.ask:
+                out.append({"symbol": s, "mt5_symbol": ms, "bid": None, "ask": None, "spread_pips": None, "time_utc": ""})
+                continue
+            out.append({"symbol": s, "mt5_symbol": ms, "bid": tk.bid, "ask": tk.ask,
+                        "spread_pips": round((tk.ask - tk.bid) / pip_size(ms), 1),
+                        "time_utc": self.ts(tk.time).strftime("%Y-%m-%d %H:%M:%S")})
+        return out
+
+    def account(self) -> dict:
+        a = self.mt5.account_info()
+        if not a:
+            return {}
+        return {"login": a.login, "server": a.server, "currency": a.currency,
+                "mode": {0: "demo", 1: "contest", 2: "real"}.get(a.trade_mode, str(a.trade_mode)),
+                "balance": a.balance, "equity": a.equity, "margin": a.margin, "free_margin": a.margin_free,
+                "margin_level": a.margin_level, "profit": a.profit, "leverage": a.leverage}
+
+    def positions(self) -> list[dict]:
+        out = []
+        for p in self.mt5.positions_get() or []:
+            out.append({"ticket": p.ticket, "symbol": self.scanner_symbol(p.symbol), "mt5_symbol": p.symbol,
+                        "direction": LONG if p.type == 0 else SHORT, "volume": p.volume,
+                        "open_utc": self.ts(p.time).strftime("%Y-%m-%d %H:%M"), "open_price": p.price_open,
+                        "price": p.price_current, "sl": p.sl or None, "tp": p.tp or None, "swap": p.swap,
+                        "profit": p.profit, "magic": p.magic, "comment": p.comment})
+        return out
+
+    def deals(self, days: int) -> list[dict]:
+        # history_deals_get reads the arguments as server time; pad both ends so the window is never short
+        now = datetime.now()
+        ds = self.mt5.history_deals_get(now - timedelta(days=days + 1), now + timedelta(days=2)) or []
+        return [{"ticket": d.ticket, "position_id": d.position_id, "time": self.ts(d.time), "type": d.type,
+                 "entry": d.entry, "symbol": self.scanner_symbol(d.symbol), "mt5_symbol": d.symbol, "volume": d.volume,
+                 "price": d.price, "profit": d.profit, "commission": d.commission, "swap": d.swap,
+                 "fee": getattr(d, "fee", 0.0), "comment": d.comment} for d in ds]
+
+
+class Mt5Source(BarSource):
+    """[OWNER cfg-0.5.0] Broker bars from the MetaTrader 5 terminal (currency pairs only)."""
+    name = "mt5"
+
+    def __init__(self, client: Mt5Client, cfg: dict):
+        self.client = client
+        self.cfg = cfg["bars"]
+
+    def get(self, inst: Instrument, tf: str) -> pd.DataFrame:
+        n = {TF_1H: self.cfg["n_bars_1h"], TF_D: self.cfg["n_bars_daily"]}.get(tf, self.cfg["n_bars_native"])
+        return self.client.rates(self.client.mt5_symbol(inst.symbol), tf, n)
+
+    def provider(self, inst: Instrument) -> str:
+        return f"MT5:{self.client.mt5_symbol(inst.symbol)}"
+
+
+class RoutedSource(BarSource):
+    """[OWNER cfg-0.5.0] Currency pairs from MT5, everything else (CFDs, futures) from TradingView.
+    Before a pair's first MT5 fetch its Daily and 1H history depth is checked; a pair the broker cannot
+    serve in full (fetch error or too few bars) comes entirely from TradingView, so one pair never mixes
+    feeds. Its provider label says so."""
+    name = "mt5 (FX) + tradingview"
+
+    def __init__(self, fx: BarSource, other: BarSource, min_bars: int = 250):
+        self.fx, self.other = fx, other
+        # Daily needs min_bars completed bars; 1H must rebuild min_bars 4H bars (4 per bar plus weekend gaps)
+        self.need = {TF_D: min_bars + 5, TF_1H: int(min_bars * 4.5)}
+        self.fallback: dict[str, str] = {}
+        self._cache: dict[tuple[str, str], pd.DataFrame] = {}
+
+    def _preflight(self, inst: Instrument) -> None:
+        for tf, n in self.need.items():
+            try:
+                df = self.fx.get(inst, tf)
+            except Exception as exc:  # noqa: BLE001
+                self.fallback[inst.symbol] = f"{tf} fetch failed: {exc}"
+                break
+            if len(df) < n:
+                self.fallback[inst.symbol] = f"broker history too short: {len(df)} {tf} bars (need {n})"
+                break
+            self._cache[(inst.symbol, tf)] = df
+        if inst.symbol in self.fallback:
+            LOG.warning("%s: MT5 %s; using TradingView for this pair", inst.symbol, self.fallback[inst.symbol])
+
+    def get(self, inst: Instrument, tf: str) -> pd.DataFrame:
+        if inst.asset != "fx":
+            return self.other.get(inst, tf)
+        if inst.symbol not in self.fallback and not any(k[0] == inst.symbol for k in self._cache):
+            self._preflight(inst)
+        if inst.symbol in self.fallback:
+            return self.other.get(inst, tf)
+        if (inst.symbol, tf) in self._cache:
+            return self._cache.pop((inst.symbol, tf))
+        return self.fx.get(inst, tf)
+
+    def provider(self, inst: Instrument) -> str:
+        if inst.asset != "fx":
+            return self.other.provider(inst)
+        if inst.symbol in self.fallback:
+            return f"{self.other.provider(inst)} (MT5 not used: {self.fallback[inst.symbol]})"
+        return self.fx.provider(inst)
 
 
 def load_instrument_bars(src: BarSource, inst: Instrument, cfg: dict, asof: pd.Timestamp,
@@ -548,9 +809,37 @@ def select_impulse(df4: pd.DataFrame, pivots4: list[Pivot], atr4: np.ndarray, di
 
 
 def zone_half_width(inst: Instrument, atr4_value: float, fcfg: dict) -> float:
-    """[v1.0 Z01] max(two ticks, 0.10 x 4H ATR14 at setup recognition)."""
+    """[v1.0 Z01] max(two ticks, 0.10 x 4H ATR14 at setup recognition). Since cfg-0.2.0 this is the
+    tolerance for fib (C3) and trend line (C6) checks, and the fallback for a grid with no fixed zone."""
     a = atr4_value if np.isfinite(atr4_value) else 0.0
     return max(int(fcfg["zone_min_ticks"]) * inst.tick, float(fcfg["zone_atr_fraction"]) * a)
+
+
+def psych_zone_half_width(inst: Instrument, atr_hw: float) -> tuple[float, str]:
+    """[OWNER cfg-0.2.0] Key levels are zones, not lines. Half-width around every major and mid grid
+    level: the fixed width from config (FX +/-15 pips, gold +/-$20), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
+    if inst.psych_zone_hw is not None:
+        return inst.psych_zone_hw, "fixed"
+    return atr_hw, "atr"
+
+
+def zone_wick_tests(df2: pd.DataFrame, direction: str, zone_low: float, zone_high: float,
+                    lookback: int) -> int:
+    """[OWNER cfg-0.2.0] Wick principle. Count completed 2H candles in the lookback whose wick reaches into the zone and is rejected in
+    the trade direction. Long: lower wick touches the zone, the candle closes at or above the zone floor,
+    and the lower wick is at least the body and the upper wick. Short mirrors. Early warning only."""
+    sub = df2.iloc[-lookback:] if lookback > 0 else df2.iloc[0:0]
+    n = 0
+    for o, h, l, c in sub[["open", "high", "low", "close"]].itertuples(index=False):
+        body = abs(c - o)
+        lower = min(o, c) - l
+        upper = h - max(o, c)
+        if direction == LONG:
+            hit = l <= zone_high and c >= zone_low and lower > 0 and lower >= body and lower >= upper
+        else:
+            hit = h >= zone_low and c <= zone_high and upper > 0 and upper >= body and upper >= lower
+        n += int(hit)
+    return n
 
 
 def nearest_level(inst: Instrument, price: float) -> tuple[float, str]:
@@ -570,8 +859,93 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 # Confluences  [v1.0 Section 4]
 # =============================================================================
 
-def candle_signal(df2: pd.DataFrame, atr2: np.ndarray, inst: Instrument, direction: str, ccfg: dict) -> str:
-    """[v1.0 C4] Directional engulfing or rejection on the just-completed 2H candle. Returns '' if none."""
+def _prior_trend(c: np.ndarray, last: int, n: int) -> str:
+    """Direction of 2H closes over the n bars ending at index last: 'down', 'up' or ''."""
+    if n <= 0 or last - n < 0:
+        return ""
+    if c[last] < c[last - n]:
+        return "down"
+    if c[last] > c[last - n]:
+        return "up"
+    return ""
+
+
+def _touches_zone(h: np.ndarray, l: np.ndarray, idx: range, zone_low: float, zone_high: float) -> bool:
+    return any(l[i] <= zone_high and h[i] >= zone_low for i in idx)
+
+
+def _pattern_at(o, h, l, c, t: int, a: float, direction: str, ccfg: dict) -> tuple[str, int]:
+    """[OWNER cfg-0.3.0] Reversal pattern from the candlestick guide that completes on bar t, for the trade direction.
+    Returns (name, first bar index) or ('', t). Body colour does not matter for the pin shapes;
+    the trend before the pattern does (hammer vs hanging man, inverted hammer vs shooting star)."""
+    trend_n = int(ccfg.get("prior_trend_bars", 6))
+    pin_mult = float(ccfg.get("pin_wick_body_mult", 2.0))
+    small_wick = float(ccfg["rejection_close_top"])        # opposite wick at most this share of range
+    min_rng = float(ccfg["rejection_range_atr"]) * a
+    strong_body = float(ccfg["engulf_body_atr"]) * a
+    want = "down" if direction == LONG else "up"
+
+    def parts(i):
+        body = abs(c[i] - o[i])
+        return body, h[i] - l[i], min(o[i], c[i]) - l[i], h[i] - max(o[i], c[i])
+
+    # three candles: morning star / evening star
+    if t >= 2 and _prior_trend(c, t - 2, trend_n) == want:
+        b1, _, _, _ = parts(t - 2)
+        b2, _, _, _ = parts(t - 1)
+        small = b2 <= float(ccfg.get("star_body_frac", 0.3)) * b1
+        mid1 = (o[t - 2] + c[t - 2]) / 2
+        if direction == LONG and c[t - 2] < o[t - 2] and b1 >= strong_body and small and c[t] > o[t] and c[t] > mid1:
+            return "morning star", t - 2
+        if direction == SHORT and c[t - 2] > o[t - 2] and b1 >= strong_body and small and c[t] < o[t] and c[t] < mid1:
+            return "evening star", t - 2
+    if t >= 1:
+        body, _, _, _ = parts(t)
+        # two candles: engulfing. The engulfing candle itself must wick into the zone (first index t);
+        # its close may finish beyond the zone, which is the signal.
+        if direction == LONG and (c[t - 1] < o[t - 1] and c[t] > o[t] and o[t] <= c[t - 1] and c[t] >= o[t - 1]
+                                  and body >= strong_body):
+            return "bullish engulfing", t
+        if direction == SHORT and (c[t - 1] > o[t - 1] and c[t] < o[t] and o[t] >= c[t - 1] and c[t] <= o[t - 1]
+                                   and body >= strong_body):
+            return "bearish engulfing", t
+        # two candles: tweezer bottom / top (matching extremes after a trend)
+        tol = float(ccfg.get("tweezer_tol_atr", 0.05)) * a
+        if _prior_trend(c, t - 1, trend_n) == want:
+            if direction == LONG and c[t - 1] < o[t - 1] and c[t] > o[t] and abs(l[t] - l[t - 1]) <= tol:
+                return "tweezer bottom", t - 1
+            if direction == SHORT and c[t - 1] > o[t - 1] and c[t] < o[t] and abs(h[t] - h[t - 1]) <= tol:
+                return "tweezer top", t - 1
+    # single candle pins, judged against the trend before them
+    body, rng, lower, upper = parts(t)
+    if rng >= min_rng and rng > 0 and _prior_trend(c, t - 1, trend_n) == want:
+        long_lower = lower >= pin_mult * body and upper <= small_wick * rng
+        long_upper = upper >= pin_mult * body and lower <= small_wick * rng
+        if direction == LONG and long_lower:
+            return "hammer", t
+        if direction == LONG and long_upper:
+            return "inverted hammer", t
+        if direction == SHORT and long_upper:
+            return "shooting star", t
+        if direction == SHORT and long_lower:
+            return "hanging man", t
+    return "", t
+
+
+def _is_marubozu(o, h, l, c, t: int, a: float, direction: str, ccfg: dict) -> bool:
+    body, rng = abs(c[t] - o[t]), h[t] - l[t]
+    if rng <= 0 or body < float(ccfg["engulf_body_atr"]) * a:
+        return False
+    if (c[t] > o[t]) != (direction == LONG):
+        return False
+    return (rng - body) <= float(ccfg.get("marubozu_wick_max", 0.10)) * rng
+
+
+def candle_signal(df2: pd.DataFrame, atr2: np.ndarray, inst: Instrument, direction: str, ccfg: dict,
+                  zone_low: float, zone_high: float) -> str:
+    """[OWNER cfg-0.3.0, C4] Reversal pattern from the candlestick guide, closed on the latest completed bar,
+    counted only when the pattern traded inside the key level zone. Also counts a directional marubozu
+    that closes right after a zone reversal pattern (the guide's confirmation candle). '' if none."""
     if len(df2) < 2:
         return ""
     o, h, l, c = (df2[x].values for x in ("open", "high", "low", "close"))
@@ -579,28 +953,66 @@ def candle_signal(df2: pd.DataFrame, atr2: np.ndarray, inst: Instrument, directi
     a = atr2[t]
     if not np.isfinite(a) or a <= 0:
         return ""
-    body = abs(c[t] - o[t])
-    rng = h[t] - l[t]
-    if direction == LONG:
-        if (c[t - 1] < o[t - 1] and c[t] > o[t] and o[t] <= c[t - 1] and c[t] >= o[t - 1]
-                and body >= float(ccfg["engulf_body_atr"]) * a):
-            return "bullish engulfing"
-        if rng > 0 and c[t] - o[t] >= inst.tick:
-            lower = min(o[t], c[t]) - l[t]
-            upper = h[t] - max(o[t], c[t])
-            if (lower >= 2 * body and upper <= body and (c[t] - l[t]) / rng >= 1 - float(ccfg["rejection_close_top"])
-                    and rng >= float(ccfg["rejection_range_atr"]) * a):
-                return "bullish rejection"
-    else:
-        if (c[t - 1] > o[t - 1] and c[t] < o[t] and o[t] >= c[t - 1] and c[t] <= o[t - 1]
-                and body >= float(ccfg["engulf_body_atr"]) * a):
-            return "bearish engulfing"
-        if rng > 0 and o[t] - c[t] >= inst.tick:
-            upper = h[t] - max(o[t], c[t])
-            lower = min(o[t], c[t]) - l[t]
-            if (upper >= 2 * body and lower <= body and (h[t] - c[t]) / rng >= 1 - float(ccfg["rejection_close_top"])
-                    and rng >= float(ccfg["rejection_range_atr"]) * a):
-                return "bearish rejection"
+    name, first = _pattern_at(o, h, l, c, t, a, direction, ccfg)
+    if name and _touches_zone(h, l, range(first, t + 1), zone_low, zone_high):
+        return name
+    if t >= 2 and _is_marubozu(o, h, l, c, t, a, direction, ccfg) and np.isfinite(atr2[t - 1]) and atr2[t - 1] > 0:
+        prev, pfirst = _pattern_at(o, h, l, c, t - 1, atr2[t - 1], direction, ccfg)
+        if prev and _touches_zone(h, l, range(pfirst, t), zone_low, zone_high):
+            return f"{prev} + marubozu"
+    return ""
+
+
+def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: Instrument, zone_hw: float,
+                  cp: dict, tf: str) -> str:
+    """[OWNER cfg-0.4.0, C4] Double bottom/top and (inverse) head and shoulders on Daily or 4H, confirmed by a
+    candle CLOSE beyond the neckline (a wick does not count) within the last break_max_age_bars bars,
+    with the latest close still beyond it. The reversal extreme (a bottom, or the head) must sit in a key
+    level zone. Tolerances scale with the instrument's zone half-width. Returns '' if none."""
+    t = len(df) - 1
+    c = df["close"].values
+    seq = alternating_upto(pivots, t)
+    ext = "L" if direction == LONG else "H"
+    idx = [i for i, q in enumerate(seq) if q.kind == ext]
+    tol = float(cp["match_tol_zone_mult"][tf]) * zone_hw
+    margin = float(cp["head_margin_zone_mult"][tf]) * zone_hw
+    min_gap = int(cp["min_gap_bars"])
+    max_age = int(cp["break_max_age_bars"])
+    beyond = (lambda x, lvl: x > lvl) if direction == LONG else (lambda x, lvl: x < lvl)
+    more_extreme = (lambda a, b: a < b) if direction == LONG else (lambda a, b: a > b)
+
+    def confirmed(neck, last_k: int, extremes: list[float]) -> bool:
+        worst = min(extremes) if direction == LONG else max(extremes)
+        brk = None
+        for k in range(last_k + 1, t + 1):
+            if (c[k] < worst) if direction == LONG else (c[k] > worst):
+                return False                       # closed through the pattern's extreme: void
+            if brk is None and beyond(c[k], neck(k)):
+                brk = k
+        return brk is not None and t - brk < max_age and beyond(c[t], neck(t))
+
+    def in_zone(price: float) -> bool:
+        return in_psych_zone(inst, price, zone_hw)[0]
+
+    # head and shoulders: shoulder, trough, head, trough, shoulder
+    if len(idx) >= 3:
+        s1, hd, s2 = (seq[i] for i in idx[-3:])
+        t1, t2 = seq[idx[-2] - 1], seq[idx[-1] - 1]
+        if (more_extreme(hd.price, s1.price) and more_extreme(hd.price, s2.price)
+                and abs(hd.price - s1.price) >= margin and abs(hd.price - s2.price) >= margin
+                and abs(s1.price - s2.price) <= tol and s2.k - s1.k >= min_gap and in_zone(hd.price)
+                and t2.k > t1.k):
+            slope = (t2.price - t1.price) / (t2.k - t1.k)
+            if confirmed(lambda k: t1.price + slope * (k - t1.k), s2.k, [s1.price, hd.price, s2.price]):
+                return "inverse head and shoulders" if direction == LONG else "head and shoulders"
+    # double bottom / top
+    if len(idx) >= 2:
+        e1, e2 = seq[idx[-2]], seq[idx[-1]]
+        neck = seq[idx[-1] - 1].price
+        if (abs(e1.price - e2.price) <= tol and e2.k - e1.k >= min_gap
+                and (in_zone(e1.price) or in_zone(e2.price))):
+            if confirmed(lambda k: neck, e2.k, [e1.price, e2.price]):
+                return "double bottom" if direction == LONG else "double top"
     return ""
 
 
@@ -1211,6 +1623,10 @@ class Row:
     zone_level: Optional[float] = None
     zone_kind: str = ""
     zone_half_width: Optional[float] = None
+    zone_low: Optional[float] = None
+    zone_high: Optional[float] = None
+    zone_width_source: str = ""
+    zone_wicks: int = 0
     daily_bias: str = ""
     bias_invalidation: Optional[float] = None
     structure_4h: str = ""
@@ -1218,6 +1634,8 @@ class Row:
     impulse_note: str = ""
     ladder_in_zone: dict = field(default_factory=dict)
     candle: str = ""
+    c4_tf: str = ""              # timeframe of the reversal confirmation: D, 4H or 2H
+    c4_tf_rank: int = 0          # D 3, 4H 2, 2H 1: higher timeframe ranks first on equal totals
     trendline: str = ""
     cot: dict = field(default_factory=dict)
     sentiment: dict = field(default_factory=dict)
@@ -1239,6 +1657,16 @@ class InstrumentResult:
     c2_reject: bool = False
 
 
+def setup_section(c1: bool, c2: bool, c4: bool, technical: int, require_close_in_zone: bool = False) -> str:
+    """[OWNER cfg-0.4.0] Qualified: C1, a reversal confirmation closed in a key level zone (C4, 2H or higher),
+    and at least 3 checks. Developing: C1 and price in the zone (C2) with 2+ checks, no reversal yet."""
+    if c1 and c4 and technical >= 3 and (c2 or not require_close_in_zone):
+        return "qualified"
+    if c1 and c2 and technical >= 2:
+        return "developing"
+    return "not shown"
+
+
 def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict, cot_reading: CotReading,
                      sent: dict, cal: dict, sent_engine: SentimentEngine) -> list[Row]:
     f = cfg["features"]
@@ -1247,6 +1675,7 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
     piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)
     atr4 = atr(df4, int(f["atr_period"]))
     atr2 = atr(df2, int(f["atr_period"]))
+    atrd = atr(dfd, int(f["atr_period"]))
     c2h = df2["close"].values
     e_fast, e_slow = (ema(c2h, int(n)) for n in f["ema_2h"])
     ed20, ed50 = (ema(dfd["close"].values, int(n)) for n in f["ema_daily"])
@@ -1268,11 +1697,21 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         imp, note = select_impulse(df4, piv_4, atr4, direction, f)
         r.impulse_note = note
         hw_atr = imp.atr_at_recognition if imp else atr4[-1]
-        hw = zone_half_width(inst, hw_atr, f)
-        r.zone_half_width = hw
+        hw = zone_half_width(inst, hw_atr, f)   # fib (C3) and trend line (C6) tolerance
+        # [OWNER cfg-0.2.0] Key level zones: fixed width from config, ATR width where none is set
+        zhw, zsrc = psych_zone_half_width(inst, hw)
+        r.zone_half_width, r.zone_width_source = zhw, zsrc
+        if zsrc == "atr":
+            r.flags.append("zone width not set: ATR width used")
         # C2 [v1.0 Z01 / C2] at the latest completed 2H close  [Add 6.1]
-        ok, lvl, kind = in_psych_zone(inst, P, hw)
+        ok, lvl, kind = in_psych_zone(inst, P, zhw)
         r.c2, r.zone_level, r.zone_kind = ok, lvl, kind
+        r.zone_low, r.zone_high = lvl - zhw, lvl + zhw
+        # [OWNER cfg-0.2.0] Wick principle: wicks testing the zone are an early alert, never a scored check
+        wcfg = f.get("zone_wicks", {})
+        r.zone_wicks = zone_wick_tests(df2, direction, r.zone_low, r.zone_high, int(wcfg.get("lookback_2h_bars", 6)))
+        if r.zone_wicks >= int(wcfg.get("min_count", 2)):
+            r.flags.append(f"zone tested: {r.zone_wicks} wicks")
         # C3 Fibonacci
         if imp:
             r.impulse = {"A": imp.a_price, "B": imp.b_price, "A_time": imp.a_time, "B_time": imp.b_time,
@@ -1281,9 +1720,17 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
             fibs = [imp.fib(float(x)) for x in f["fib_levels"]]
             r.c3 = any(abs(P - fv) <= hw for fv in fibs)
             for x, fv in zip(f["fib_levels"], fibs):
-                r.ladder_in_zone[f"{float(x) * 100:.1f}"] = in_psych_zone(inst, fv, hw)[0]
+                r.ladder_in_zone[f"{float(x) * 100:.1f}"] = in_psych_zone(inst, fv, zhw)[0]
         # C4 candle, C5 EMA, C6 trend line
-        r.candle = candle_signal(df2, atr2, inst, direction, f["candle"])
+        # [OWNER cfg-0.4.0] C4: reversal that started at the zone and closed on 2H or higher; Daily beats 4H beats 2H
+        cp = f["chart_patterns"]
+        for tf, df_tf, atr_tf, piv_tf, tf_rank in ((TF_D, dfd, atrd, piv_d, 3), (TF_4H, df4, atr4, piv_4, 2),
+                                                  (TF_2H, df2, atr2, None, 1)):
+            name = chart_pattern(df_tf, piv_tf, direction, inst, zhw, cp, tf) if tf in cp["timeframes"] else ""
+            name = name or candle_signal(df_tf, atr_tf, inst, direction, f["candle"], r.zone_low, r.zone_high)
+            if name:
+                r.candle, r.c4_tf, r.c4_tf_rank = f"{tf} {name}", tf, tf_rank
+                break
         r.c4 = bool(r.candle)
         if np.isfinite(e_fast[-1]) and np.isfinite(e_slow[-1]):
             r.c5 = e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1]
@@ -1303,10 +1750,8 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.calendar = dict(cal)
         r.total = r.technical + r.cot_points + r.sentiment_points
         # Section [Add 8]
-        if r.c1 and r.c2 and r.technical >= 3:
-            r.section = "qualified"
-        elif r.c1 and r.c2 and r.technical == 2:
-            r.section = "developing"
+        r.section = setup_section(r.c1, r.c2, r.c4, r.technical,
+                                  bool(cfg.get("qualification", {}).get("require_close_in_zone", False)))
         # v1.0 short experiment flag for gold and S&P [Add 3]
         if inst.short_test and direction == SHORT:
             dclose = float(dfd["close"].values[-1])
@@ -1332,15 +1777,19 @@ def rejection_reason(rows: list[Row]) -> str:
     r = next(x for x in rows if x.direction == bias)
     if r.structure_4h != bias:
         return "4H disagrees"
-    if not r.c2:
-        return "C2 outside zone"
+    if not r.c2 and not r.c4:
+        return "outside key level zone"
+    if not r.c4:
+        return "in zone, no reversal candle closed yet"
     return f"technical score {r.technical}"
 
 
 def rank(rows: list[Row], top_n: int = 5) -> list[Row]:
-    """[Add 8] Qualified before developing; total desc; ties: technical, COT points, symbol. Never pad."""
+    """[Add 8] Qualified before developing; total desc; ties: C4 timeframe (D > 4H > 2H), technical,
+    COT points, symbol. Never pad."""
     cands = [r for r in rows if r.section in ("qualified", "developing")]
-    cands.sort(key=lambda r: (0 if r.section == "qualified" else 1, -r.total, -r.technical, -r.cot_points, r.symbol))
+    cands.sort(key=lambda r: (0 if r.section == "qualified" else 1, -r.total, -r.c4_tf_rank, -r.technical,
+                              -r.cot_points, r.symbol))
     top = cands[:top_n]
     for i, r in enumerate(top, 1):
         r.rank = i
@@ -1375,9 +1824,43 @@ def _ck(b: bool) -> str:
     return '<span class="ok">✓</span>' if b else '<span class="no">·</span>'
 
 
-def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict]) -> str:
+def render_broker(broker: Optional[dict]) -> str:
+    """[OWNER cfg-0.5.0] Dashboard sections: MT5 broker prices for the currency pairs and open positions."""
     e = html.escape
-    css = """
+    if not broker:
+        return ""
+    out = "<h2>Open positions (MT5)</h2>"
+    if not broker.get("connected"):
+        return out + f"<div class='banner warn'>MT5 unavailable: {e(broker.get('status', ''))}</div>"
+    pos = broker.get("positions", [])
+    if not pos:
+        out += "<p class='muted'>No open positions.</p>"
+    else:
+        out += ("<div class='wrap'><table><tr><th>Ticket</th><th>Instrument</th><th>Dir</th><th class='num'>Lots</th>"
+                "<th>Opened (UTC)</th><th class='num'>Entry</th><th class='num'>Now</th><th class='num'>SL</th>"
+                "<th class='num'>TP</th><th class='num'>Swap</th><th class='num'>P/L</th><th>Comment</th></tr>")
+        for p in pos:
+            pl_cls = "long" if p["profit"] >= 0 else "short"
+            out += (f"<tr><td>{p['ticket']}</td><td><b>{e(p['symbol'])}</b></td><td class='{p['direction']}'>{p['direction']}</td>"
+                    f"<td class='num'>{p['volume']}</td><td>{e(p['open_utc'])}</td><td class='num'>{_fmt(p['open_price'], 6)}</td>"
+                    f"<td class='num'>{_fmt(p['price'], 6)}</td><td class='num'>{_fmt(p['sl'], 6)}</td><td class='num'>{_fmt(p['tp'], 6)}</td>"
+                    f"<td class='num'>{p['swap']:.2f}</td><td class='num {pl_cls}'>{p['profit']:.2f}</td><td>{e(p['comment'])}</td></tr>")
+        out += "</table></div>"
+    prices = broker.get("prices", [])
+    live = [p for p in prices if p["bid"] is not None]
+    out += (f"<details><summary>Broker prices (MT5), {len(live)} of {len(prices)} currency pairs quoting</summary>"
+            "<div class='wrap'><table><tr><th>Pair</th><th class='num'>Bid</th><th class='num'>Ask</th>"
+            "<th class='num'>Spread (pips)</th><th>Tick time (UTC)</th></tr>")
+    for p in prices:
+        if p["bid"] is None:
+            out += f"<tr><td>{e(p['symbol'])}</td><td colspan='4' class='muted'>no quote from MT5</td></tr>"
+            continue
+        out += (f"<tr><td>{e(p['symbol'])}</td><td class='num'>{_fmt(p['bid'], 6)}</td><td class='num'>{_fmt(p['ask'], 6)}</td>"
+                f"<td class='num'>{p['spread_pips']}</td><td class='muted'>{e(p['time_utc'])}</td></tr>")
+    return out + "</table></div></details>"
+
+
+_CSS = """
     :root{--bg:#fff;--fg:#1b1f24;--muted:#5b6470;--line:#e3e6ea;--card:#f6f8fa;--good:#1a7f37;--warn:#9a6700;--bad:#cf222e;--acc:#0b5cad}
     @media (prefers-color-scheme: dark){:root{--bg:#0f1216;--fg:#e6e9ee;--muted:#9aa4b2;--line:#2a3038;--card:#161b22;--good:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff}}
     *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -1391,9 +1874,18 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     .long{color:var(--good);font-weight:600} .short{color:var(--bad);font-weight:600} .num{text-align:right;font-variant-numeric:tabular-nums}
     .warn{color:var(--warn)} details{margin-top:10px} summary{cursor:pointer;color:var(--acc)} ul{margin:4px 0;padding-left:18px}
     .banner{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);margin:10px 0}
+    nav{display:flex;gap:16px;margin:0 0 12px;font-size:13px} nav a{color:var(--acc)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
+    .card{border:1px solid var(--line);border-radius:8px;background:var(--card);padding:10px 12px} .card b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
     """
-    fr = "".join(f"<span><b>{e(k)}:</b> {e(str(v))}</span>" for k, v in meta["freshness"].items())
-    head = (f"<h1>Daily Instrument Scanner · {e(meta['run_type'])}</h1>"
+
+
+def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict], broker: Optional[dict] = None) -> str:
+    e = html.escape
+    css = _CSS
+    fr ="".join(f"<span><b>{e(k)}:</b> {e(str(v))}</span>" for k, v in meta["freshness"].items())
+    head = ("<nav><b>Scanner dashboard</b><a href='journal.html'>Trading journal and balance</a></nav>"
+            f"<h1>Daily Instrument Scanner · {e(meta['run_type'])}</h1>"
             f"<div class='muted'>{e(meta['asof_utc'])} UTC · {e(meta['asof_local'])} · addendum {e(meta['addendum_version'])}"
             f" · config {e(meta['config_version'])} · code {e(meta['code_version'])}</div>"
             f"<div class='meta muted'>{fr}</div>")
@@ -1408,10 +1900,13 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     if n:
         body += "<div class='wrap'><table><tr><th>#</th><th>Section</th><th>Instrument</th><th>Group</th><th>Dir</th>" \
                 "<th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th><th class='num'>Tech</th>" \
-                "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Ladder in zone</th>" \
+                "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Zone</th><th>Ladder in zone</th>" \
                 "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th></tr>"
         for r in top:
             lad = " ".join(f"{k}{'✓' if v else '·'}" for k, v in r.ladder_in_zone.items()) or "no impulse"
+            zone_txt = (f"{_fmt(r.zone_level, 6)} {e(r.zone_kind)}<br><span class='muted'>{_fmt(r.zone_low, 6)} to "
+                        f"{_fmt(r.zone_high, 6)}{' (ATR)' if r.zone_width_source == 'atr' else ''} · wicks {r.zone_wicks}</span>"
+                        + (f"<br>reversal: {e(r.candle)}" if r.candle else ""))
             c = r.cot
             cot_txt = ("unavailable" if c.get("index") is None else
                        f"idx {c['index']:.0f} · Δnet {_fmt(c.get('weekly_change'), 4)} {c.get('crowding','')}<br>"
@@ -1434,15 +1929,21 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                      f"<span class='muted'>{_fmt(r.ref_price, 6)}</span></td><td>{e(r.group)}</td><td class='{r.direction}'>{r.direction}</td>"
                      + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
                      + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td>"
-                     f"<td class='num'><b>{r.total}</b></td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
+                     f"<td class='num'><b>{r.total}</b></td><td>{zone_txt}</td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
                      f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td></tr>")
         body += "</table></div>"
+    body += render_broker(broker)
     # all scored candidates
     cands = sorted([r for r in all_rows if r.section != "not shown"], key=lambda r: (r.section != "qualified", -r.total))
+    body += ("<p class='muted'>Qualified: C1 + a reversal closed in a key level zone (C4, 2H or higher) + at least 3 of C1-C6. "
+             "Developing: C1 + price in the zone (C2) + 2 or more checks, reversal not closed yet.</p>")
     body += f"<details><summary>All qualified and developing setups ({len(cands)})</summary><div class='wrap'><table>" \
-            "<tr><th>Instrument</th><th>Dir</th><th>Section</th><th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Notes</th></tr>"
+            "<tr><th>Instrument</th><th>Dir</th><th>Section</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>" \
+            "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Notes</th></tr>"
     for r in cands:
-        body += (f"<tr><td>{e(r.symbol)}</td><td class='{r.direction}'>{r.direction}</td><td>{e(r.section)}</td><td class='num'>{r.technical}</td>"
+        body += (f"<tr><td>{e(r.symbol)}</td><td class='{r.direction}'>{r.direction}</td><td>{e(r.section)}</td>"
+                 + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
+                 + f"<td class='num'>{r.technical}</td>"
                  f"<td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td><td class='num'>{r.total}</td>"
                  f"<td class='wrapc'>{e('; '.join(r.flags))}</td></tr>")
     body += "</table></div></details>"
@@ -1453,22 +1954,27 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                  f"<td class='wrapc'>{e(f['status'])}</td><td class='muted'>{e(f['provider'])}</td></tr>")
     body += "</table></div>"
     body += ("<p class='muted' style='margin-top:18px'>Rules: Scanner Addendum v0.1 on Trading Algorithm Specification v1.0. "
-             "C2 and C3 are tested at the latest completed 2H close. TradingView and Forex Factory access are unofficial and may stop "
+             "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-15 pips around every major "
+             "and mid level); wicks counts recent 2H wick rejections inside the zone, an early alert only. "
+             "C4 counts a candlestick reversal pattern only when it forms inside the key level zone. TradingView and Forex Factory access are unofficial and may stop "
              "without notice. FinBERT tone on FX and commodity headlines is untested.</p>")
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             f"<title>Scanner {e(meta['asof_utc'])}</title><style>{css}</style></head><body><main>{head}{body}</main></body></html>")
 
 
-def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict]) -> dict[str, Path]:
+def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict],
+                  broker: Optional[dict] = None) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"scan_{meta['stamp']}_{meta['run_type'].replace(' ', '')}"
     paths = {"html": out_dir / f"{stem}.html", "json": out_dir / f"{stem}.json", "csv": out_dir / f"{stem}.csv"}
-    paths["html"].write_text(render_html(meta, top, all_rows, footer), encoding="utf-8")
+    paths["html"].write_text(render_html(meta, top, all_rows, footer, broker), encoding="utf-8")
     payload = {"meta": meta, "top": [asdict(r) for r in top], "rows": [asdict(r) for r in all_rows], "instruments": footer}
+    if broker:
+        payload["broker"] = {k: v for k, v in broker.items() if k != "account"}
     paths["json"].write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     flat_keys = ["symbol", "group", "direction", "section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical",
                  "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
-                 "zone_half_width", "daily_bias", "bias_invalidation", "structure_4h", "candle", "trendline",
+                 "zone_half_width", "zone_low", "zone_high", "zone_width_source", "zone_wicks", "daily_bias", "bias_invalidation", "structure_4h", "candle", "c4_tf", "trendline",
                  "impulse_note", "short_test", "same_underlying", "roll"]
     with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
@@ -1500,6 +2006,245 @@ def append_c2_log(log_dir: Path, meta: dict, results: list[InstrumentResult]) ->
 
 
 # =============================================================================
+# Trading journal and balance page  [OWNER cfg-0.5.0]
+# =============================================================================
+
+DEAL_BUY, DEAL_SELL = 0, 1
+DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT, DEAL_ENTRY_OUT_BY = 0, 1, 2, 3
+JOURNAL_CONF_KEYS = ("section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical", "cot_points",
+                     "sentiment_points", "total", "candle", "c4_tf", "zone_level", "zone_kind", "daily_bias",
+                     "structure_4h", "reason", "flags")
+
+
+def build_trades(deals: list[dict], positions: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Group MT5 deals by position into one journal line per trade. Returns (trades, cash movements).
+    Open positions whose opening deal falls outside the history window still get a line."""
+    by_pos: dict[int, list[dict]] = {}
+    cash = []
+    for d in deals:
+        if d["type"] not in (DEAL_BUY, DEAL_SELL):
+            cash.append(d)   # balance, credit, charges and other non trade deals
+            continue
+        by_pos.setdefault(d["position_id"], []).append(d)
+    open_by_ticket = {p["ticket"]: p for p in positions}
+    trades = []
+    for pid, ds in by_pos.items():
+        ds = sorted(ds, key=lambda d: d["time"])
+        ins = [d for d in ds if d["entry"] in (DEAL_ENTRY_IN, DEAL_ENTRY_INOUT)]
+        outs = [d for d in ds if d["entry"] in (DEAL_ENTRY_OUT, DEAL_ENTRY_OUT_BY)]
+        if not ins:
+            continue  # opened before the history window; covered below if still open
+        vol_in = sum(d["volume"] for d in ins)
+        vol_out = sum(d["volume"] for d in outs)
+        t = {"position_id": pid, "symbol": ins[0]["symbol"], "mt5_symbol": ins[0]["mt5_symbol"],
+             "direction": LONG if ins[0]["type"] == DEAL_BUY else SHORT, "volume": vol_in,
+             "open_ts": ins[0]["time"], "entry_price": sum(d["price"] * d["volume"] for d in ins) / vol_in,
+             "close_ts": outs[-1]["time"] if outs else None,
+             "exit_price": sum(d["price"] * d["volume"] for d in outs) / vol_out if vol_out else None,
+             "net": sum(d["profit"] + d["commission"] + d["swap"] + d["fee"] for d in ds),
+             "status": "closed" if outs and vol_out >= vol_in - 1e-9 else ("partly closed" if outs else "open"),
+             "comment": ins[0]["comment"]}
+        if pid in open_by_ticket:
+            t["net"] += open_by_ticket[pid]["profit"] + open_by_ticket[pid]["swap"]
+            t["status"] = "open" if not outs else "partly closed"
+        trades.append(t)
+    seen = {t["position_id"] for t in trades}
+    for p in positions:
+        if p["ticket"] not in seen:
+            trades.append({"position_id": p["ticket"], "symbol": p["symbol"], "mt5_symbol": p["mt5_symbol"],
+                           "direction": p["direction"], "volume": p["volume"],
+                           "open_ts": pd.Timestamp(p["open_utc"], tz=UTC), "entry_price": p["open_price"],
+                           "close_ts": None, "exit_price": None, "net": p["profit"] + p["swap"],
+                           "status": "open", "comment": p["comment"]})
+    trades.sort(key=lambda t: t["open_ts"], reverse=True)
+    return trades, cash
+
+
+def load_scan_history(out_dir: Path) -> list[dict]:
+    """Every live (non demo) scan written so far, oldest first, with its rows keyed by (symbol, direction)."""
+    scans = []
+    for p in sorted(out_dir.glob("scan_*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            LOG.warning("journal: cannot read %s: %s", p.name, exc)
+            continue
+        m = d.get("meta", {})
+        if m.get("demo") or "asof_utc" not in m:
+            continue
+        rows = {(r["symbol"], r["direction"]): {k: r.get(k) for k in JOURNAL_CONF_KEYS} for r in d.get("rows", [])}
+        scans.append({"asof": pd.Timestamp(m["asof_utc"], tz=UTC), "file": p.with_suffix(".html").name,
+                      "run_type": m.get("run_type", ""), "config_version": m.get("config_version", ""), "rows": rows})
+    scans.sort(key=lambda s: s["asof"])
+    return scans
+
+
+def confluences_before(scans: list[dict], symbol: str, direction: str, entry: pd.Timestamp) -> Optional[dict]:
+    """The confluences the most recent scan before the entry logged for this instrument and direction."""
+    for s in reversed(scans):
+        if s["asof"] <= entry and (symbol, direction) in s["rows"]:
+            return {**s["rows"][(symbol, direction)], "scan_asof": s["asof"], "scan_file": s["file"],
+                    "scan_run": s["run_type"], "config_version": s["config_version"],
+                    "age_hours": round((entry - s["asof"]).total_seconds() / 3600, 1)}
+    return None
+
+
+def append_account_snapshot(log_dir: Path, label: str, asof: pd.Timestamp, acct: dict) -> Path:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    p = log_dir / "mt5_account.csv"
+    keys = ["balance", "equity", "margin", "free_margin", "margin_level", "profit", "currency", "server", "login"]
+    new = not p.exists()
+    with open(p, "a", newline="", encoding="utf-8") as fh:
+        wr = csv.writer(fh)
+        if new:
+            wr.writerow(["time_utc", "run"] + keys)
+        wr.writerow([asof.strftime("%Y-%m-%d %H:%M"), label] + [acct.get(k) for k in keys])
+    return p
+
+
+def _money(v, cur: str = "") -> str:
+    return "–" if v is None or (isinstance(v, float) and not math.isfinite(v)) else f"{v:,.2f}{(' ' + cur) if cur else ''}"
+
+
+def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, history: pd.DataFrame, trades: list[dict],
+                        cash: list[dict], status: str, latest_dashboard: str, history_days: int) -> str:
+    e = html.escape
+
+    def local(t) -> str:
+        return "–" if t is None else pd.Timestamp(t).tz_convert(disp_tz).strftime("%Y-%m-%d %I:%M %p %Z")
+
+    cur = acct.get("currency", "")
+    nav = ("<nav>" + (f"<a href='{e(latest_dashboard)}'>Scanner dashboard</a>" if latest_dashboard else "<span class='muted'>Scanner dashboard</span>")
+           + "<b>Trading journal and balance</b></nav>")
+    head = (f"<h1>Trading journal and balance</h1><div class='muted'>Built {e(asof.strftime('%Y-%m-%d %H:%M'))} UTC · "
+            f"{e(local(asof))} · MT5 {e(status)}</div>")
+    if not acct:
+        body = f"<div class='banner warn'>MT5 account unavailable: {e(status)}. The page shows logged history only.</div>"
+    else:
+        mode = acct.get("mode", "")
+        body = ("<div class='banner" + (" warn'><b>LIVE ACCOUNT.</b> " if mode == "real" else "'>")
+                + f"{e(acct.get('server', ''))} · login {acct.get('login')} · {e(mode)} · leverage 1:{acct.get('leverage')}. "
+                "Read only: this report never places, changes or closes orders.</div>")
+        cards = [("Balance", _money(acct.get("balance"), cur)), ("Equity", _money(acct.get("equity"), cur)),
+                 ("Open P/L", _money(acct.get("profit"), cur)), ("Margin used", _money(acct.get("margin"), cur)),
+                 ("Free margin", _money(acct.get("free_margin"), cur)),
+                 ("Margin level", f"{acct['margin_level']:,.0f}%" if acct.get("margin_level") else "–")]
+        body += "<div class='cards'>" + "".join(f"<div class='card'><span class='muted'>{k}</span><b>{v}</b></div>" for k, v in cards) + "</div>"
+    # balance history
+    body += "<h2>Balance history</h2>"
+    if history.empty:
+        body += "<p class='muted'>No snapshots yet. One is logged every scan and every journal build.</p>"
+    else:
+        h = history.tail(60).iloc[::-1]
+        body += ("<p class='muted'>One snapshot per scan or journal build, newest first (last 60). Full log: logs/mt5_account.csv</p>"
+                 "<div class='wrap'><table><tr><th>Time</th><th>Run</th><th class='num'>Balance</th><th class='num'>Change</th>"
+                 "<th class='num'>Equity</th><th class='num'>Open P/L</th><th class='num'>Margin used</th></tr>")
+        bal = history["balance"].astype(float)
+        chg = bal.diff()
+        for i, r in h.iterrows():
+            c = chg.loc[i]
+            c_txt = "–" if pd.isna(c) else f"<span class='{'long' if c > 0 else 'short' if c < 0 else 'muted'}'>{c:+,.2f}</span>"
+            body += (f"<tr><td>{e(local(pd.Timestamp(r['time_utc'], tz=UTC)))}</td><td>{e(str(r['run']))}</td>"
+                     f"<td class='num'>{_money(float(r['balance']))}</td><td class='num'>{c_txt}</td>"
+                     f"<td class='num'>{_money(float(r['equity']))}</td><td class='num'>{_money(float(r['profit']))}</td>"
+                     f"<td class='num'>{_money(float(r['margin']))}</td></tr>")
+        body += "</table></div>"
+    # trades
+    n_open = sum(1 for t in trades if t["status"] != "closed")
+    body += (f"<h2>Positions taken ({len(trades)}, {n_open} open)</h2>"
+             f"<p class='muted'>From MT5 deal history (last {history_days} days) plus open positions. Confluences are the ones the "
+             "scanner logged for that instrument and direction in the last live scan before the entry, so you can compare "
+             "what the screen said with what was traded.</p>")
+    if not trades:
+        body += "<p class='muted'>No positions in the history window.</p>"
+    else:
+        body += ("<div class='wrap'><table><tr><th>Position</th><th>Instrument</th><th>Dir</th><th class='num'>Lots</th>"
+                 "<th>Opened</th><th class='num'>Entry</th><th>Closed</th><th class='num'>Exit</th><th class='num'>Net P/L</th>"
+                 "<th>Status</th><th>Scan before entry</th><th>Setup</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>"
+                 "<th class='num'>Total</th><th>Reversal / zone</th></tr>")
+        for t in trades:
+            cf = t.get("confluences")
+            pl_cls = "long" if t["net"] >= 0 else "short"
+            row = (f"<tr><td>{t['position_id']}</td><td><b>{e(t['symbol'])}</b></td><td class='{t['direction']}'>{t['direction']}</td>"
+                   f"<td class='num'>{t['volume']:g}</td><td>{e(local(t['open_ts']))}</td><td class='num'>{_fmt(t['entry_price'], 6)}</td>"
+                   f"<td>{e(local(t['close_ts']))}</td><td class='num'>{_fmt(t['exit_price'], 6)}</td>"
+                   f"<td class='num {pl_cls}'>{_money(t['net'])}</td><td>{e(t['status'])}</td>")
+            if not cf:
+                row += f"<td colspan='10' class='muted'>{e(t.get('confluence_note', 'no scan logged before entry'))}</td></tr>"
+            else:
+                sec = cf.get("section") or ""
+                cls = "q" if sec == "qualified" else "d" if sec == "developing" else ""
+                stale = cf["age_hours"] > 24
+                row += (f"<td><a href='{e(cf['scan_file'])}'>{e(cf['scan_asof'].strftime('%m-%d %H:%M'))} UTC</a><br>"
+                        f"<span class='{'warn' if stale else 'muted'}'>{cf['age_hours']}h before entry</span></td>"
+                        f"<td><span class='tag {cls}'>{e(sec)}</span>{(' #' + str(cf['rank'])) if cf.get('rank') else ''}</td>"
+                        + "".join(f"<td>{_ck(bool(cf.get(k)))}</td>" for k in ("c1", "c2", "c3", "c4", "c5", "c6"))
+                        + f"<td class='num'>{cf.get('total')}</td><td class='wrapc'>{e(cf.get('candle') or '')}"
+                        f"{' · ' if cf.get('candle') else ''}zone {_fmt(cf.get('zone_level'), 6)} {e(cf.get('zone_kind') or '')}"
+                        + (f"<br><span class='muted'>{e(cf.get('reason') or '')}</span>" if sec == "not shown" else "")
+                        + "</td></tr>")
+            body += row
+        body += "</table></div>"
+    if cash:
+        body += ("<h2>Deposits, withdrawals and charges</h2><div class='wrap'><table><tr><th>Time</th><th class='num'>Amount</th>"
+                 "<th>Comment</th></tr>")
+        for d in sorted(cash, key=lambda d: d["time"], reverse=True):
+            body += (f"<tr><td>{e(local(d['time']))}</td><td class='num'>{_money(d['profit'] + d['commission'] + d['fee'])}</td>"
+                     f"<td>{e(d['comment'])}</td></tr>")
+        body += "</table></div>"
+    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>Trading Journal</title><style>{_CSS}</style></head><body><main>{nav}{head}{body}</main></body></html>")
+
+
+def write_journal(cfg: dict, base: Path, out_dir: Path, client: Optional[Mt5Client], asof: pd.Timestamp,
+                  label: str, latest_dashboard: str = "") -> Path:
+    """[OWNER cfg-0.5.0] Rebuild output/journal.html and logs/trade_journal.csv from MT5 and the scan archive."""
+    jcfg = cfg.get("journal", {})
+    days = int(jcfg.get("history_days", 365))
+    log_dir = base / cfg["paths"]["log_dir"]
+    acct, trades, cash = {}, [], []
+    status = client.status if client else "disabled"
+    if client and client.mt5:
+        try:
+            acct = client.account()
+            trades, cash = build_trades(client.deals(days), client.positions())
+            if acct:
+                append_account_snapshot(log_dir, label, asof, acct)
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("journal: MT5 read failed: %s", exc)
+            status = f"read failed: {exc}"
+    scans = load_scan_history(out_dir)
+    for t in trades:
+        t["confluences"] = confluences_before(scans, t["symbol"], t["direction"], t["open_ts"])
+        if not t["confluences"]:
+            in_universe = any((t["symbol"], t["direction"]) in s["rows"] for s in scans)
+            t["confluence_note"] = ("no scan logged before entry" if in_universe or not scans
+                                    else f"{t['mt5_symbol']} is not in the scanner universe")
+    if not latest_dashboard:
+        latest_dashboard = scans[-1]["file"] if scans else ""
+    p_hist = log_dir / "mt5_account.csv"
+    history = pd.read_csv(p_hist) if p_hist.exists() else pd.DataFrame()
+    disp_tz = ZoneInfo(cfg.get("display_timezone", "America/Chicago"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "journal.html"
+    path.write_text(render_journal_html(asof, disp_tz, acct, history, trades, cash, status, latest_dashboard, days),
+                    encoding="utf-8")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / "trade_journal.csv", "w", newline="", encoding="utf-8") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(["position_id", "symbol", "mt5_symbol", "direction", "volume", "open_utc", "entry_price", "close_utc",
+                     "exit_price", "net", "status", "comment", "scan_asof_utc", "scan_age_hours"] + list(JOURNAL_CONF_KEYS))
+        for t in trades:
+            cf = t.get("confluences") or {}
+            wr.writerow([t["position_id"], t["symbol"], t["mt5_symbol"], t["direction"], t["volume"], fmt_ts(t["open_ts"]),
+                         t["entry_price"], fmt_ts(t["close_ts"]), t["exit_price"], round(t["net"], 2), t["status"], t["comment"],
+                         fmt_ts(cf.get("scan_asof")), cf.get("age_hours")]
+                        + [("; ".join(cf[k]) if k == "flags" and cf.get(k) else cf.get(k)) for k in JOURNAL_CONF_KEYS])
+    LOG.info("journal: %d positions, %d open; wrote %s", len(trades), sum(1 for t in trades if t["status"] != "closed"), path)
+    return path
+
+
+# =============================================================================
 # Run orchestration
 # =============================================================================
 
@@ -1522,10 +2267,28 @@ def run_scan(cfg: dict, base: Path, run: str, asof: pd.Timestamp, source: str, d
     by_sym = {i.symbol: i for i in universe}
     LOG.info("run %s at %s UTC, %d instruments, config %s", run_type, asof, len(universe), cfg["config_version"])
 
+    # [OWNER cfg-0.5.0] MT5 is read only: currency bars, broker prices, open positions, journal
+    client: Optional[Mt5Client] = None
+    if not demo and cfg.get("mt5", {}).get("enabled", False):
+        client = Mt5Client(cfg)
+        if not client.connect():
+            LOG.warning("MT5 unavailable (%s); currency pairs use TradingView", client.status)
+    try:
+        return _run_scan(cfg, base, run_type, daily_cutoff, universe, by_sym, asof, source, demo, out_dir, client)
+    finally:
+        if client:
+            client.shutdown()
+
+
+def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, universe: list[Instrument],
+              by_sym: dict[str, Instrument], asof: pd.Timestamp, source: str, demo: bool, out_dir: Optional[Path],
+              client: Optional[Mt5Client]) -> dict[str, Path]:
     if demo:
         src: BarSource = DemoSource(asof)
     elif source == "csv":
         src = CsvSource(cfg, base)
+    elif client and client.mt5 and cfg["bars"].get("fx_source") == "mt5":
+        src = RoutedSource(Mt5Source(client, cfg), TradingViewSource(cfg), int(cfg["bars"]["min_completed_bars"]))
     else:
         src = TradingViewSource(cfg)
 
@@ -1613,9 +2376,29 @@ def run_scan(cfg: dict, base: Path, run: str, asof: pd.Timestamp, source: str, d
                 "Headlines": f"{head_status}; {len(recent)} in last {cfg['sentiment']['window_hours']}h; tone model {tone.status}",
             },
             "instruments_scanned": len(universe), "instruments_with_errors": sum(1 for r in results if r.errors)}
+    broker = None
+    if client:
+        broker = {"connected": bool(client.mt5), "status": client.status}
+        if client.mt5:
+            fallback = getattr(src, "fallback", {})
+            meta["freshness"]["MT5"] = (f"{client.status}; {client.clock_note}"
+                                        + (f"; TradingView fallback for {', '.join(fallback)} (see Bars column)" if fallback else ""))
+            try:
+                broker["prices"] = client.prices([i.symbol for i in universe if i.asset == "fx"])
+                broker["positions"] = client.positions()
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("MT5 prices/positions failed: %s", exc)
+                broker = {"connected": False, "status": f"read failed: {exc}"}
+        else:
+            meta["freshness"]["MT5"] = f"unavailable: {client.status}"
     od = out_dir or (base / cfg["paths"]["output_dir"])
-    paths = write_outputs(od, meta, top, all_rows, footer)
+    paths = write_outputs(od, meta, top, all_rows, footer, broker)
     append_c2_log(base / cfg["paths"]["log_dir"], meta, results)
+    if client:
+        try:
+            paths["journal"] = write_journal(cfg, base, od, client, asof, run_type, paths["html"].name)
+        except Exception:  # noqa: BLE001
+            LOG.exception("journal build failed")
     LOG.info("top %d: %s", len(top), ", ".join(f"{r.symbol} {r.direction} {r.total}" for r in top) or "none")
     LOG.info("wrote %s", paths["html"])
     return paths
@@ -1682,6 +2465,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--asof", default=None, help="decision time, e.g. 2026-10-02T12:05Z (default: now)")
     ap.add_argument("--demo", action="store_true", help="synthetic data, no network")
     ap.add_argument("--daemon", action="store_true", help="stay running and scan at 00:05 and 12:05 UTC")
+    ap.add_argument("--journal", action="store_true", help="rebuild only the journal and balance page from MT5")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
@@ -1698,6 +2482,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     demo = a.demo or source == "demo"
     if a.daemon:
         daemon(cfg, base, source)
+        return 0
+    if a.journal:
+        client = Mt5Client(cfg)
+        if not client.connect():
+            LOG.warning("MT5 unavailable: %s", client.status)
+        try:
+            od = Path(a.out_dir) if a.out_dir else base / cfg["paths"]["output_dir"]
+            print(write_journal(cfg, base, od, client, parse_asof(a.asof), "journal"))
+        finally:
+            client.shutdown()
         return 0
     paths = run_scan(cfg, base, a.run, parse_asof(a.asof), source, demo, Path(a.out_dir) if a.out_dir else None)
     print(paths["html"])

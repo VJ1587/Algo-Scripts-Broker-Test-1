@@ -3,12 +3,20 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.1.0"
+config_version: "cfg-0.5.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
 changelog:
   - {version: "cfg-0.1.0", date: "2026-10-02", change: "Initial config from Scanner Addendum v0.1", reason: "Owner design decisions, October 2, 2026"}
+  - {version: "cfg-0.1.1", date: "2026-10-05", change: "Qualified setups require C1 and 3+ technical checks; C2 is not mandatory", reason: "Owner-approved scanner eligibility update"}
+  - {version: "cfg-0.2.0", date: "2026-10-06", change: "Psychological levels become fixed-width zones (FX +/-15 pips) for C2 and the ladder; zone wick tests flagged, not scored", reason: "Owner request: draw key levels as +/-15 pip zones and watch for wick tests"}
+  - {version: "cfg-0.2.1", date: "2026-10-06", change: "Gold zone half-width set to $20 (XAUUSD and GC); FX 500/250 pip grid confirmed unchanged", reason: "Owner method: gold zones $15-25 each side, $20 default, to absorb news overshoots"}
+  - {version: "cfg-0.2.2", date: "2026-10-06", change: "S&P zone half-width 20 points; oil 1.00 (gold ratio: 20% of major spacing)", reason: "Owner: S&P and oil follow gold for now; oil scaled because $20 would overlap its $2.50 grid"}
+  - {version: "cfg-0.3.0", date: "2026-10-06", change: "C4 uses the candlestick guide patterns (hammer, inverted hammer, shooting star, hanging man, engulfing, tweezers, morning/evening star, reversal + marubozu) and counts only inside the key level zone", reason: "Owner: candle confluence only applies at key level zones, per the candlestick guide"}
+  - {version: "cfg-0.4.0", date: "2026-10-06", change: "C4 also checks 4H and Daily candles plus double top/bottom and head and shoulders (neckline close); qualified now requires C4; developing = C1 + C2 + 2 checks awaiting reversal; C4 timeframe breaks ties", reason: "Owner: in zone and reversal candle closed (2H minimum, 4H/Daily better) required to qualify; owner chart pattern rules"}
+  - {version: "cfg-0.4.1", date: "2026-10-06", change: "Engulfing counts only if the engulfing candle itself wicks into the zone; confirmation close beyond the zone stays valid", reason: "Owner: pattern initiates at the zone, the close tells you which way it decided"}
+  - {version: "cfg-0.5.0", date: "2026-10-06", change: "Currency pair bars come from the MT5 terminal (Forex.com); CFDs and futures stay on TradingView. Dashboard adds MT5 broker prices and open positions; new journal page with balance history and positions matched to the confluences logged before entry", reason: "Owner: MT5 for currency data only, TradingView for futures; monitor balance and journal every position"}
 
 # Run times fixed in UTC (Addendum Section 4); used by --daemon
 runs:
@@ -23,6 +31,9 @@ paths:
 # ---------------------------------------------------------------- bars
 bars:
   source: tradingview         # tradingview | csv | demo
+  # Currency pairs only: mt5 = Forex.com bars from the running MT5 terminal (falls back to TradingView per
+  # pair if MT5 fails; the dashboard says which). CFDs and futures always use TradingView.
+  fx_source: mt5              # mt5 | tradingview
   csv_dir: data/bars          # used when source = csv  (files: <SYMBOL>_<TF>.csv, TF in 1H,2H,4H,D)
   # v1.0 Section 2 anchors bars at 00:00 UTC. TradingView's native 2H/4H bars follow each venue's
   # session start (for example 17:00 New York for FX), so the default rebuilds 2H and 4H from 1H bars
@@ -34,6 +45,17 @@ bars:
   min_completed_bars: 250     # v1.0 Section 2
   request_pause_sec: 1.0
   retries: 3
+
+# ---------------------------------------------------------------- MetaTrader 5 (cfg-0.5.0), read only
+# Attaches to the MT5 terminal already open and logged in. Never sends, changes or closes orders.
+mt5:
+  enabled: true
+  terminal_path: null         # null = the running terminal; or the full path to terminal64.exe
+  server_time: ny_close       # Forex.com: server clock = New York + 7h (UTC+3 summer, UTC+2 winter); or a fixed hour offset
+  symbol_map: {}              # scanner symbol -> MT5 symbol when the broker name differs, e.g. {EURUSD: EURUSD.x}
+
+journal:
+  history_days: 365           # MT5 deal history window for the journal page
 
 # ---------------------------------------------------------------- features (v1.0 values)
 features:
@@ -51,18 +73,46 @@ features:
   zone_atr_fraction: 0.10
   zone_min_ticks: 2
   fib_levels: [0.382, 0.5, 0.618]
-  candle:
-    engulf_body_atr: 0.25
-    rejection_range_atr: 0.50
-    rejection_close_top: 0.25
+  # Chart patterns for C4 (Daily and 4H). Distances are multiples of the instrument's zone half-width,
+  # so FX (15 pip zone) gets the owner's pip rules and gold, S&P and oil scale with their zones.
+  chart_patterns:
+    timeframes: [D, 4H]
+    match_tol_zone_mult: {D: 6.67, 4H: 2.67}    # two bottoms/tops or two shoulders: FX 100 pips Daily, 40 pips 4H
+    head_margin_zone_mult: {D: 3.33, 4H: 1.33}  # head beyond both shoulders: FX 50 pips Daily (owner: 30-40 too subtle), 20 pips 4H (assumed)
+    min_gap_bars: 5                             # touches at least this many bars apart (owner: 5-10)
+    break_max_age_bars: 3                       # neckline close must be within the last 3 bars of that timeframe
+  # Zone wick test (flag only, never scored): completed 2H candles in the lookback whose wick
+  # reaches into the psychological zone and is rejected in the trade direction.
+  zone_wicks:
+    lookback_2h_bars: 6
+    min_count: 2              # flag "zone tested" at this many wicks
+  candle:                     # C4: patterns count only when they trade inside the key level zone
+    engulf_body_atr: 0.25     # engulfing body, star first candle, marubozu body: at least this x 2H ATR
+    rejection_range_atr: 0.50 # pin candles (hammer, shooting star...): range at least this x 2H ATR
+    rejection_close_top: 0.25 # pin candles: opposite wick at most this share of the range
+    pin_wick_body_mult: 2.0   # pin candles: long wick at least this x body
+    prior_trend_bars: 6       # trend before the pattern: 2H close vs the close this many bars earlier
+    tweezer_tol_atr: 0.05     # tweezers: the two lows (or highs) within this x 2H ATR
+    star_body_frac: 0.30      # morning/evening star: middle body at most this x first body
+    marubozu_wick_max: 0.10   # marubozu: total wicks at most this share of the range
+
+# ---------------------------------------------------------------- qualification (cfg-0.4.0)
+# Qualified always needs C1 + C4 (reversal closed in a key level zone, 2H or higher) + 3 checks.
+# require_close_in_zone: true also demands the latest 2H close sits inside the zone (C2). Left false so an
+# engulfing candle or neckline break that closes just beyond the zone still qualifies.
+qualification:
+  require_close_in_zone: false
 
 # ---------------------------------------------------------------- psychological grid (Addendum Section 5)
+# zone_half_width: fixed half-width in price units for the zone drawn around every major and mid level
+# (FX 15 pips = 0.0015; JPY pairs 15 pips = 0.15). null = not set by owner yet: that instrument keeps
+# the ATR width (max(2 ticks, 0.10 x 4H ATR)) and every row carries a "zone width not set" flag.
 grids:
-  fx:   {major: 0.0500, mid: 0.0250}
-  jpy:  {major: 5.00,   mid: 2.50}
-  gold: {major: 100,    mid: 50}
-  spx:  {major: 100,    mid: 50}
-  oil:  {major: 5.00,   mid: 2.50}   # new proposal, untested
+  fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0015}
+  jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.15}
+  gold: {major: 100,    mid: 50,     zone_half_width: 20}     # owner default $20 (range $15-25)
+  spx:  {major: 100,    mid: 50,     zone_half_width: 20}     # follows gold for now
+  oil:  {major: 5.00,   mid: 2.50,   zone_half_width: 1.00}   # gold ratio (20% of major); grid untested
 
 # ---------------------------------------------------------------- universe (Addendum Section 3)
 # FX pairs are expanded automatically: base/quote from the symbol, tick 0.001 for JPY pairs and

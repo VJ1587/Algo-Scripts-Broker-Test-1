@@ -119,6 +119,38 @@ def test_zone_and_nearest_level():
     assert sc.in_psych_zone(eu, 1.1741, 0.001)[0] and not sc.in_psych_zone(eu, 1.1600, 0.001)[0]
 
 
+def test_psych_zone_fixed_15_pips_fx_and_atr_where_unset():
+    eu, uj, xau = UNIVERSE["EURUSD"], UNIVERSE["USDJPY"], UNIVERSE["XAUUSD"]
+    assert sc.psych_zone_half_width(eu, 0.0004) == (pytest.approx(0.0015), "fixed")
+    assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.15), "fixed")
+    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(20.0), "fixed")  # gold +/- $20
+    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(20.0), "fixed")
+    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P follows gold
+    assert sc.psych_zone_half_width(UNIVERSE["WTI"], 0.3) == (pytest.approx(1.0), "fixed")  # oil: gold ratio
+    assert all(i.psych_zone_hw is not None for i in UNIVERSE.values())                       # no ATR fallback left
+    # gold 3,300 major: 3,282 is inside the $3,280-$3,320 zone, 3,278 is outside
+    assert sc.in_psych_zone(xau, 3282.0, 20.0)[1:] == (pytest.approx(3300.0), "major")
+    assert sc.in_psych_zone(xau, 3282.0, 20.0)[0] and not sc.in_psych_zone(xau, 3278.0, 20.0)[0]
+    # 1.1736 is 14 pips under the 1.1750 mid level: inside; 1.1734 is 16 pips under: outside
+    assert sc.in_psych_zone(eu, 1.1736, 0.0015)[0] and not sc.in_psych_zone(eu, 1.1734, 0.0015)[0]
+
+
+def test_zone_wick_tests_long_and_short():
+    lo, hi = 1.1735, 1.1765                     # 1.1750 +/- 15 pips
+    # long: two lower wicks into the zone that close back above the floor, one plain bar, one close through
+    o = [1.1780, 1.1775, 1.1790, 1.1745]
+    c = [1.1782, 1.1778, 1.1795, 1.1720]
+    l = [1.1760, 1.1740, 1.1785, 1.1715]
+    h = [1.1784, 1.1780, 1.1797, 1.1748]
+    df = bars(h, l, o=o, c=c, freq="2h")
+    assert sc.zone_wick_tests(df, sc.LONG, lo, hi, 6) == 2
+    assert sc.zone_wick_tests(df, sc.LONG, lo, hi, 2) == 0     # lookback excludes the wick bars
+    # short mirror: upper wick into the zone from below, close back under the ceiling
+    df_s = bars([1.1760], [1.1700], o=[1.1712], c=[1.1708], freq="2h")
+    assert sc.zone_wick_tests(df_s, sc.SHORT, lo, hi, 6) == 1
+    assert sc.zone_wick_tests(df_s, sc.LONG, lo, hi, 6) == 0
+
+
 def test_fib_formula_matches_v1_example():
     imp = sc.Impulse(sc.LONG, 4000, 4200, "", "", 0, 5, 0.8, 1, 1, 0, 5)
     assert imp.fib(0.382) == pytest.approx(4123.6) and imp.fib(0.618) == pytest.approx(4076.4)
@@ -142,14 +174,66 @@ def test_select_impulse_long():
 
 
 # --------------------------------------------------------------- candles
-def test_bullish_engulfing_and_rejection():
-    eu = UNIVERSE["EURUSD"]
+ZL, ZH = 1.0985, 1.1015                         # 1.1000 key level +/- 15 pips
+
+
+def _trend(n, first_close, step):
+    """n candles with closes first_close, first_close+step, ...; bodies 8 pips in the trend direction."""
+    c = [first_close + i * step for i in range(n)]
+    o = [x - 0.0008 if step > 0 else x + 0.0008 for x in c]
+    return o, [max(a, b) + 0.0002 for a, b in zip(o, c)], [min(a, b) - 0.0002 for a, b in zip(o, c)], c
+
+
+def _candles(trend, extra, shift=0.0):
+    o, h, l, c = (list(x) for x in trend)
+    for eo, eh, el, ec in extra:
+        o.append(eo); h.append(eh); l.append(el); c.append(ec)
+    df = bars(np.array(h) + shift, np.array(l) + shift, o=np.array(o) + shift, c=np.array(c) + shift, freq="2h")
+    return df, np.full(len(df), 0.004)
+
+
+def _c4(df, atr2, direction):
+    return sc.candle_signal(df, atr2, UNIVERSE["EURUSD"], direction, CFG["features"]["candle"], ZL, ZH)
+
+
+DOWN = _trend(7, 1.1100, -0.0015)               # pullback into the zone from above
+UP = _trend(7, 1.0900, 0.0015)                  # rally into the zone from below
+HAMMER = (1.1005, 1.1010, 1.0980, 1.1008)       # o, h, l, c: long lower wick into the zone
+
+
+def test_c4_hammer_in_zone_only():
+    assert _c4(*_candles(DOWN, [HAMMER]), sc.LONG) == "hammer"
+    assert _c4(*_candles(DOWN, [HAMMER], shift=0.0100), sc.LONG) == ""      # same candle, outside the zone
+    # same shape after a rally is a hanging man: bearish, not a long signal
+    assert _c4(*_candles(UP, [HAMMER]), sc.LONG) == ""
+    assert _c4(*_candles(UP, [HAMMER]), sc.SHORT) == "hanging man"
+
+
+def test_c4_shooting_star_and_inverted_hammer():
+    star = (1.0995, 1.1020, 1.0990, 1.0992)
+    assert _c4(*_candles(UP, [star]), sc.SHORT) == "shooting star"
+    assert _c4(*_candles(DOWN, [star]), sc.LONG) == "inverted hammer"
+
+
+def test_c4_engulfing_tweezer_morning_star():
     df = bars([1.105, 1.106], [1.099, 1.098], o=[1.104, 1.0995], c=[1.100, 1.1055], freq="2h")
-    atr2 = np.array([0.004, 0.004])
-    assert sc.candle_signal(df, atr2, eu, sc.LONG, CFG["features"]["candle"]) == "bullish engulfing"
-    # rejection: long lower wick, small body near high
-    df = bars([1.1000, 1.1000], [1.0990, 1.0960], o=[1.0995, 1.0990], c=[1.0995, 1.0998], freq="2h")
-    assert sc.candle_signal(df, np.array([0.004, 0.004]), eu, sc.LONG, CFG["features"]["candle"]) == "bullish rejection"
+    assert _c4(df, np.array([0.004, 0.004]), sc.LONG) == "bullish engulfing"
+    # closes 40 pips above the zone: still valid, the engulfing candle wicked into it
+    df = bars([1.1012, 1.1060], [1.0995, 1.0990], o=[1.1010, 1.0998], c=[1.0999, 1.1055], freq="2h")
+    assert _c4(df, np.array([0.004, 0.004]), sc.LONG) == "bullish engulfing"
+    # only the prior candle touched the zone; the engulfing candle never tested it
+    df = bars([1.1030, 1.1070], [1.1010, 1.1018], o=[1.1028, 1.1018], c=[1.1020, 1.1065], freq="2h")
+    assert _c4(df, np.array([0.004, 0.004]), sc.LONG) == ""
+    tweezer = [(1.1030, 1.1032, 1.0995, 1.1005), (1.1006, 1.1030, 1.0996, 1.1028)]
+    assert _c4(*_candles(DOWN, tweezer), sc.LONG) == "tweezer bottom"
+    morning = [(1.1040, 1.1042, 1.1008, 1.1010), (1.1005, 1.1010, 1.0990, 1.1004), (1.1006, 1.1037, 1.1004, 1.1035)]
+    assert _c4(*_candles(DOWN, morning), sc.LONG) == "morning star"
+
+
+def test_c4_marubozu_confirms_zone_reversal():
+    marubozu = (1.1008, 1.1052, 1.1007, 1.1050)
+    assert _c4(*_candles(DOWN, [HAMMER, marubozu]), sc.LONG) == "hammer + marubozu"
+    assert _c4(*_candles(DOWN, [HAMMER, marubozu], shift=0.0100), sc.LONG) == ""
 
 
 # --------------------------------------------------------------- COT
@@ -251,6 +335,27 @@ def test_old_headlines_ignored():
 
 
 # --------------------------------------------------------------- ranking
+@pytest.mark.parametrize(
+    "c1,c2,c4,technical,expected",
+    [
+        (True, False, True, 3, "qualified"),     # reversal closed in zone, close now just beyond it
+        (True, True, True, 3, "qualified"),
+        (True, True, False, 4, "developing"),    # in zone, 4 checks, but no reversal candle closed yet
+        (True, False, False, 4, "not shown"),    # no zone, no reversal: never qualifies on other checks
+        (False, True, True, 4, "not shown"),
+        (True, True, False, 2, "developing"),
+        (True, False, True, 2, "not shown"),
+    ],
+)
+def test_setup_section_qualification_rules(c1, c2, c4, technical, expected):
+    assert sc.setup_section(c1, c2, c4, technical) == expected
+
+
+def test_setup_section_strict_close_in_zone():
+    assert sc.setup_section(True, False, True, 3, require_close_in_zone=True) == "not shown"
+    assert sc.setup_section(True, True, True, 3, require_close_in_zone=True) == "qualified"
+
+
 def mk(sym, d, section, tech, cot, total):
     r = sc.Row(sym, "FX", d)
     r.section, r.technical, r.cot_points, r.total = section, tech, cot, total
@@ -264,6 +369,59 @@ def test_rank_qualified_first_ties_and_no_padding():
     top = sc.rank(rows, 5)
     assert [r.symbol for r in top] == ["AUDUSD", "NZDUSD", "GBPUSD", "EURUSD"]
     assert [r.rank for r in top] == [1, 2, 3, 4]
+
+
+def test_rank_higher_timeframe_reversal_wins_ties():
+    a, b, c = (mk(x, "long", "qualified", 3, 0, 3) for x in ("AUDUSD", "EURUSD", "GBPUSD"))
+    a.c4_tf_rank, b.c4_tf_rank, c.c4_tf_rank = 1, 3, 2      # 2H, Daily, 4H
+    assert [r.symbol for r in sc.rank([a, b, c], 5)] == ["EURUSD", "GBPUSD", "AUDUSD"]
+
+
+# --------------------------------------------------------------- chart patterns (C4, Daily and 4H)
+CP = CFG["features"]["chart_patterns"]
+
+
+def _path(points, shift=0.0, last_close=None):
+    """Bars along straight segments between (bar, price) points; high/low = price +/- 5 pips."""
+    px = []
+    for (k0, p0), (k1, p1) in zip(points, points[1:]):
+        px += [p0 + (p1 - p0) * (k - k0) / (k1 - k0) for k in range(k0, k1)]
+    px.append(points[-1][1])
+    px = np.array(px) + shift
+    c = px.copy()
+    if last_close is not None:
+        c[-1] = last_close + shift
+    o = np.r_[c[0], c[:-1]]
+    return bars(np.maximum(px, c) + 0.0005, np.minimum(px, c) - 0.0005, o=o, c=c, freq="4h")
+
+
+def _cp(df, direction):
+    eu = UNIVERSE["EURUSD"]
+    return sc.chart_pattern(df, sc.find_pivots(df, 2), direction, eu, eu.psych_zone_hw, CP, sc.TF_4H)
+
+
+# bottoms at 1.1000 (key level) and 1.1004, neckline high 1.1065, last 4H bar closes 1.1075
+DOUBLE = [(0, 1.1100), (5, 1.1000), (10, 1.1060), (15, 1.1004), (19, 1.1056), (20, 1.1075)]
+
+
+def test_double_bottom_needs_zone_and_neckline_close():
+    assert _cp(_path(DOUBLE), sc.LONG) == "double bottom"
+    assert _cp(_path(DOUBLE, shift=0.0100), sc.LONG) == ""               # bottoms 95 pips from any level
+    wick_only = DOUBLE[:-1] + [(20, 1.1068)]                             # high pokes the neckline, close below
+    assert _cp(_path(wick_only, last_close=1.1058), sc.LONG) == ""
+    assert _cp(_path(DOUBLE), sc.SHORT) == ""
+
+
+def test_double_bottom_touches_too_close_together():
+    tight = [(0, 1.1100), (5, 1.1000), (7, 1.1040), (9, 1.1004), (12, 1.1050), (13, 1.1075)]
+    assert _cp(_path(tight), sc.LONG) == ""                              # 4 bars apart: consolidation
+
+
+def test_inverse_head_and_shoulders():
+    ihs = [(0, 1.1100), (4, 1.1030), (8, 1.1070), (12, 1.1000), (16, 1.1072), (20, 1.1035), (24, 1.1068), (25, 1.1090)]
+    assert _cp(_path(ihs), sc.LONG) == "inverse head and shoulders"
+    shallow = [(0, 1.1100), (4, 1.1012), (8, 1.1070), (12, 1.1000), (16, 1.1072), (20, 1.1015), (24, 1.1068), (25, 1.1090)]
+    assert _cp(_path(shallow), sc.LONG) == "double bottom"               # head only 12 pips lower: not an H&S
 
 
 def test_same_underlying_flag():
@@ -315,3 +473,103 @@ def test_demo_end_to_end(tmp_path):
     paths = sc.run_scan(CFG, Path(__file__).resolve().parents[1], "preny", pd.Timestamp("2026-10-02T12:05Z"),
                         "tradingview", demo=True, out_dir=tmp_path)
     assert paths["html"].exists() and paths["json"].exists() and paths["csv"].exists()
+    report = paths["html"].read_text(encoding="utf-8")
+    assert all(f"<th>C{i}</th>" in report for i in range(1, 7))
+    assert "reversal closed in a key level zone" in report
+
+
+# --------------------------------------------------------------- MT5 and journal (cfg-0.5.0)
+def test_mt5_server_time_ny_close_summer_and_winter():
+    # Server 00:00 = 17:00 New York the previous day: 21:00 UTC in summer, 22:00 UTC in winter
+    summer = int(pd.Timestamp("2026-10-06 00:00").timestamp())
+    winter = int(pd.Timestamp("2026-12-07 00:00").timestamp())
+    out = sc.mt5_to_utc([summer, winter], "ny_close")
+    assert out[0] == pd.Timestamp("2026-10-05 21:00", tz="UTC")
+    assert out[1] == pd.Timestamp("2026-12-06 22:00", tz="UTC")
+    assert sc.mt5_to_utc([summer], 3)[0] == pd.Timestamp("2026-10-05 21:00", tz="UTC")
+
+
+class _FailingSource(sc.BarSource):
+    name = "fail"
+
+    def get(self, inst, tf):
+        raise RuntimeError("terminal closed")
+
+
+class _OkSource(sc.BarSource):
+    name = "ok"
+
+    def get(self, inst, tf):
+        return bars([2, 2], [1, 1])
+
+
+class _NamedSource(sc.BarSource):
+    def __init__(self, label, n):
+        self.label, self.n = label, n
+
+    def get(self, inst, tf):
+        df = bars([2] * self.n, [1] * self.n)
+        df.attrs["label"] = self.label
+        return df
+
+    def provider(self, inst):
+        return f"{self.label}:{inst.symbol}"
+
+
+def test_routed_source_fx_from_mt5_others_from_tradingview_with_fallback():
+    routed = sc.RoutedSource(_FailingSource(), _OkSource(), min_bars=1)
+    assert len(routed.get(UNIVERSE["GC"], "D")) == 2 and "GC" not in routed.fallback
+    assert len(routed.get(UNIVERSE["EURUSD"], "D")) == 2      # MT5 failed, TradingView used
+    assert "EURUSD" in routed.fallback and "MT5 not used" in routed.provider(UNIVERSE["EURUSD"])
+
+
+def test_routed_source_short_broker_history_takes_whole_pair_from_tradingview():
+    deep = sc.RoutedSource(_NamedSource("mt5", 2000), _NamedSource("tv", 2000), min_bars=250)
+    assert deep.get(UNIVERSE["EURUSD"], "1H").attrs["label"] == "mt5"
+    assert deep.get(UNIVERSE["EURUSD"], "D").attrs["label"] == "mt5"
+    shallow = sc.RoutedSource(_NamedSource("mt5", 90), _NamedSource("tv", 2000), min_bars=250)
+    assert shallow.get(UNIVERSE["AUDJPY"], "1H").attrs["label"] == "tv"   # no mixing: 1H also from TradingView
+    assert shallow.get(UNIVERSE["AUDJPY"], "D").attrs["label"] == "tv"
+    assert "too short" in shallow.provider(UNIVERSE["AUDJPY"])
+
+
+def _deal(pid, t, typ, entry, vol, price, profit=0.0, sym="EURUSD"):
+    return {"ticket": pid * 10 + entry, "position_id": pid, "time": pd.Timestamp(t, tz="UTC"), "type": typ,
+            "entry": entry, "symbol": sym, "mt5_symbol": sym, "volume": vol, "price": price, "profit": profit,
+            "commission": -1.0, "swap": 0.0, "fee": 0.0, "comment": ""}
+
+
+def test_build_trades_groups_deals_and_open_positions():
+    deals = [_deal(1, "2026-10-06 13:00", 1, 0, 1.0, 190.0, sym="CHFJPY"),        # sell in
+             _deal(1, "2026-10-06 18:00", 0, 1, 1.0, 189.5, 30.0, sym="CHFJPY"),  # buy out
+             _deal(2, "2026-10-06 14:00", 0, 0, 0.5, 1.1260),                     # still open
+             {**_deal(0, "2026-10-01 09:00", 2, 0, 0, 0, 1000.0), "commission": 0.0, "comment": "deposit"}]
+    pos = [{"ticket": 2, "symbol": "EURUSD", "mt5_symbol": "EURUSD", "direction": "long", "volume": 0.5,
+            "open_utc": "2026-10-06 14:00", "open_price": 1.1260, "profit": 5.0, "swap": 0.0, "comment": ""},
+           {"ticket": 3, "symbol": "USDJPY", "mt5_symbol": "USDJPY", "direction": "short", "volume": 1.0,
+            "open_utc": "2026-09-01 10:00", "open_price": 150.0, "profit": -2.0, "swap": -1.0, "comment": ""}]
+    trades, cash = sc.build_trades(deals, pos)
+    by = {t["position_id"]: t for t in trades}
+    assert by[1]["direction"] == "short" and by[1]["status"] == "closed" and by[1]["exit_price"] == 189.5
+    assert by[1]["net"] == pytest.approx(28.0)
+    assert by[2]["status"] == "open" and by[2]["net"] == pytest.approx(4.0)
+    assert by[3]["status"] == "open" and by[3]["net"] == pytest.approx(-3.0)   # opened before the window
+    assert len(cash) == 1 and cash[0]["comment"] == "deposit"
+
+
+def test_confluences_before_uses_last_scan_before_entry():
+    def scan(t, total):
+        return {"asof": pd.Timestamp(t, tz="UTC"), "file": f"scan_{total}.html", "run_type": "pre NY",
+                "config_version": "x", "rows": {("CHFJPY", "short"): {"section": "qualified", "total": total}}}
+    scans = [scan("2026-10-06 00:05", 2), scan("2026-10-06 12:05", 4), scan("2026-10-07 00:05", 5)]
+    cf = sc.confluences_before(scans, "CHFJPY", "short", pd.Timestamp("2026-10-06 13:00", tz="UTC"))
+    assert cf["total"] == 4 and cf["age_hours"] == pytest.approx(0.9)
+    assert sc.confluences_before(scans, "CHFJPY", "long", pd.Timestamp("2026-10-06 13:00", tz="UTC")) is None
+    assert sc.confluences_before(scans, "CHFJPY", "short", pd.Timestamp("2026-10-05 13:00", tz="UTC")) is None
+
+
+def test_journal_page_without_mt5(tmp_path):
+    p = sc.write_journal(CFG, tmp_path, tmp_path / "out", None, pd.Timestamp("2026-10-06 15:00", tz="UTC"), "test")
+    txt = p.read_text(encoding="utf-8")
+    assert "Trading journal and balance" in txt and "MT5 account unavailable" in txt
+    assert (tmp_path / "logs" / "trade_journal.csv").exists()

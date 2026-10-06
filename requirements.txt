@@ -7,3 +7,5 @@ pytest>=8.0
 #   pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
 # FinBERT sentiment (large download, about 2 GB with torch):
 #   pip install transformers torch
+# MetaTrader 5 (cfg-0.5.0): currency pair bars, broker prices, positions and the journal page. Windows only.
+MetaTrader5>=5.0.6231; sys_platform == "win32"
