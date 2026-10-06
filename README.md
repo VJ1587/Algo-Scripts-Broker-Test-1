@@ -1,3 +1,27 @@
+# Algo-Scripts-Broker-Test-1
+
+Two scripts with separate jobs:
+
+| Script | Job | Touches the market? |
+| --- | --- | --- |
+| `broker_v11_algo.py` | **Research.** Backtests the BROKER-v1.1 rules on historical or synthetic quotes. | No. Simulated orders only. |
+| `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
+
+## Broker backtest script (research)
+
+`broker_v11_algo.py` packages the BROKER-v1.1 research and backtest script (release v1.0.0). It is a
+research specification, not a validated profitable trading system. Instrument specs in
+`placeholder_catalog()` are illustrative only: replace them with verified broker contract data before
+relying on any result.
+
+```powershell
+python broker_v11_algo.py --selftest             # built-in worked example and checks
+python broker_v11_algo.py --demo --route both    # synthetic data, plumbing check only
+python broker_v11_algo.py --data-dir ./quotes --route L --news news.csv --out results
+```
+
+See the script header for the CSV format used by `--data-dir` and `--news`.
+
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
