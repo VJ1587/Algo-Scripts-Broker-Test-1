@@ -2107,7 +2107,8 @@ def _money(v, cur: str = "") -> str:
 
 
 def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, history: pd.DataFrame, trades: list[dict],
-                        cash: list[dict], status: str, latest_dashboard: str, history_days: int) -> str:
+                        cash: list[dict], status: str, latest_dashboard: str, history_days: int,
+                        decisions: Optional[pd.DataFrame] = None) -> str:
     e = html.escape
 
     def local(t) -> str:
@@ -2185,6 +2186,29 @@ def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, histo
                         + "</td></tr>")
             body += row
         body += "</table></div>"
+    body += "<h2>Trade decisions at the hold (trade_gate.py)</h2>"
+    if decisions is None or decisions.empty:
+        body += "<p class='muted'>No decisions logged yet. Run python trade_gate.py after a scan.</p>"
+    else:
+        body += ("<p class='muted'>Every setup reviewed at the hold, newest first (last 50). Full log: logs/trade_decisions.csv</p>"
+                 "<div class='wrap'><table><tr><th>Time</th><th>Ticket</th><th>Instrument</th><th>Dir</th><th>Setup</th>"
+                 "<th>Decision</th><th>Account</th><th>Placed by</th><th>Entries / lots</th><th>Stop / TP1 / TP2</th>"
+                 "<th class='num'>Risk</th><th>Your changes and notes</th></tr>")
+        for _, r in decisions.tail(50).iloc[::-1].iterrows():
+            def sv(k: str) -> str:
+                v = r.get(k)
+                return "" if v is None or (isinstance(v, float) and math.isnan(v)) else str(v)
+            dec = sv("decision")
+            cls = "long" if dec.startswith(("sent", "approved")) else "short" if dec.startswith("failed") else "muted"
+            body += (f"<tr><td>{e(local(pd.Timestamp(r['time_utc'], tz=UTC)))}</td><td>{e(sv('ticket_id'))}</td>"
+                     f"<td><b>{e(sv('symbol'))}</b></td><td class='{e(sv('direction'))}'>{e(sv('direction'))}</td>"
+                     f"<td>{e(sv('section'))} {e(sv('total'))}</td><td class='{cls}'>{e(dec)}</td><td>{e(sv('account'))}</td>"
+                     f"<td>{'' if dec.startswith('skipped') else e(sv('mode'))}</td>"
+                     f"<td>{e(sv('entries'))}<br><span class='muted'>{e(sv('lots'))}</span></td>"
+                     f"<td>{e(sv('stop'))} / {e(sv('tp1'))} / {e(sv('tp2'))}</td><td class='num'>{e(sv('risk'))}</td>"
+                     f"<td class='wrapc'>{e(sv('modifications'))}{'<br>' if sv('modifications') and sv('notes') else ''}"
+                     f"<span class='muted'>{e(sv('notes'))}</span>{'<br>orders ' + e(sv('orders')) if sv('orders') else ''}</td></tr>")
+        body += "</table></div>"
     if cash:
         body += ("<h2>Deposits, withdrawals and charges</h2><div class='wrap'><table><tr><th>Time</th><th class='num'>Amount</th>"
                  "<th>Comment</th></tr>")
@@ -2224,11 +2248,13 @@ def write_journal(cfg: dict, base: Path, out_dir: Path, client: Optional[Mt5Clie
         latest_dashboard = scans[-1]["file"] if scans else ""
     p_hist = log_dir / "mt5_account.csv"
     history = pd.read_csv(p_hist) if p_hist.exists() else pd.DataFrame()
+    p_dec = log_dir / "trade_decisions.csv"   # written by trade_gate.py
+    decisions = pd.read_csv(p_dec) if p_dec.exists() else pd.DataFrame()
     disp_tz = ZoneInfo(cfg.get("display_timezone", "America/Chicago"))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "journal.html"
-    path.write_text(render_journal_html(asof, disp_tz, acct, history, trades, cash, status, latest_dashboard, days),
-                    encoding="utf-8")
+    path.write_text(render_journal_html(asof, disp_tz, acct, history, trades, cash, status, latest_dashboard, days,
+                                        decisions), encoding="utf-8")
     log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / "trade_journal.csv", "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)

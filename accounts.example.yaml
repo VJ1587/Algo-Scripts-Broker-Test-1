@@ -1,0 +1,31 @@
+﻿# Accounts the trade gate (trade_gate.py) can offer. Copy this file to accounts.yaml and fill it in.
+# accounts.yaml is git-ignored: account numbers stay on this machine. Passwords are never stored;
+# each MT5 terminal must already be open and logged in.
+
+# Demo first: algo orders to a real-money account need this switch AND allow_algo on the account
+# AND Algo Trading switched on in the MT5 terminal. Manual tickets work everywhere.
+allow_live_algo: false
+
+max_scan_age_hours: 12        # older scans ask before continuing (prices may have moved)
+ladder_expiry_hours: 24       # v1.0: unfilled ladder legs expire after 6 4H bars
+max_quote_age_seconds: 30     # algo orders refuse a stale quote
+
+accounts:
+  - id: mt5_demo
+    label: Example MT5 demo
+    platform: mt5
+    login: 12345678                         # the terminal must be logged in to this login
+    terminal_path: null                     # null = the default terminal; a second account needs its own install
+    allow_algo: true
+    currency: USD
+    commission_per_lot_rt: 0                # account currency per lot, round trip (spread-only accounts: 0)
+    slippage_ticks: 5                       # expected stop slippage, used in sizing
+    symbols: {}                             # scanner symbol -> broker symbol where they differ
+    instruments: []                         # empty = every instrument the broker offers
+
+  - id: futures_manual
+    label: Example futures broker (manual)
+    platform: manual                        # the gate writes the ticket; you place it on that platform
+    currency: USD
+    instruments: [GC, ES, CL]
+    value_per_point: {GC: 100, ES: 50, CL: 1000}   # account currency per 1.0 price move per contract

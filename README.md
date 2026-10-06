@@ -1,11 +1,48 @@
 # Algo-Scripts-Broker-Test-1
 
-Two scripts with separate jobs:
+Three scripts with separate jobs:
 
 | Script | Job | Touches the market? |
 | --- | --- | --- |
 | `broker_v11_algo.py` | **Research.** Backtests the BROKER-v1.1 rules on historical or synthetic quotes. | No. Simulated orders only. |
 | `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
+| `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
+
+## Trade gate (the hold)
+
+Run it after a scan. For each qualified setup in the latest live scan it asks, in order:
+
+1. **Take this trade?** A no is logged as skipped.
+2. **Which account(s)?** From `accounts.yaml`: MT5 accounts and manual-only accounts (for example a
+   futures broker).
+3. **Modifications?** The ticket starts from BROKER-v1.1 rules (ladder 38.2 / 50 / 61.8 % of the
+   impulse, FX stop at 89.3 %, TP1 / TP2 at the 27 % / 61.8 % extensions, lots from 2 % idea risk
+   inside the 5 % portfolio cap, rounded down). Change any value with `field=value`, for example
+   `stop=1.1180 tp1=1.1650 lots=0.10,0.15,0.25 route=M`. A setup with no impulse starts as a market
+   entry at the live price, and you set the stop and targets: v1.0 defines no levels without one.
+4. **Who places it?** `m` manual (you place it on the platform) or `a` algo (the gate sends it to MT5).
+5. **Final ticket.** Type `CONFIRM` exactly; anything else cancels.
+
+```powershell
+copy accounts.example.yaml accounts.yaml   # then list your accounts (git-ignored, stays local)
+python trade_gate.py                        # latest live scan, qualified setups
+python trade_gate.py --include-developing   # also show developing setups, with a warning
+```
+
+Safety rules:
+
+- **Demo first.** Algo orders need `allow_algo: true` on the account. A real-money account also
+  needs `allow_live_algo: true` at the top of `accounts.yaml`. Algo Trading must be on in the MT5
+  terminal, and the terminal's login must match the configured one. Manual tickets work everywhere.
+- **Risk ceilings.** Algo orders above 2 % idea risk or the 5 % portfolio cap are refused. A manual
+  ticket above them needs the word `OVERRIDE`, and the override is logged.
+- **All or nothing.** Every order passes MT5 `order_check` before any is sent. If a later order is
+  rejected, the gate offers to remove the ladder legs already placed.
+- **Each leg goes as two orders,** half to TP1 and half to TP2, because MT5 holds one target per
+  order. Unfilled ladder legs expire after 24 h (v1.0: six 4H bars). The gate does not trail the stop.
+- **Everything is logged:** skipped, cancelled, approved (manual), sent and failed decisions go to
+  `logs/trade_decisions.csv` and `tickets/<id>.json`, and show on `output/journal.html`. Orders sent
+  by the gate carry magic number 5110001 and the ticket id in the order comment.
 
 ## Broker backtest script (research)
 

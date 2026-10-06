@@ -12,3 +12,7 @@ data/
 
 # Secrets
 .env
+
+# Trade gate: local account list and approved tickets (never pushed)
+accounts.yaml
+tickets/
