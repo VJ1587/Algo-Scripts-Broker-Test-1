@@ -1344,7 +1344,7 @@ def next_event(evs: list[dict], ccys: list[str], asof: pd.Timestamp, ccfg: dict)
             continue
         try:
             t = pd.Timestamp(e["date"]).tz_convert(UTC)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # guard: ignore[TG301] skips calendar events with unparseable dates
             continue
         if t <= asof:
             continue
@@ -1404,7 +1404,7 @@ def parse_feed(xml_text: str, source: str) -> list[Headline]:
               or it.findtext("{http://purl.org/dc/elements/1.1/}date") or "")
         try:
             ts = pd.Timestamp(pd.to_datetime(ds, utc=True))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # guard: ignore[TG301] skips feed items with unparseable dates
             continue
         if title and not pd.isna(ts):
             out.append(Headline(title=title, source=source, published=ts.isoformat(), link=link.strip()))
@@ -1443,7 +1443,7 @@ def load_headlines(cfg: dict, base: Path, asof: pd.Timestamp, demo: bool) -> tup
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 seen.add(json.loads(line)["title"])
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # guard: ignore[TG301] skips malformed lines in the headline archive
                 pass
     with open(path, "a", encoding="utf-8") as fh:
         for h in out:

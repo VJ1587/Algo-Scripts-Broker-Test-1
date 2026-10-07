@@ -1,0 +1,13 @@
+# Codeguard repo configuration (see BUILD_SPEC.md section 2.2).
+[codeguard]
+# Planted bug samples are scanned only when named explicitly:
+#   python -m codeguard check codeguard/samples
+exclude = ["codeguard/samples"]
+disable = []
+
+[codeguard.severity]
+# Example override: TG403 = "WARN"
+
+[codeguard.per_path_disable]
+# Tests compare config constants exactly on purpose.
+"tests/**" = ["TG203"]

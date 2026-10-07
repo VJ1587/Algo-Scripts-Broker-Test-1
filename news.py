@@ -136,7 +136,7 @@ def measure_event(ev: pd.Series, pairs: list[str], bars: Callable[[str], pd.Data
         side = 1 if pair[:3] == ev["currency"] else -1
         try:
             b = bars(pair)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # guard: ignore[TG301] skips a pair whose bars fail to load; failures are not logged, review
             continue
         before = b[b.index + pd.Timedelta(minutes=5) <= t]
         if before.empty or (t - (before.index[-1] + pd.Timedelta(minutes=5))) > pd.Timedelta(hours=1):

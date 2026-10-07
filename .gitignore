@@ -19,3 +19,6 @@ tickets/
 
 # StressLab run outputs (regenerated every run)
 reports/
+
+# Codeguard incremental cache (local only)
+.codeguard_cache.json

@@ -33,3 +33,8 @@ previous one meets its acceptance criteria.
     python run_stress.py            # good stack, expect 0 FAIL
     python run_stress.py --buggy    # planted bugs, expect FAILs
     python -m pytest -q
+    python -m codeguard gate .      # static rules + import smoke test, expect GATE OPEN
+    python -m codeguard run SCRIPT  # explain a crash (frames, DataFrame summaries, hints)
+
+Codeguard suppressions need a reason: `# guard: ignore[TG301] why this is safe`.
+Bump `RULESET_VERSION` in codeguard/rules.py whenever a rule changes.
