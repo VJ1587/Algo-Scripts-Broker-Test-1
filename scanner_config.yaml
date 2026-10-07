@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.8.0"
+config_version: "cfg-0.9.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -20,6 +20,7 @@ changelog:
   - {version: "cfg-0.6.0", date: "2026-10-06", change: "Forex Factory red-folder news: dashboard list of upcoming High impact events with affected instruments; reaction tracker (currency strength move 15m/1h/4h after each red event, MT5 5 minute bars); trade gate news check; backtest news CSV export", reason: "Owner: use Forex Factory red folders for upcoming news across scanner and trading scripts and track how news moves currencies"}
   - {version: "cfg-0.7.0", date: "2026-10-07", change: "Developing = any 2+ of C1-C6 that do not qualify (was C1 + C2 + 2 checks); trade gate --include-developing offers all of them. C1-C6 named and defined in one place; dashboard lists every developing setup with checks met and missing; journal spells out each trade's confluences and adds results by section, setup and confluence", reason: "Owner: report must show developing setups with 2 confluences; spell out C1-C6 in the journal to see which setups work"}
   - {version: "cfg-0.8.0", date: "2026-10-07", change: "Position Trading Confluence System: A setup = C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6 (C4 no longer required); B setup = C1 + (C2 or C3 at 50/61.8) + one of C4/C5/C6; C6 becomes 4H market structure holding (trend line is information only); FX crosses need an A setup with C4; S&P and oil trade A setups only; gold C1 = Weekly + Daily (no 4H), B = C1 + C2 + C3, A adds stacked Fib + C4, DXY shown as context; dashboard shows Fib stop 78.6/89 and TP1 -27 / TP2 -61.8", reason: "Owner document: Position Trading Confluence System and gold confluences; owner answers October 7 (7 USD majors, gold Weekly + Daily, S&P and oil A only, full C4 pattern list at key levels)"}
+  - {version: "cfg-0.9.0", date: "2026-10-07", change: "Daemon runs every 2 hours at :05 UTC (intraday runs keep the Daily bias from the last evening run); Windows notification for new or upgraded A/B setups; calendar snapshot reused for 4 hours and used when a fetch fails; intraday HTML/CSV pruned after 14 days; chart patterns name their key level", reason: "Owner: update the scanner through the day so a setup that fully develops is caught; 2-hourly matches the 2H bar close"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -31,6 +32,15 @@ dxy:
 runs:
   evening: "00:05"
   preny: "12:05"
+  every_hours: 2              # cfg-0.9.0: intraday runs in between, just after each 2H bar closes (0 = off)
+  minute: 5
+
+# cfg-0.9.0: Windows notification when a setup is newly graded A or B (or B becomes A); click opens the dashboard
+alerts:
+  windows_toast: true
+
+output:
+  keep_intraday_html_days: 14  # intraday HTML/CSV pruned after this; JSON kept for the journal; 0 = keep all
 
 paths:
   output_dir: output          # HTML dashboards + JSON/CSV copies
@@ -190,6 +200,7 @@ calendar:
   reaction_lookback_days: 10  # measure red events up to this old (MT5 5 minute bars)
   news_window_minutes: 30     # v1.0 Section 9: no new entries within this many minutes of a red event
   event_risk_hours: 24
+  refresh_hours: 4            # cfg-0.9.0: reuse the last snapshot for this long (Forex Factory rate limit)
   snapshot: true              # store weekly snapshots, since the feed keeps no history
 
 # ---------------------------------------------------------------- sentiment (Addendum 6.3 and 7)

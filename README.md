@@ -79,7 +79,7 @@ See the script header for the CSV format used by `--data-dir` and `--news`.
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.8.0, config `cfg-0.8.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.9.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
@@ -162,7 +162,8 @@ environment variables. Without them the library runs in anonymous mode.
 python scanner.py --demo                         # offline, synthetic data: check the install works
 python scanner.py --run evening                  # live: TradingView + CFTC API + Forex Factory
 python scanner.py --run preny
-python scanner.py --daemon                       # stays running; fires at 00:05 and 12:05 UTC
+python scanner.py --run intraday                 # one run between the two main runs
+python scanner.py --daemon                       # stays running; every 2 hours at :05 UTC
 python scanner.py --journal                      # rebuild only the journal and balance page from MT5
 python scanner.py --source csv --asof 2026-10-02T12:05Z   # point in time from your own CSV bars
 python -m pytest -q                              # tests
@@ -170,13 +171,25 @@ python -m pytest -q                              # tests
 
 `--run auto` (the default) picks evening before 06:00 or after 18:00 UTC, pre NY otherwise.
 
-### Scheduling
+### Scheduling (cfg-0.9.0)
 
-Run times are fixed in UTC so they never drift with daylight saving (evening 00:05 UTC is 7:05 PM CDT
-or 6:05 PM CST; pre NY 12:05 UTC is 7:05 AM CDT or 6:05 AM CST). The simplest option is
-`python scanner.py --daemon` started at login. Windows Task Scheduler and plain cron use local time,
-so if you use them, either update the trigger at each DST change or set two triggers per run and let
-`--run auto` decide. On Linux with cronie: `CRON_TZ=UTC` then `5 0 * * *` and `5 12 * * *`.
+`python scanner.py --daemon` runs every 2 hours at 5 past the hour, UTC (`runs.every_hours`, `runs.minute`),
+just after each 2H bar closes: an hourly run between two closes would see the same bars. 00:05 is the
+evening run, 12:05 pre NY, and the rest are intraday runs, which keep the Daily bias from the last evening
+run as pre NY does. Times are fixed in UTC so they never drift with daylight saving (00:05 UTC is 7:05 PM
+CDT or 6:05 PM CST). The PC must be on and the MT5 terminal open and logged in.
+
+- **Alerts.** When a setup is newly graded A or B, or a B becomes an A, Windows shows a notification;
+  clicking it opens that dashboard (`alerts.windows_toast`). The scanner log records each one.
+- **Calendar.** The Forex Factory feed refuses rapid repeat requests, so a snapshot is reused for 4 hours
+  (`calendar.refresh_hours`) and used whenever a fetch fails.
+- **Disk.** A run writes about 240 KB. Intraday HTML and CSV files are deleted after 14 days
+  (`output.keep_intraday_html_days`); evening and pre NY dashboards and every JSON file are kept, because
+  the journal matches trades to them.
+
+To start the daemon at login, create a Windows Task Scheduler task "At log on" that runs
+the virtual environment's `pythonw.exe` (here `Development\.venv\Scripts\pythonw.exe`) with the argument
+`scanner.py --daemon` and this folder as the start-in folder.
 
 ## MetaTrader 5 (cfg-0.5.0, read only)
 

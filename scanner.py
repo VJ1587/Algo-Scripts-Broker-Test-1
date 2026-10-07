@@ -65,7 +65,8 @@ Usage
     python scanner.py --demo                      # offline run on synthetic data
     python scanner.py --run evening               # live run (TradingView + CFTC + Forex Factory)
     python scanner.py --run preny
-    python scanner.py --daemon                    # stay running, fire at 00:05 and 12:05 UTC
+    python scanner.py --daemon                    # stay running: every 2h at :05 UTC (00:05 evening, 12:05 pre NY)
+    python scanner.py --run intraday              # one run between the two main ones (Daily bias from the last evening run)
     python scanner.py --journal                   # rebuild only output/journal.html from MT5
 
 MetaTrader 5 (cfg-0.5.0, read only)
@@ -111,7 +112,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.8.0"
+SCANNER_CODE_VERSION = "0.9.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -1397,6 +1398,24 @@ def cot_points(reading: CotReading, direction: str, cfg_cot: dict) -> int:
 # Calendar  [Add 6.4]
 # =============================================================================
 
+def latest_calendar_snapshot(snap_dir: Path, asof: pd.Timestamp) -> Optional[tuple[pd.Timestamp, list[dict]]]:
+    """The newest saved calendar snapshot taken at or before asof in the same ISO week, or None."""
+    best = None
+    for p in snap_dir.glob("ff_*_*.json") if snap_dir.exists() else []:
+        try:
+            t = pd.Timestamp(p.stem.rsplit("_", 1)[1].replace("Z", ""), tz=UTC)
+        except ValueError:
+            continue
+        if t <= asof and t.isocalendar()[:2] == asof.isocalendar()[:2] and (best is None or t > best[0]):
+            best = (t, p)
+    if best is None:
+        return None
+    try:
+        return best[0], json.loads(best[1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 def load_calendar(cfg: dict, base: Path, asof: pd.Timestamp, demo: bool) -> tuple[list[dict], str]:
     ccfg = cfg.get("calendar", {})
     if demo:
@@ -1406,6 +1425,12 @@ def load_calendar(cfg: dict, base: Path, asof: pd.Timestamp, demo: bool) -> tupl
         return evs, "demo"
     if ccfg.get("source", "forexfactory") == "off":
         return [], "off"
+    snap_dir = base / cfg["paths"]["data_dir"] / "calendar_snapshots"
+    # [OWNER cfg-0.9.0] intraday runs reuse a recent snapshot; Forex Factory refuses rapid repeat requests
+    recent = latest_calendar_snapshot(snap_dir, asof)
+    refresh = float(ccfg.get("refresh_hours", 4))
+    if recent and (asof - recent[0]).total_seconds() / 3600 < refresh:
+        return recent[1], f"snapshot from {recent[0].strftime('%Y-%m-%d %H:%M')} UTC (refresh every {refresh:g}h)"
     import requests
     try:
         r = requests.get(ccfg["url"], timeout=30, headers={"User-Agent": "Mozilla/5.0 scanner"})
@@ -1413,9 +1438,11 @@ def load_calendar(cfg: dict, base: Path, asof: pd.Timestamp, demo: bool) -> tupl
         evs = r.json()
     except Exception as exc:  # noqa: BLE001
         LOG.warning("calendar fetch failed: %s", exc)
+        if recent:
+            return recent[1], f"fetch failed ({exc}); using snapshot from {recent[0].strftime('%Y-%m-%d %H:%M')} UTC"
         return [], f"failed: {exc}"
     if ccfg.get("snapshot", True):
-        d = base / cfg["paths"]["data_dir"] / "calendar_snapshots"
+        d = snap_dir
         d.mkdir(parents=True, exist_ok=True)
         yr, wk, _ = asof.isocalendar()
         with open(d / f"ff_{yr}-W{wk:02d}_{asof.strftime('%Y%m%dT%H%MZ')}.json", "w", encoding="utf-8") as fh:
@@ -2715,7 +2742,35 @@ def resolve_run(run: str, asof: pd.Timestamp) -> tuple[str, pd.Timestamp]:
     evening = asof.normalize() + pd.Timedelta(minutes=5)
     if evening > asof:
         evening -= pd.Timedelta(days=1)
-    return "pre NY", evening
+    # [OWNER cfg-0.9.0] intraday runs keep the Daily bias from the last evening run, like pre NY
+    return ("intraday" if run == "intraday" else "pre NY"), evening
+
+
+def scheduled_runs(cfg: dict) -> list[tuple[int, int, str]]:
+    """(hour, minute, run) in UTC for --daemon: evening and pre NY at their times, intraday every
+    runs.every_hours hours at runs.minute past the hour in between."""
+    rc = cfg.get("runs", {})
+    fixed = {}
+    for k, default in (("evening", "00:05"), ("preny", "12:05")):
+        hh, mm = (int(x) for x in str(rc.get(k, default)).split(":"))
+        fixed[(hh, mm)] = k
+    out = dict(fixed)
+    every = int(rc.get("every_hours", 0) or 0)
+    if every > 0:
+        mm = int(rc.get("minute", 5))
+        for hh in range(0, 24, every):
+            out.setdefault((hh, mm), "intraday")
+    return sorted((h, m, k) for (h, m), k in out.items())
+
+
+def next_scheduled(now: pd.Timestamp, cfg: dict) -> tuple[pd.Timestamp, str]:
+    cands = []
+    for hh, mm, k in scheduled_runs(cfg):
+        t = now.normalize() + pd.Timedelta(hours=hh, minutes=mm)
+        if t <= now:
+            t += pd.Timedelta(days=1)
+        cands.append((t, k))
+    return min(cands)
 
 
 def run_scan(cfg: dict, base: Path, run: str, asof: pd.Timestamp, source: str, demo: bool,
@@ -2855,7 +2910,11 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
     od = out_dir or (base / cfg["paths"]["output_dir"])
     news_view = build_news_view(cfg, base, asof, events, universe, client, demo)
     news_view["tz"] = cfg.get("display_timezone", "America/Chicago")
+    prev_file, prev = previous_grades(od)
     paths = write_outputs(od, meta, top, all_rows, footer, broker, news_view)
+    if not demo:
+        alert_new_setups(cfg, new_graded(prev, all_rows), prev_file, paths["html"])
+        prune_outputs(od, asof, int(cfg.get("output", {}).get("keep_intraday_html_days", 14)))
     append_c2_log(base / cfg["paths"]["log_dir"], meta, results)
     if client:
         try:
@@ -2865,6 +2924,88 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
     LOG.info("top %d: %s", len(top), ", ".join(f"{r.symbol} {r.direction} {r.total}" for r in top) or "none")
     LOG.info("wrote %s", paths["html"])
     return paths
+
+
+# =============================================================================
+# Alerts and output housekeeping  [OWNER cfg-0.9.0]
+# =============================================================================
+
+GRADE_RANK = {"": 0, "B": 1, "A": 2}
+
+
+def previous_grades(out_dir: Path) -> tuple[str, dict]:
+    """Grades in the newest live scan already on disk: (file name, {(symbol, direction): grade})."""
+    for p in sorted(out_dir.glob("scan_*.json"), reverse=True) if out_dir.exists() else []:
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if d.get("meta", {}).get("demo"):
+            continue
+        return p.name, {(r["symbol"], r["direction"]): r.get("grade") or "" for r in d.get("rows", [])}
+    return "", {}
+
+
+def new_graded(prev: dict, rows: list[Row]) -> list[Row]:
+    """Setups graded A or B now that were ungraded (or B, now A) in the previous scan."""
+    return sorted((r for r in rows if r.grade and GRADE_RANK[r.grade] > GRADE_RANK.get(prev.get((r.symbol, r.direction), ""), 0)),
+                  key=lambda r: (-GRADE_RANK[r.grade], -r.total, r.symbol))
+
+
+def windows_toast(title: str, body: str, link: Optional[Path] = None) -> bool:
+    """Show a Windows notification through PowerShell's built-in notifier. False when not shown."""
+    if sys.platform != "win32":
+        return False
+    import subprocess
+
+    def x(s: str) -> str:   # XML-escape, then escape for a single-quoted PowerShell string
+        return html.escape(s, quote=True).replace("'", "''")
+
+    launch = f' launch="{x(link.resolve().as_uri())}" activationType="protocol"' if link else ""
+    ps = ("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;"
+          "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null;"
+          "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+          f"$x.LoadXml('<toast{launch}><visual><binding template=\"ToastGeneric\"><text>{x(title)}</text>"
+          f"<text>{x(body)}</text></binding></visual></toast>');"
+          "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+          "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')"
+          ".Show([Windows.UI.Notifications.ToastNotification]::new($x))")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        LOG.warning("notification failed: %s", exc)
+        return False
+    if r.returncode != 0:
+        LOG.warning("notification failed: %s", (r.stderr or r.stdout).strip()[:300])
+    return r.returncode == 0
+
+
+def alert_new_setups(cfg: dict, fresh: list[Row], prev_file: str, html_path: Path) -> None:
+    if not fresh:
+        return
+    lines = [f"{r.symbol} {r.direction} {r.grade} setup ({r.setup}, total {r.total})" for r in fresh]
+    LOG.info("new graded setups since %s: %s", prev_file or "first scan", "; ".join(lines))
+    if cfg.get("alerts", {}).get("windows_toast", True):
+        title = f"Scanner: {len(fresh)} new A/B setup{'s' if len(fresh) > 1 else ''}"
+        windows_toast(title, "\n".join(lines[:4]) + (f"\n+{len(lines) - 4} more" if len(lines) > 4 else ""), html_path)
+
+
+def prune_outputs(out_dir: Path, asof: pd.Timestamp, keep_days: int) -> int:
+    """Delete intraday dashboards (HTML and CSV) older than keep_days. JSON files stay: the journal reads them.
+    Evening and pre NY dashboards are never deleted."""
+    if keep_days <= 0:
+        return 0
+    n = 0
+    for p in list(out_dir.glob("scan_*_intraday.html")) + list(out_dir.glob("scan_*_intraday.csv")):
+        try:
+            t = pd.Timestamp(p.stem.split("_")[1].replace("Z", ""), tz=UTC)
+        except (IndexError, ValueError):
+            continue
+        if (asof - t).days >= keep_days:
+            p.unlink(missing_ok=True)
+            n += 1
+    return n
 
 
 def fmt_ts(t) -> str:
@@ -2900,18 +3041,10 @@ def parse_asof(s: Optional[str]) -> pd.Timestamp:
 
 def daemon(cfg: dict, base: Path, source: str) -> None:
     """Simple scheduler fixed in UTC so it never drifts with daylight saving [Add 4]."""
-    times = {"evening": cfg.get("runs", {}).get("evening", "00:05"), "preny": cfg.get("runs", {}).get("preny", "12:05")}
-    LOG.info("daemon started; runs at %s UTC", ", ".join(f"{k} {v}" for k, v in times.items()))
+    LOG.info("daemon started; runs at %s UTC",
+             ", ".join(f"{hh:02d}:{mm:02d} {k}" for hh, mm, k in scheduled_runs(cfg)))
     while True:
-        now = pd.Timestamp.now(tz=UTC)
-        nxt = []
-        for k, hm in times.items():
-            hh, mm = (int(x) for x in hm.split(":"))
-            t = now.normalize() + pd.Timedelta(hours=hh, minutes=mm)
-            if t <= now:
-                t += pd.Timedelta(days=1)
-            nxt.append((t, k))
-        t, k = min(nxt)
+        t, k = next_scheduled(pd.Timestamp.now(tz=UTC), cfg)
         LOG.info("next run %s at %s UTC", k, t)
         time.sleep(max(1.0, (t - pd.Timestamp.now(tz=UTC)).total_seconds()))
         try:
@@ -2923,11 +3056,11 @@ def daemon(cfg: dict, base: Path, source: str) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Daily Instrument Scanner (Addendum v0.1)")
     ap.add_argument("--config", default="scanner_config.yaml")
-    ap.add_argument("--run", default="auto", choices=["auto", "evening", "preny"])
+    ap.add_argument("--run", default="auto", choices=["auto", "evening", "preny", "intraday"])
     ap.add_argument("--source", default=None, choices=["tradingview", "csv"], help="override bars.source")
     ap.add_argument("--asof", default=None, help="decision time, e.g. 2026-10-02T12:05Z (default: now)")
     ap.add_argument("--demo", action="store_true", help="synthetic data, no network")
-    ap.add_argument("--daemon", action="store_true", help="stay running and scan at 00:05 and 12:05 UTC")
+    ap.add_argument("--daemon", action="store_true", help="stay running; scan on the runs schedule in the config")
     ap.add_argument("--journal", action="store_true", help="rebuild only the journal and balance page from MT5")
     ap.add_argument("--out-dir", default=None)
     ap.add_argument("-v", "--verbose", action="store_true")

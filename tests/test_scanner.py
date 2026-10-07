@@ -685,3 +685,64 @@ def test_journal_page_without_mt5(tmp_path):
     txt = p.read_text(encoding="utf-8")
     assert "Trading journal and balance" in txt and "MT5 account unavailable" in txt
     assert (tmp_path / "logs" / "trade_journal.csv").exists()
+
+
+# --------------------------------------------------------------- schedule and alerts (cfg-0.9.0)
+def test_schedule_every_two_hours_keeps_evening_and_preny():
+    runs = sc.scheduled_runs(CFG)
+    assert len(runs) == 12 and all(m == 5 for _, m, _ in runs)
+    assert (0, 5, "evening") in runs and (12, 5, "preny") in runs and (14, 5, "intraday") in runs
+    t, k = sc.next_scheduled(pd.Timestamp("2026-10-07 12:30", tz="UTC"), CFG)
+    assert (t, k) == (pd.Timestamp("2026-10-07 14:05", tz="UTC"), "intraday")
+    t, k = sc.next_scheduled(pd.Timestamp("2026-10-07 23:10", tz="UTC"), CFG)
+    assert (t, k) == (pd.Timestamp("2026-10-08 00:05", tz="UTC"), "evening")
+    assert sc.scheduled_runs({"runs": {"every_hours": 0}}) == [(0, 5, "evening"), (12, 5, "preny")]
+
+
+def test_intraday_run_keeps_daily_bias_from_last_evening_run():
+    assert sc.resolve_run("intraday", pd.Timestamp("2026-10-07 16:05", tz="UTC")) == \
+        ("intraday", pd.Timestamp("2026-10-07 00:05", tz="UTC"))
+    assert sc.resolve_run("intraday", pd.Timestamp("2026-10-07 00:01", tz="UTC"))[1] == pd.Timestamp("2026-10-06 00:05", tz="UTC")
+
+
+def test_new_graded_only_new_or_upgraded():
+    def row(sym, grade, total=4):
+        r = sc.Row(sym, "FX", "long")
+        r.grade, r.total = grade, total
+        return r
+    prev = {("EURUSD", "long"): "B", ("GBPUSD", "long"): "A", ("USDJPY", "long"): ""}
+    rows = [row("EURUSD", "A"), row("GBPUSD", "B"), row("USDJPY", "B"), row("AUDUSD", ""), row("USDCAD", "B")]
+    assert [r.symbol for r in sc.new_graded(prev, rows)] == ["EURUSD", "USDCAD", "USDJPY"]   # A first, then by total/symbol
+
+
+def test_previous_grades_skips_demo_and_reads_newest(tmp_path):
+    def scan(stamp, grade, demo=False):
+        (tmp_path / f"scan_{stamp}_intraday.json").write_text(json.dumps(
+            {"meta": {"demo": demo}, "rows": [{"symbol": "EURUSD", "direction": "long", "grade": grade}]}), encoding="utf-8")
+    scan("20261007T1005Z", "B")
+    scan("20261007T1205Z", "A", demo=True)
+    name, grades = sc.previous_grades(tmp_path)
+    assert name == "scan_20261007T1005Z_intraday.json" and grades == {("EURUSD", "long"): "B"}
+
+
+def test_calendar_snapshot_reused_within_refresh(tmp_path):
+    snap = tmp_path / "data" / "calendar_snapshots"
+    snap.mkdir(parents=True)
+    (snap / "ff_2026-W41_20261007T1005Z.json").write_text(json.dumps([{"title": "CPI"}]), encoding="utf-8")
+    (snap / "ff_2026-W40_20261002T1005Z.json").write_text("[]", encoding="utf-8")
+    t, evs = sc.latest_calendar_snapshot(snap, pd.Timestamp("2026-10-07 12:05", tz="UTC"))
+    assert t == pd.Timestamp("2026-10-07 10:05", tz="UTC") and evs == [{"title": "CPI"}]
+    cfg = {**CFG, "paths": {**CFG["paths"], "data_dir": "data"}}
+    evs, status = sc.load_calendar(cfg, tmp_path, pd.Timestamp("2026-10-07 12:05", tz="UTC"), demo=False)
+    assert evs == [{"title": "CPI"}] and status.startswith("snapshot from")       # no network call
+    assert sc.latest_calendar_snapshot(snap, pd.Timestamp("2026-10-12 08:00", tz="UTC")) is None   # new week
+
+
+def test_prune_only_old_intraday_html_and_csv(tmp_path):
+    for name in ("scan_20260901T1405Z_intraday.html", "scan_20260901T1405Z_intraday.csv",
+                 "scan_20260901T1405Z_intraday.json", "scan_20260901T1205Z_preNY.html",
+                 "scan_20261006T1405Z_intraday.html"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert sc.prune_outputs(tmp_path, pd.Timestamp("2026-10-07 12:05", tz="UTC"), 14) == 2
+    left = sorted(p.name for p in tmp_path.iterdir())
+    assert left == ["scan_20260901T1205Z_preNY.html", "scan_20260901T1405Z_intraday.json", "scan_20261006T1405Z_intraday.html"]
