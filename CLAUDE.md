@@ -35,6 +35,10 @@ previous one meets its acceptance criteria.
     python -m pytest -q
     python -m codeguard gate .      # static rules + import smoke test, expect GATE OPEN
     python -m codeguard run SCRIPT  # explain a crash (frames, DataFrame summaries, hints)
+    python run_stress.py --browser  # adds headless Chromium checks on the HTML reports
+    python audit_html.py PATHS      # audit HTML files not generated in Python
 
 Codeguard suppressions need a reason: `# guard: ignore[TG301] why this is safe`.
 Bump `RULESET_VERSION` in codeguard/rules.py whenever a rule changes.
+HTML reports follow the tagging contract in stresslab/html_stress.py (data-metric,
+data-table="trades" with data-total, data-chart="equity" JSON via escape_json_for_script).

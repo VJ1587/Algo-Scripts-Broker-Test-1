@@ -7,6 +7,9 @@ pytest>=8.0
 scipy>=1.11
 beautifulsoup4>=4.12
 ruff>=0.4
+# Optional: browser checks for HTML reports (python run_stress.py --browser).
+#   pip install playwright && playwright install chromium
+#   If the bundled browser version differs, set STRESSLAB_CHROMIUM=/path/to/chrome
 # TradingView bars (unofficial library; install from GitHub):
 #   pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
 # FinBERT sentiment (large download, about 2 GB with torch):
