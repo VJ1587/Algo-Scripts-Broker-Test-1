@@ -45,11 +45,17 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
        (or the head) must sit in a key level zone; the confirmation is a candle CLOSE beyond the
        neckline (a wick through it is a fakeout), within the last 3 bars of that timeframe.
 
-    4. Qualification.                                          setup_section, rank
-       Qualified  = C1 + C4 + at least 3 of C1-C6. Nothing qualifies without a zone reversal.
-       Developing = any 2 or more of C1-C6 that do not qualify (cfg-0.7.0).
-       Equal totals rank Daily confirmations above 4H, and 4H above 2H.
-       C1-C6 are defined in words in CONFLUENCES; the dashboard, journal and trade gate use those names.
+    4. Grades: Position Trading Confluence System (cfg-0.8.0).   grade_setup, rank
+       A setup    = C1 + C2 + C3 at 50/61.8 stacked inside the C2 zone + one of C4, C5, C6.
+       B setup    = C1 + (C2 or C3 at 50/61.8) + one of C4, C5, C6.
+       FX crosses = only an A setup with a closed C4 counts.
+       S&P, oil   = only an A setup counts.
+       Gold       = C1 is Weekly + Daily (no 4H); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
+       Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0).
+       C6 = 4H market structure holding (higher low / lower high not closed through).  structure_holding
+       A and B rows carry section "qualified" plus grade "A" or "B". Ranking: A, B, developing, then total;
+       equal totals rank Daily confirmations above 4H, and 4H above 2H.
+       C1-C6 and the setup rules are defined in words in CONFLUENCES and SETUP_RULES.
 
 What it does NOT do
     It places no orders or sizes no positions. The qualification rule is a screening change, not a
@@ -105,7 +111,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.7.0"
+SCANNER_CODE_VERSION = "0.8.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -574,6 +580,26 @@ class RoutedSource(BarSource):
         return self.fx.provider(inst)
 
 
+def load_dxy(cfg: dict, src: BarSource, daily_cutoff: pd.Timestamp, demo: bool, source: str) -> tuple[Optional[str], str]:
+    """[OWNER cfg-0.8.0] US Dollar Index Daily bias for gold ('long', 'short' or None). Context only: a failure
+    never stops the scan, and DXY never qualifies or blocks a setup."""
+    d = cfg.get("dxy", {})
+    if demo or source == "csv" or not d.get("enabled", True):
+        return None, "not loaded (demo, CSV or disabled)"
+    inst = Instrument("DXY", "Index", "dxy", 0.001, 10.0, 5.0, d.get("tv_symbol", "DXY"), d.get("tv_exchange", "TVC"))
+    try:
+        tv = src if isinstance(src, TradingViewSource) else getattr(src, "other", None)
+        tv = tv if isinstance(tv, TradingViewSource) else TradingViewSource(cfg)
+        dfd = completed(tv.get(inst, TF_D), TF_D, daily_cutoff)
+        if len(dfd) < 60:
+            return None, f"only {len(dfd)} Daily bars"
+        b = daily_bias(dfd, find_pivots(dfd, int(cfg["features"]["pivot_width"])))
+        return b.bias, f"Daily bias {b.bias or 'neutral'}, close {dfd['close'].iloc[-1]:.2f} on {fmt_ts(dfd.index[-1])}"
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("DXY load failed: %s", exc)
+        return None, f"failed: {exc}"
+
+
 def load_instrument_bars(src: BarSource, inst: Instrument, cfg: dict, asof: pd.Timestamp,
                          daily_cutoff: pd.Timestamp) -> tuple[dict[str, pd.DataFrame], list[str]]:
     """Return completed Daily, 4H and 2H bars plus data check errors."""
@@ -865,21 +891,45 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 # [OWNER cfg-0.7.0] Plain-language C1-C6 definitions: one source for the dashboard, the journal and the
 # trade gate, so every logged trade names the checks it had. Edit with the code that tests them.
 CONFLUENCES = {
-    "c1": ("Trend alignment", "Daily bias and 4H structure (latest two highs and lows both rising for a long, both "
-                              "falling for a short) point in the trade direction."),
-    "c2": ("Key level zone", "Latest completed 2H close is inside the zone around a major or mid round-number level "
-                             "(FX +/-15 pips, JPY pairs +/-0.15, gold and S&P +/-20, oil +/-1.00)."),
-    "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 38.2%, 50% or 61.8% "
-                                    "retracement of the latest qualifying 4H impulse."),
+    "c1": ("Trend alignment", "Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade "
+                              "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
+    "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
+                             "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-20; "
+                             "oil every 5.00 and 2.50, +/-1.00."),
+    "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
+                                    "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "
+                                    "4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone."),
     "c4": ("Reversal at the zone", "A reversal that started in the key level zone and closed on the Daily, 4H or 2H "
                                    "chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, "
                                    "morning or evening star, reversal + marubozu, or a double top/bottom or head and "
                                    "shoulders closed beyond the neckline."),
     "c5": ("2H EMA momentum", "On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short."),
-    "c6": ("Trend line", "Latest 2H candle touches the unbroken 4H trend line (last two rising lows for a long, last "
-                         "two falling highs for a short) and closes on the trend side."),
+    "c6": ("Market structure", "4H structure holds at entry: the latest 4H swing low is a higher low (a lower high "
+                               "for a short) and no 2H close has broken it since. A close through it means structure "
+                               "is compromised: skip."),
 }
 CONF_KEYS = tuple(CONFLUENCES)
+
+# [OWNER cfg-0.8.0] Position Trading Confluence System: setup grades and execution
+SETUP_RULES = (
+    ("A setup", "C1 + C2 + C3 at 50% or 61.8% stacked inside the C2 zone + one or more of C4, C5, C6 (4+). Full size; "
+                "limit order inside the zone at the Fib level; no need to wait for C4 when C1 + C2 + C3 stack. More "
+                "confluences beyond 4 allow larger size."),
+    ("B setup", "C1 + (C2 or C3 at 50%/61.8%) + one of C4, C5, C6 (3). Smaller size; a limit order is still valid if "
+                "C1 + C3 are clean."),
+    ("Minor pairs", "FX crosses: only a strong A setup with a closed C4 reversal candle counts. Do not rely on limit "
+                    "orders alone; size smaller than on majors."),
+    ("S&P and oil", "SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing."),
+    ("Gold", "B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close "
+             "(morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for "
+             "longs; check the Fed and safe-haven news."),
+    ("Stop and targets", "Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. "
+                         "TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to "
+                         "breakeven."),
+    ("Developing", "Any 2 or more of C1-C6 that do not make a B setup. Watch only."),
+)
+GOLDEN_FIBS = (0.5, 0.618)
 
 
 def flag(v) -> bool:
@@ -1037,6 +1087,14 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
     def in_zone(price: float) -> bool:
         return in_psych_zone(inst, price, zone_hw)[0]
 
+    def at(*prices: float) -> str:
+        """' at 1.1500 major': the key level zone the pattern formed in."""
+        for pr in prices:
+            ok, lvl, kind = in_psych_zone(inst, pr, zone_hw)
+            if ok:
+                return f" at {_fmt(lvl, 6)} {kind}"
+        return ""
+
     # head and shoulders: shoulder, trough, head, trough, shoulder
     if len(idx) >= 3:
         s1, hd, s2 = (seq[i] for i in idx[-3:])
@@ -1047,7 +1105,7 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
                 and t2.k > t1.k):
             slope = (t2.price - t1.price) / (t2.k - t1.k)
             if confirmed(lambda k: t1.price + slope * (k - t1.k), s2.k, [s1.price, hd.price, s2.price]):
-                return "inverse head and shoulders" if direction == LONG else "head and shoulders"
+                return ("inverse head and shoulders" if direction == LONG else "head and shoulders") + at(hd.price)
     # double bottom / top
     if len(idx) >= 2:
         e1, e2 = seq[idx[-2]], seq[idx[-1]]
@@ -1055,8 +1113,37 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
         if (abs(e1.price - e2.price) <= tol and e2.k - e1.k >= min_gap
                 and (in_zone(e1.price) or in_zone(e2.price))):
             if confirmed(lambda k: neck, e2.k, [e1.price, e2.price]):
-                return "double bottom" if direction == LONG else "double top"
+                return ("double bottom" if direction == LONG else "double top") + at(e2.price, e1.price)
     return ""
+
+
+def structure_holding(df4: pd.DataFrame, pivots4: list[Pivot], df2: pd.DataFrame, direction: str) -> tuple[bool, str]:
+    """[OWNER cfg-0.8.0, C6] Latest confirmed 4H swing low above the one before (long; for a short the latest swing
+    high below the one before), and no completed 2H close beyond it since that swing. Wicks never break it."""
+    seq = alternating_upto(pivots4, len(df4) - 1)
+    kind, name = ("L", "higher low") if direction == LONG else ("H", "lower high")
+    pts = [p for p in seq if p.kind == kind][-2:]
+    if len(pts) < 2:
+        return False, "fewer than two 4H swings"
+    p0, p1 = pts
+    if (p1.price <= p0.price) if direction == LONG else (p1.price >= p0.price):
+        return False, f"no 4H {name}: {_fmt(p1.price, 6)} vs prior {_fmt(p0.price, 6)}"
+    closes = df2.loc[df2.index >= df4.index[p1.k], "close"].values
+    if len(closes) and ((closes.min() < p1.price) if direction == LONG else (closes.max() > p1.price)):
+        return False, f"2H closed through the 4H {name} {_fmt(p1.price, 6)}: structure compromised"
+    return True, f"4H {name} {_fmt(p1.price, 6)} holding (prior {_fmt(p0.price, 6)})"
+
+
+def weekly_from_daily(dfd: pd.DataFrame) -> pd.DataFrame:
+    """Weekly bars (Monday open) built from Daily bars; the current week is dropped until its Friday bar is in."""
+    if dfd.empty:
+        return dfd
+    d = dfd[["open", "high", "low", "close"]].assign(fri=dfd.index.dayofweek == 4)
+    wk = (d.resample("W-MON", closed="left", label="left")
+          .agg({"open": "first", "high": "max", "low": "min", "close": "last", "fri": "max"}).dropna(subset=["close"]))
+    if len(wk) and not bool(wk["fri"].iloc[-1]):
+        wk = wk.iloc[:-1]
+    return wk.drop(columns="fri")
 
 
 def trendline_signal(df4: pd.DataFrame, pivots4: list[Pivot], df2: pd.DataFrame, direction: str,
@@ -1659,6 +1746,14 @@ class Row:
     c6: bool = False
     technical: int = 0
     setup: str = ""                # checks passed, e.g. "C1+C4+C5"
+    grade: str = ""                # A | B for qualified setups (cfg-0.8.0)
+    grade_note: str = ""           # why a setup is or is not graded, and how to execute it
+    c3_levels: str = ""            # retracements hit, e.g. "50.0 61.8"
+    c3_golden: bool = False        # 50% or 61.8% hit
+    stacked: bool = False          # a hit 50%/61.8% level sits inside the C2 zone
+    weekly: str = ""               # Weekly structure (gold C1)
+    dxy: str = ""                  # gold: DXY Daily bias and what it means for this direction
+    plan: dict = field(default_factory=dict)   # stop 78.6/89 %, TP1 -27 %, TP2 -61.8 % from the impulse
     cot_points: int = 0
     sentiment_points: int = 0
     total: int = 0
@@ -1701,22 +1796,89 @@ class InstrumentResult:
     c2_reject: bool = False
 
 
-def setup_section(c1: bool, c2: bool, c4: bool, technical: int, require_close_in_zone: bool = False) -> str:
-    """[OWNER cfg-0.4.0] Qualified: C1, a reversal confirmation closed in a key level zone (C4, 2H or higher),
-    and at least 3 checks. [OWNER cfg-0.7.0] Developing: any 2 or more of C1-C6 that do not qualify."""
-    if c1 and c4 and technical >= 3 and (c2 or not require_close_in_zone):
-        return "qualified"
-    if technical >= 2:
-        return "developing"
-    return "not shown"
+def grade_setup(r: "Row", kind: str = "major") -> tuple[str, str, str]:
+    """[OWNER cfg-0.8.0] Position Trading Confluence System. Returns (section, grade, note).
+    kind: 'major' (FX majors), 'minor' (FX crosses), 'a_only' (S&P, oil) or 'gold' (XAUUSD, GC).
+    A: C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6.  B: C1 + (C2 or golden C3) + one of C4/C5/C6.
+    Minor pairs: only an A with a closed C4.  S&P and oil: only an A.  Gold: B = C1 + C2 + C3; A = B + golden stacked + C4.
+    [OWNER cfg-0.7.0] Developing: any 2 or more of C1-C6 that do not make a graded setup."""
+    extra = r.c4 or r.c5 or r.c6
+    n = r.technical
+    if kind == "gold":
+        a = r.c1 and r.c2 and r.c3_golden and r.stacked and r.c4
+        b = r.c1 and r.c2 and r.c3
+    else:
+        a = r.c1 and r.c2 and r.c3_golden and r.stacked and extra
+        b = r.c1 and (r.c2 or r.c3_golden) and extra
+    size = f" {n} confluences: size up as more line up." if n >= 5 else ""
+    if kind == "minor":
+        if a and r.c4:
+            return "qualified", "A", "Minor pair, C4 closed. Size smaller than on a major; do not rely on a limit order alone." + size
+        why = ("A setup but wait for the C4 reversal candle to close (minor pair)" if a
+               else "minor pair: needs a strong A setup with a closed C4")
+        return ("developing" if n >= 2 else "not shown"), "", why
+    if kind == "a_only" and b and not a:
+        return "developing", "", "B setup, but S&P and oil trade A setups only: needs C2 + C3 at 50%/61.8% stacked"
+    if a:
+        if kind == "gold":
+            return "qualified", "A", "Gold A setup. Check DXY, the Fed and safe-haven news before entry." + size
+        return "qualified", "A", ("Full size. Limit order inside the zone at the Fib level; no need to wait for C4 "
+                                  "when C1 + C2 + C3 stack." + size)
+    if b:
+        if kind == "gold":
+            return "qualified", "B", "Gold with 3 confluences: size very small."
+        return "qualified", "B", ("Smaller size. Limit order valid if C1 + C3 are clean; otherwise wait for C4." + size)
+    if n >= 2:
+        return "developing", "", _missing_for_b(r, kind)
+    return "not shown", "", ""
+
+
+def _missing_for_b(r: "Row", kind: str) -> str:
+    need = []
+    if not r.c1:
+        need.append("C1 trend alignment")
+    if kind == "gold":
+        need += [x for x, ok in (("C2 key level zone", r.c2), ("C3 Fib", r.c3)) if not ok]
+    else:
+        if not (r.c2 or r.c3_golden):
+            need.append("C2 zone or C3 at 50%/61.8%")
+        if not (r.c4 or r.c5 or r.c6):
+            need.append("one of C4, C5, C6")
+    return "B setup needs " + ", ".join(need) if need else ""
+
+
+def setup_kind(inst: Instrument) -> str:
+    if inst.asset == "gold":
+        return "gold"
+    if inst.asset in ("spx", "oil"):
+        return "a_only"   # [OWNER cfg-0.8.0] S&P and oil trade A setups only
+    return "minor" if inst.group == "FX cross" else "major"
+
+
+def fib_plan(imp_dict: Optional[dict], f: dict) -> dict:
+    """[OWNER cfg-0.8.0] Stop and targets from the impulse: fib(r) = B - r * (B - A)."""
+    if not imp_dict:
+        return {}
+    a, b = imp_dict["A"], imp_dict["B"]
+    lv = f.get("plan", {})
+    out = {f"stop_{int(round(x * 1000))}": b - x * (b - a) for x in lv.get("stop_fibs", [0.786, 0.89])}
+    for name, x in zip(("tp1", "tp2"), lv.get("tp_extensions", [-0.27, -0.618])):
+        out[name] = b - x * (b - a)
+    return out
 
 
 def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict, cot_reading: CotReading,
-                     sent: dict, cal: dict, sent_engine: SentimentEngine) -> list[Row]:
+                     sent: dict, cal: dict, sent_engine: SentimentEngine, dxy: Optional[str] = None) -> list[Row]:
+    """dxy: DXY Daily bias ('long', 'short' or None when unavailable), used for gold only."""
     f = cfg["features"]
     dfd, df4, df2 = bars[TF_D], bars[TF_4H], bars[TF_2H]
     w = int(f["pivot_width"])
     piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)
+    skind = setup_kind(inst)
+    s_wk = None
+    if skind == "gold":   # [OWNER cfg-0.8.0] gold needs the Weekly to agree too
+        wk = weekly_from_daily(dfd)
+        s_wk = structure(alternating_upto(find_pivots(wk, w), len(wk) - 1)) if len(wk) else None
     atr4 = atr(df4, int(f["atr_period"]))
     atr2 = atr(df2, int(f["atr_period"]))
     atrd = atr(dfd, int(f["atr_period"]))
@@ -1737,6 +1899,13 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
             r.flags.append("Daily bias invalidated on latest Daily bar")
         # C1 [v1.0 D01 + D02]
         r.c1 = bias.bias == direction and s4 == direction
+        if skind == "gold":
+            r.weekly = s_wk or "mixed"
+            r.c1 = bias.bias == direction and s_wk == direction   # [OWNER cfg-0.8.0] Weekly + Daily, no 4H
+            r.dxy = ("unavailable" if dxy is None else
+                     f"DXY {'falling' if dxy == SHORT else 'rising'}: "
+                     + ("extra conviction" if (dxy == SHORT) == (direction == LONG) else "against this trade")
+                     if dxy in (LONG, SHORT) else "DXY Daily bias neutral")
         # Impulse [v1.0 I01]
         imp, note = select_impulse(df4, piv_4, atr4, direction, f)
         r.impulse_note = note
@@ -1762,9 +1931,16 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
                          "span": imp.span, "efficiency": round(imp.efficiency, 3),
                          **{f"fib_{int(round(x * 1000))}": imp.fib(float(x)) for x in f["fib_levels"]}}
             fibs = [imp.fib(float(x)) for x in f["fib_levels"]]
-            r.c3 = any(abs(P - fv) <= hw for fv in fibs)
+            hits = [(float(x), fv) for x, fv in zip(f["fib_levels"], fibs) if abs(P - fv) <= hw]
+            r.c3 = bool(hits)
+            r.c3_levels = " ".join(f"{x * 100:.1f}" for x, _ in hits)
+            # [OWNER cfg-0.8.0] 50/61.8 are the golden levels; stacked = such a level inside the C2 zone
+            golden = [fv for x, fv in hits if any(abs(x - g) < 1e-9 for g in GOLDEN_FIBS)]
+            r.c3_golden = bool(golden)
+            r.stacked = bool(r.c2 and any(r.zone_low <= fv <= r.zone_high for fv in golden))
             for x, fv in zip(f["fib_levels"], fibs):
                 r.ladder_in_zone[f"{float(x) * 100:.1f}"] = in_psych_zone(inst, fv, zhw)[0]
+            r.plan = fib_plan(r.impulse, f)
         # C4 candle, C5 EMA, C6 trend line
         # [OWNER cfg-0.4.0] C4: reversal that started at the zone and closed on 2H or higher; Daily beats 4H beats 2H
         cp = f["chart_patterns"]
@@ -1779,7 +1955,11 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         if np.isfinite(e_fast[-1]) and np.isfinite(e_slow[-1]):
             # bool(): numpy bools were saved to the scan JSON as the text "True"/"False"
             r.c5 = bool(e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1])
-        r.c6, r.trendline = trendline_signal(df4, piv_4, df2, direction, hw)
+        # [OWNER cfg-0.8.0] C6 = 4H market structure holding; the trend line is kept as information only
+        r.c6, r.trendline = structure_holding(df4, piv_4, df2, direction)
+        tl_ok, tl_txt = trendline_signal(df4, piv_4, df2, direction, hw)
+        if tl_ok:
+            r.flags.append(f"trend line: {tl_txt}")
         r.c1, r.c2, r.c3, r.c6 = bool(r.c1), bool(r.c2), bool(r.c3), bool(r.c6)
         r.technical = int(sum([r.c1, r.c2, r.c3, r.c4, r.c5, r.c6]))
         r.setup = setup_label(r)
@@ -1796,9 +1976,10 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.sentiment = dict(sent)
         r.calendar = dict(cal)
         r.total = r.technical + r.cot_points + r.sentiment_points
-        # Section [Add 8]
-        r.section = setup_section(r.c1, r.c2, r.c4, r.technical,
-                                  bool(cfg.get("qualification", {}).get("require_close_in_zone", False)))
+        # Section and grade [OWNER cfg-0.8.0]
+        r.section, r.grade, r.grade_note = grade_setup(r, skind)
+        if skind == "gold" and r.dxy and r.section != "not shown":
+            r.grade_note = (r.grade_note.rstrip(".") + ". " if r.grade_note else "") + r.dxy + "."
         # v1.0 short experiment flag for gold and S&P [Add 3]
         if inst.short_test and direction == SHORT:
             dclose = float(dfd["close"].values[-1])
@@ -1822,20 +2003,21 @@ def rejection_reason(rows: list[Row]) -> str:
     if bias == "neutral":
         return "Daily bias neutral"
     r = next(x for x in rows if x.direction == bias)
-    if r.structure_4h != bias:
+    if r.weekly:   # gold: Weekly + Daily, no 4H
+        if r.weekly != bias:
+            return "Weekly disagrees (gold)"
+    elif r.structure_4h != bias:
         return "4H disagrees"
-    if not r.c2 and not r.c4:
-        return "outside key level zone"
-    if not r.c4:
-        return "in zone, no reversal candle closed yet"
-    return f"technical score {r.technical}"
+    if not r.c2 and not r.c3:
+        return "not at a key level zone or Fib level"
+    return r.grade_note or f"technical score {r.technical}"
 
 
 def rank(rows: list[Row], top_n: int = 5) -> list[Row]:
-    """[Add 8] Qualified before developing; total desc; ties: C4 timeframe (D > 4H > 2H), technical,
+    """[Add 8] A setups, then B, then developing; total desc; ties: C4 timeframe (D > 4H > 2H), technical,
     COT points, symbol. Never pad."""
     cands = [r for r in rows if r.section in ("qualified", "developing")]
-    cands.sort(key=lambda r: (0 if r.section == "qualified" else 1, -r.total, -r.c4_tf_rank, -r.technical,
+    cands.sort(key=lambda r: ({"A": 0, "B": 1}.get(r.grade, 2), -r.total, -r.c4_tf_rank, -r.technical,
                               -r.cot_points, r.symbol))
     top = cands[:top_n]
     for i, r in enumerate(top, 1):
@@ -1878,11 +2060,32 @@ def _conf_th() -> str:
 
 
 def render_definitions() -> str:
+    e = html.escape
     return ("<h2>Confluence definitions</h2><div class='wrap'><table><tr><th>Check</th><th>Name</th><th>Passes when</th></tr>"
-            + "".join(f"<tr><td><b>{k.upper()}</b></td><td>{html.escape(n)}</td><td class='wrapc'>{html.escape(d)}</td></tr>"
+            + "".join(f"<tr><td><b>{k.upper()}</b></td><td>{e(n)}</td><td class='wrapc'>{e(d)}</td></tr>"
                       for k, (n, d) in CONFLUENCES.items())
-            + "</table></div><p class='muted'>Qualified: C1 + C4 + at least 3 of C1-C6. Developing: any 2 or more "
-              "of C1-C6 that do not qualify. COT and sentiment add points for ranking; they never qualify a setup.</p>")
+            + "</table></div><h2>Setup rules</h2><div class='wrap'><table><tr><th>Rule</th><th>Definition</th></tr>"
+            + "".join(f"<tr><td><b>{e(n)}</b></td><td class='wrapc'>{e(d)}</td></tr>" for n, d in SETUP_RULES)
+            + "</table></div><p class='muted'>COT and sentiment add points for ranking; they never grade a setup.</p>")
+
+
+def section_label(r) -> str:
+    g, s = _get(r, "grade"), _get(r, "section") or ""
+    return f"{g} setup" if g else s
+
+
+def _plan_html(r: "Row") -> str:
+    e, p = html.escape, r.plan
+    out = (f"C3 {e(r.c3_levels) or 'no Fib hit'}{' · <b>stacked</b>' if r.stacked else ''}")
+    if p:
+        stops = " / ".join(_fmt(v, 6) for k, v in p.items() if k.startswith("stop_"))
+        out += (f"<br><span class='muted'>stop 78.6/89% {stops}<br>TP1 -27% {_fmt(p.get('tp1'), 6)} · "
+                f"TP2 -61.8% {_fmt(p.get('tp2'), 6)}</span>")
+    if r.weekly:
+        out += f"<br><span class='muted'>Weekly {e(r.weekly)}</span>"
+    if r.grade_note:
+        out += f"<br>{e(r.grade_note)}"
+    return out
 
 
 def render_broker(broker: Optional[dict]) -> str:
@@ -2035,16 +2238,18 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
             f"<div class='meta muted'>{fr}</div>")
     if meta.get("demo"):
         head += "<div class='banner warn'><b>DEMO DATA.</b> Synthetic prices, COT, calendar and headlines. Not a market view.</div>"
-    head += ("<div class='banner'>Watchlist only: no orders, no trade levels, no sizing. Overlays rank setups; "
-             "they never qualify them. Scores are research outputs, not a validated edge.</div>")
+    head += ("<div class='banner'>Watchlist only: no orders and no lot sizes. Stop and target levels are Fib "
+             "reference levels from the impulse, not orders. Overlays rank setups; they never grade them. Scores are "
+             "research outputs, not a validated edge.</div>")
     n = len(top)
     body = f"<h2>Top {n} setups</h2>"
     if n < 5:
-        body += f"<p class='muted'>{n} setup(s) met the qualified or developing definition; the list is not padded.</p>"
+        body += f"<p class='muted'>{n} setup(s) met the A, B or developing definition; the list is not padded.</p>"
     if n:
         body += "<div class='wrap'><table><tr><th>#</th><th>Section</th><th>Instrument</th><th>Group</th><th>Dir</th>" \
                 f"{_conf_th()}<th class='num'>Tech</th>" \
-                "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Zone</th><th>Ladder in zone</th>" \
+                "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Fib, plan and execution</th>" \
+                "<th>Zone</th><th>Ladder in zone</th>" \
                 "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th></tr>"
         for r in top:
             lad = " ".join(f"{k}{'✓' if v else '·'}" for k, v in r.ladder_in_zone.items()) or "no impulse"
@@ -2069,11 +2274,12 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
             if r.short_test is not None:
                 flags.append(f"v1.0 short test: {r.short_test}")
             cls = "q" if r.section == "qualified" else "d"
-            body += (f"<tr><td>{r.rank}</td><td><span class='tag {cls}'>{e(r.section)}</span></td><td><b>{e(r.symbol)}</b><br>"
+            body += (f"<tr><td>{r.rank}</td><td><span class='tag {cls}'>{e(section_label(r))}</span></td><td><b>{e(r.symbol)}</b><br>"
                      f"<span class='muted'>{_fmt(r.ref_price, 6)}</span></td><td>{e(r.group)}</td><td class='{r.direction}'>{r.direction}</td>"
                      + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
                      + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td>"
-                     f"<td class='num'><b>{r.total}</b></td><td>{zone_txt}</td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
+                     f"<td class='num'><b>{r.total}</b></td><td class='wrapc'>{_plan_html(r)}</td>"
+                     f"<td>{zone_txt}</td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
                      f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td></tr>")
         body += "</table></div>"
     body += render_broker(broker)
@@ -2082,8 +2288,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     # [OWNER cfg-0.7.0] every developing setup, with the checks it has and the ones it still needs
     dev = sorted([r for r in all_rows if r.section == "developing"],
                  key=lambda r: (-r.total, -r.technical, -r.c4_tf_rank, r.symbol, r.direction))
-    body += (f"<h2>Developing setups ({len(dev)})</h2><p class='muted'>Two or more of C1-C6 but not qualified "
-             "(qualified needs C1 + C4 + at least 3). Watch these; they are not a trade yet.</p>")
+    body += (f"<h2>Developing setups ({len(dev)})</h2><p class='muted'>Two or more of C1-C6 but not a B setup "
+             "(B needs C1 + C2 or a 50%/61.8% Fib + one of C4, C5, C6). Watch these; they are not a trade yet.</p>")
     if dev:
         body += ("<div class='wrap'><table><tr><th>Instrument</th><th>Dir</th><th>Setup</th>" + _conf_th()
                  + "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th>"
@@ -2094,7 +2300,9 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                      + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
                      + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td>"
                      f"<td class='num'>{r.sentiment_points:+d}</td><td class='num'><b>{r.total}</b></td>"
-                     f"<td class='wrapc'>{e(confluences_text(r))}</td><td class='wrapc'>{e(confluences_text(r, met=False))}</td>"
+                     f"<td class='wrapc'>{e(confluences_text(r))}{' (C3 ' + e(r.c3_levels) + ')' if r.c3 else ''}</td>"
+                     f"<td class='wrapc'><b>{e(r.grade_note)}</b><br><span class='muted'>missing: "
+                     f"{e(confluences_text(r, met=False))}</span></td>"
                      f"<td>{_fmt(r.zone_level, 6)} {e(r.zone_kind)}{'<br>' + e(r.candle) if r.candle else ''}</td>"
                      f"<td class='wrapc'>{e('; '.join(r.flags))}</td></tr>")
         body += "</table></div>"
@@ -2105,7 +2313,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
         body += (f"<tr><td>{e(f['symbol'])}</td><td>{e(f['group'])}</td><td>{e(f['bias'])}</td><td>{e(f['h4'])}</td>"
                  f"<td class='wrapc'>{e(f['status'])}</td><td class='muted'>{e(f['provider'])}</td></tr>")
     body += "</table></div>"
-    body += ("<p class='muted' style='margin-top:18px'>Rules: Scanner Addendum v0.1 on Trading Algorithm Specification v1.0. "
+    body += ("<p class='muted' style='margin-top:18px'>Rules: Position Trading Confluence System (cfg-0.8.0) on "
+             "Scanner Addendum v0.1 and Trading Algorithm Specification v1.0. "
              "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-15 pips around every major "
              "and mid level); wicks counts recent 2H wick rejections inside the zone, an early alert only. "
              "C4 counts a candlestick reversal pattern only when it forms inside the key level zone. TradingView and Forex Factory access are unofficial and may stop "
@@ -2125,7 +2334,7 @@ def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row]
         payload["broker"] = {k: v for k, v in broker.items() if k != "account"}
     paths["json"].write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     flat_keys = ["symbol", "group", "direction", "section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical",
-                 "setup", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
+                 "setup", "grade", "grade_note", "c3_levels", "c3_golden", "stacked", "weekly", "dxy", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
                  "zone_half_width", "zone_low", "zone_high", "zone_width_source", "zone_wicks", "daily_bias", "bias_invalidation", "structure_4h", "candle", "c4_tf", "trendline",
                  "impulse_note", "short_test", "same_underlying", "roll"]
     with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:
@@ -2163,7 +2372,8 @@ def append_c2_log(log_dir: Path, meta: dict, results: list[InstrumentResult]) ->
 
 DEAL_BUY, DEAL_SELL = 0, 1
 DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT, DEAL_ENTRY_OUT_BY = 0, 1, 2, 3
-JOURNAL_CONF_KEYS = ("section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical", "setup", "cot_points",
+JOURNAL_CONF_KEYS = ("section", "grade", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical", "setup",
+                     "c3_levels", "stacked", "cot_points",
                      "sentiment_points", "total", "candle", "c4_tf", "zone_level", "zone_kind", "daily_bias",
                      "structure_4h", "reason", "flags")
 
@@ -2267,7 +2477,7 @@ def setup_results(trades: list[dict]) -> dict:
     per_check = [{"check": k.upper(), "name": CONFLUENCES[k][0],
                   "with": _stats([t for t in closed if flag(t["confluences"].get(k))]),
                   "without": _stats([t for t in closed if not flag(t["confluences"].get(k))])} for k in CONF_KEYS]
-    return {"closed": len(closed), "by_section": group(lambda c: c.get("section") or "not shown"),
+    return {"closed": len(closed), "by_section": group(lambda c: section_label(c) or "not shown"),
             "by_setup": group(lambda c: c.get("setup") or setup_label(c)), "by_check": per_check}
 
 
@@ -2391,7 +2601,7 @@ def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, histo
                 stale = cf["age_hours"] > 24
                 row += (f"<td><a href='{e(cf['scan_file'])}'>{e(cf['scan_asof'].strftime('%m-%d %H:%M'))} UTC</a><br>"
                         f"<span class='{'warn' if stale else 'muted'}'>{cf['age_hours']}h before entry</span></td>"
-                        f"<td><span class='tag {cls}'>{e(sec)}</span>{(' #' + str(cf['rank'])) if cf.get('rank') else ''}"
+                        f"<td><span class='tag {cls}'>{e(section_label(cf))}</span>{(' #' + str(cf['rank'])) if cf.get('rank') else ''}"
                         f"<br><b>{e(cf.get('setup') or setup_label(cf))}</b></td>"
                         + "".join(f"<td>{_ck(flag(cf.get(k)))}</td>" for k in CONF_KEYS)
                         + f"<td class='num'>{cf.get('total')}</td>"
@@ -2563,6 +2773,7 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         h.tone = s
         h.theme = engine.tag_theme(h.title)
 
+    dxy_bias, dxy_status = load_dxy(cfg, src, daily_cutoff, demo, source)
     results: list[InstrumentResult] = []
     all_rows: list[Row] = []
     latest = {TF_D: None, TF_4H: None, TF_2H: None}
@@ -2585,7 +2796,7 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         reading = cot_for_instrument(inst, cot, asof, cfg["cot"])
         sent = engine.score(inst, recent, asof) if tone.kind != "off" else {"S": None, "weight_sum": 0, "thin": True, "drivers": []}
         cal = next_event(events, inst.calendar_currencies, asof, cfg.get("calendar", {}))
-        rows = score_instrument(inst, bars, cfg, reading, sent, cal, engine)
+        rows = score_instrument(inst, bars, cfg, reading, sent, cal, engine, dxy_bias)
         results.append(InstrumentResult(inst, rows, [], src.provider(inst), last))
         all_rows += rows
 
@@ -2600,10 +2811,10 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         else:
             hit = [r for r in res.rows if (r.symbol, r.direction) in shown]
             if hit:
-                status = f"shown: rank {hit[0].rank}, {hit[0].section}, {hit[0].direction}"
+                status = f"shown: rank {hit[0].rank}, {section_label(hit[0])}, {hit[0].direction}"
             else:
                 elig = [r for r in res.rows if r.section != "not shown"]
-                status = (f"{elig[0].section} {elig[0].direction}, ranked below top 5" if elig else rejection_reason(res.rows))
+                status = (f"{section_label(elig[0])} {elig[0].direction}, ranked below top 5" if elig else rejection_reason(res.rows))
             bias, h4 = res.rows[0].daily_bias, res.rows[0].structure_4h
         footer.append({"symbol": res.inst.symbol, "group": res.inst.group, "bias": bias, "h4": h4,
                        "status": status, "provider": res.provider})
@@ -2622,6 +2833,7 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
                 "Bars": f"{src.name}; last D close {fmt_ts(latest[TF_D])}, 4H {fmt_ts(latest[TF_4H])}, 2H {fmt_ts(latest[TF_2H])}",
                 "COT": cot_status + latest_cot_pub(cot, asof),
                 "Calendar": cal_status,
+                "DXY (gold)": dxy_status,
                 "Headlines": f"{head_status}; {len(recent)} in last {cfg['sentiment']['window_hours']}h; tone model {tone.status}",
             },
             "instruments_scanned": len(universe), "instruments_with_errors": sum(1 for r in results if r.errors)}

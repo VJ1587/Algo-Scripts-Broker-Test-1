@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.7.0"
+config_version: "cfg-0.8.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -19,6 +19,13 @@ changelog:
   - {version: "cfg-0.5.0", date: "2026-10-06", change: "Currency pair bars come from the MT5 terminal (Forex.com); CFDs and futures stay on TradingView. Dashboard adds MT5 broker prices and open positions; new journal page with balance history and positions matched to the confluences logged before entry", reason: "Owner: MT5 for currency data only, TradingView for futures; monitor balance and journal every position"}
   - {version: "cfg-0.6.0", date: "2026-10-06", change: "Forex Factory red-folder news: dashboard list of upcoming High impact events with affected instruments; reaction tracker (currency strength move 15m/1h/4h after each red event, MT5 5 minute bars); trade gate news check; backtest news CSV export", reason: "Owner: use Forex Factory red folders for upcoming news across scanner and trading scripts and track how news moves currencies"}
   - {version: "cfg-0.7.0", date: "2026-10-07", change: "Developing = any 2+ of C1-C6 that do not qualify (was C1 + C2 + 2 checks); trade gate --include-developing offers all of them. C1-C6 named and defined in one place; dashboard lists every developing setup with checks met and missing; journal spells out each trade's confluences and adds results by section, setup and confluence", reason: "Owner: report must show developing setups with 2 confluences; spell out C1-C6 in the journal to see which setups work"}
+  - {version: "cfg-0.8.0", date: "2026-10-07", change: "Position Trading Confluence System: A setup = C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6 (C4 no longer required); B setup = C1 + (C2 or C3 at 50/61.8) + one of C4/C5/C6; C6 becomes 4H market structure holding (trend line is information only); FX crosses need an A setup with C4; S&P and oil trade A setups only; gold C1 = Weekly + Daily (no 4H), B = C1 + C2 + C3, A adds stacked Fib + C4, DXY shown as context; dashboard shows Fib stop 78.6/89 and TP1 -27 / TP2 -61.8", reason: "Owner document: Position Trading Confluence System and gold confluences; owner answers October 7 (7 USD majors, gold Weekly + Daily, S&P and oil A only, full C4 pattern list at key levels)"}
+
+# DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
+dxy:
+  enabled: true
+  tv_symbol: DXY
+  tv_exchange: TVC
 
 # Run times fixed in UTC (Addendum Section 4); used by --daemon
 runs:
@@ -74,7 +81,10 @@ features:
     void_beyond_origin: true  # scanner test default: drop an impulse once a 4H close passes A
   zone_atr_fraction: 0.10
   zone_min_ticks: 2
-  fib_levels: [0.382, 0.5, 0.618]
+  fib_levels: [0.382, 0.5, 0.618]   # 0.5 and 0.618 are the golden levels (A setups, B without C2)
+  plan:                       # cfg-0.8.0: reference levels shown on the dashboard, from the impulse
+    stop_fibs: [0.786, 0.89]
+    tp_extensions: [-0.27, -0.618]
   # Chart patterns for C4 (Daily and 4H). Distances are multiples of the instrument's zone half-width,
   # so FX (15 pip zone) gets the owner's pip rules and gold, S&P and oil scale with their zones.
   chart_patterns:
@@ -98,13 +108,8 @@ features:
     star_body_frac: 0.30      # morning/evening star: middle body at most this x first body
     marubozu_wick_max: 0.10   # marubozu: total wicks at most this share of the range
 
-# ---------------------------------------------------------------- qualification (cfg-0.4.0)
-# Qualified always needs C1 + C4 (reversal closed in a key level zone, 2H or higher) + 3 checks.
-# Developing (cfg-0.7.0): any 2 or more of C1-C6 that do not qualify.
-# require_close_in_zone: true also demands the latest 2H close sits inside the zone (C2). Left false so an
-# engulfing candle or neckline break that closes just beyond the zone still qualifies.
-qualification:
-  require_close_in_zone: false
+# ---------------------------------------------------------------- setup grades (cfg-0.8.0)
+# Grades (cfg-0.8.0) are set in scanner.py grade_setup: A, B, developing. See the README setup rules.
 
 # ---------------------------------------------------------------- psychological grid (Addendum Section 5)
 # zone_half_width: fixed half-width in price units for the zone drawn around every major and mid level

@@ -150,7 +150,8 @@ def latest_scan(out_dir: Path) -> Path:
 def candidates(scan: dict, include_developing: bool) -> list[dict]:
     keep = ("qualified", "developing") if include_developing else ("qualified",)
     rows = [r for r in scan.get("rows", []) if r.get("section") in keep]
-    return sorted(rows, key=lambda r: (r["section"] != "qualified", r.get("rank") or 99, -r.get("total", 0)))
+    return sorted(rows, key=lambda r: ({"A": 0, "B": 1}.get(r.get("grade") or "", 2), r.get("rank") or 99,
+                                       -r.get("total", 0)))
 
 
 # =============================================================================
@@ -403,7 +404,7 @@ class Ticket:
 def decision_row(t: Ticket, decision: str, now: pd.Timestamp) -> dict:
     r = t.row
     return {"time_utc": now.strftime("%Y-%m-%d %H:%M:%S"), "ticket_id": t.ticket_id, "scan_stamp": t.scan_stamp,
-            "symbol": t.symbol, "direction": t.direction, "section": r.get("section"), "total": r.get("total"),
+            "symbol": t.symbol, "direction": t.direction, "section": sc.section_label(r), "total": r.get("total"),
             **{k: int(sc.flag(r.get(k))) for k in sc.CONF_KEYS},
             "decision": decision, "account": t.account.id, "mode": t.mode, "route": t.route,
             "entries": fmt_levels(t.entries), "lots": fmt_levels(t.lots), "stop": t.stop, "tp1": t.tp1, "tp2": t.tp2,
@@ -584,7 +585,7 @@ class Gate:
             return []
         cands = candidates(scan, include_developing)
         if not cands:
-            say("No qualified setups in this scan. Nothing to decide.")
+            say("No A or B setups in this scan. Nothing to decide.")
             return []
         done: list[Ticket] = []
         for row in cands:
@@ -595,10 +596,14 @@ class Gate:
     def review(self, row: dict, meta: dict) -> list[Ticket]:
         say, inst = self.p.say, self.universe.get(row["symbol"])
         checks = " ".join(f"{k.upper()}{'+' if sc.flag(row.get(k)) else '-'}" for k in sc.CONF_KEYS)
-        say(f"\n=== {row['symbol']} {row['direction'].upper()}  {row['section']}"
+        say(f"\n=== {row['symbol']} {row['direction'].upper()}  {sc.section_label(row)}"
             f"{' #' + str(row['rank']) if row.get('rank') else ''}  total {row.get('total')}  {checks}")
         say(f"    has: {sc.confluences_text(row) or 'none'}")
         say(f"    missing: {sc.confluences_text(row, met=False) or 'none'}")
+        if row.get("c3_levels") or row.get("stacked"):
+            say(f"    Fib hit: {row.get('c3_levels') or 'none'}{'  STACKED in the key level zone' if sc.flag(row.get('stacked')) else ''}")
+        if row.get("grade_note"):
+            say(f"    {row['grade_note']}")
         say(f"    zone {row.get('zone_level')} ({row.get('zone_low')} to {row.get('zone_high')})  "
             f"reversal: {row.get('candle') or 'none yet'}  price at scan {row.get('ref_price')}")
         cal = row.get("calendar") or {}
@@ -608,10 +613,7 @@ class Gate:
         if row.get("flags"):
             say(f"    flags: {'; '.join(row['flags'])}")
         if row["section"] != "qualified":
-            need = [f"{k.upper()} {sc.CONFLUENCES[k][0]}" for k in ("c1", "c4") if not sc.flag(row.get(k))]
-            say("    NOTE: developing, not qualified (qualified needs C1 + C4 + at least 3 checks). "
-                + (f"Missing {' and '.join(need)}. " if need else "Needs one more check. ")
-                + "The scanner says this is not enough to take a trade yet.")
+            say("    NOTE: developing, not an A or B setup. The scanner says this is not enough to take a trade yet.")
         stamp = meta["stamp"]
         if inst is None:
             say("    not in the scanner universe; skipped")

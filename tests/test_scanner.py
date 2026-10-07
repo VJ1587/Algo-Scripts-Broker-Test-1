@@ -336,32 +336,90 @@ def test_old_headlines_ignored():
 
 
 # --------------------------------------------------------------- ranking
+def gr(checks: str, golden=False, stacked=False):
+    """A Row with the given checks passed, e.g. gr('1235', golden=True, stacked=True)."""
+    r = sc.Row("X", "FX", "long")
+    for i in checks:
+        setattr(r, f"c{i}", True)
+    r.c3_golden, r.stacked = golden, stacked
+    r.technical = len(checks)
+    return r
+
+
 @pytest.mark.parametrize(
-    "c1,c2,c4,technical,expected",
+    "checks,golden,stacked,kind,section,grade",
     [
-        (True, False, True, 3, "qualified"),     # reversal closed in zone, close now just beyond it
-        (True, True, True, 3, "qualified"),
-        (True, True, False, 4, "developing"),    # in zone, 4 checks, but no reversal candle closed yet
-        (True, False, False, 4, "developing"),   # cfg-0.7.0: any 2+ checks that do not qualify
-        (False, True, True, 4, "developing"),    # no C1: never qualifies, still developing
-        (True, True, False, 2, "developing"),
-        (True, False, True, 2, "developing"),    # C1 + C4 but only 2 checks
-        (False, False, False, 1, "not shown"),
-        (True, False, False, 1, "not shown"),
+        ("1235", True, True, "major", "qualified", "A"),     # C1 + C2 + C3 stacked + C5: A without waiting for C4
+        ("1234", True, False, "major", "qualified", "B"),    # golden Fib but not inside the zone: B
+        ("125", False, False, "major", "qualified", "B"),    # C1 + C2 + C5
+        ("135", True, False, "major", "qualified", "B"),     # C1 + C3 at 50/61.8 + C5
+        ("135", False, False, "major", "developing", ""),    # 38.2% only: not enough for B without C2
+        ("12", False, False, "major", "developing", ""),     # no C4/C5/C6
+        ("2345", True, True, "major", "developing", ""),     # no C1: never graded
+        ("1", False, False, "major", "not shown", ""),
+        ("1235", True, True, "minor", "developing", ""),     # minor pair: A needs a closed C4
+        ("12345", True, True, "minor", "qualified", "A"),
+        ("125", False, False, "minor", "developing", ""),    # minor B does not count
+        ("123", False, False, "gold", "qualified", "B"),     # gold B = C1 + C2 + C3
+        ("125", False, False, "gold", "developing", ""),     # gold needs C3
+        ("1235", True, True, "gold", "qualified", "B"),      # gold A needs C4
+        ("1234", True, True, "gold", "qualified", "A"),
+        ("1235", True, True, "a_only", "qualified", "A"),    # S&P and oil: A setups count
+        ("1256", False, False, "a_only", "developing", ""),  # a B setup is only developing
     ],
 )
-def test_setup_section_qualification_rules(c1, c2, c4, technical, expected):
-    assert sc.setup_section(c1, c2, c4, technical) == expected
+def test_grade_setup(checks, golden, stacked, kind, section, grade):
+    s, g, note = sc.grade_setup(gr(checks, golden, stacked), kind)
+    assert (s, g) == (section, grade)
+    if s == "developing":
+        assert note
 
 
-def test_setup_section_strict_close_in_zone():
-    assert sc.setup_section(True, False, True, 3, require_close_in_zone=True) == "developing"   # 3 checks, not qualified
-    assert sc.setup_section(True, True, True, 3, require_close_in_zone=True) == "qualified"
+def test_grade_notes_spell_out_execution():
+    assert "Full size" in sc.grade_setup(gr("1235", True, True), "major")[2]
+    assert "Smaller size" in sc.grade_setup(gr("125"), "major")[2]
+    assert "very small" in sc.grade_setup(gr("123"), "gold")[2]
+    assert "size up" in sc.grade_setup(gr("12356", True, True), "major")[2]       # 5+ confluences
+    assert sc.setup_kind(UNIVERSE["GBPAUD"]) == "minor" and sc.setup_kind(UNIVERSE["EURUSD"]) == "major"
+    assert sc.setup_kind(UNIVERSE["GC"]) == "gold" and sc.setup_kind(UNIVERSE["ES"]) == "a_only"
+    assert sc.setup_kind(UNIVERSE["WTI"]) == "a_only" and sc.setup_kind(UNIVERSE["USDCAD"]) == "major"
+    assert "A setups only" in sc.grade_setup(gr("1256"), "a_only")[2]
+
+
+def test_fib_plan_stop_and_targets():
+    p = sc.fib_plan({"A": 1.1000, "B": 1.1200}, CFG["features"])     # long impulse of 200 pips
+    assert p["stop_786"] == pytest.approx(1.10428) and p["stop_890"] == pytest.approx(1.1022)
+    assert p["tp1"] == pytest.approx(1.1254) and p["tp2"] == pytest.approx(1.13236)
+    assert sc.fib_plan(None, CFG["features"]) == {}
+
+
+def test_structure_holding_c6():
+    idx4 = pd.date_range("2026-09-01", periods=9, freq="4h", tz="UTC")
+    df4 = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=idx4)
+    piv = [sc.Pivot(1, "L", 1.10, 3), sc.Pivot(3, "H", 1.13, 5), sc.Pivot(5, "L", 1.11, 7)]   # higher low 1.11
+    idx2 = pd.date_range(idx4[5], periods=8, freq="2h", tz="UTC")
+    ok = pd.DataFrame({"close": [1.12, 1.115, 1.112, 1.118, 1.12, 1.121, 1.119, 1.12]}, index=idx2)
+    assert sc.structure_holding(df4, piv, ok, "long")[0]
+    broken = ok.assign(close=[1.12, 1.115, 1.108, 1.118, 1.12, 1.121, 1.119, 1.12])   # 2H closed below 1.11
+    held, why = sc.structure_holding(df4, piv, broken, "long")
+    assert not held and "compromised" in why
+    lower = [sc.Pivot(1, "L", 1.10, 3), sc.Pivot(3, "H", 1.13, 5), sc.Pivot(5, "L", 1.09, 7)]
+    assert not sc.structure_holding(df4, lower, ok, "long")[0]
+
+
+def test_weekly_from_daily_drops_unfinished_week():
+    idx = pd.date_range("2026-09-07", "2026-09-23", freq="B", tz="UTC")     # Mon 7 Sep to Wed 23 Sep
+    dfd = pd.DataFrame({"open": range(len(idx)), "high": range(1, len(idx) + 1), "low": range(len(idx)),
+                        "close": range(len(idx))}, index=idx, dtype=float)
+    wk = sc.weekly_from_daily(dfd)
+    assert len(wk) == 2 and wk.index[0] == pd.Timestamp("2026-09-07", tz="UTC")
+    assert wk["open"].iloc[0] == 0 and wk["close"].iloc[0] == 4 and wk["high"].iloc[1] == 10
 
 
 def mk(sym, d, section, tech, cot, total):
     r = sc.Row(sym, "FX", d)
     r.section, r.technical, r.cot_points, r.total = section, tech, cot, total
+    r.grade = "B" if section == "qualified" else ""
     return r
 
 
@@ -408,7 +466,7 @@ DOUBLE = [(0, 1.1100), (5, 1.1000), (10, 1.1060), (15, 1.1004), (19, 1.1056), (2
 
 
 def test_double_bottom_needs_zone_and_neckline_close():
-    assert _cp(_path(DOUBLE), sc.LONG) == "double bottom"
+    assert _cp(_path(DOUBLE), sc.LONG).startswith("double bottom at ")
     assert _cp(_path(DOUBLE, shift=0.0100), sc.LONG) == ""               # bottoms 95 pips from any level
     wick_only = DOUBLE[:-1] + [(20, 1.1068)]                             # high pokes the neckline, close below
     assert _cp(_path(wick_only, last_close=1.1058), sc.LONG) == ""
@@ -422,9 +480,9 @@ def test_double_bottom_touches_too_close_together():
 
 def test_inverse_head_and_shoulders():
     ihs = [(0, 1.1100), (4, 1.1030), (8, 1.1070), (12, 1.1000), (16, 1.1072), (20, 1.1035), (24, 1.1068), (25, 1.1090)]
-    assert _cp(_path(ihs), sc.LONG) == "inverse head and shoulders"
+    assert _cp(_path(ihs), sc.LONG).startswith("inverse head and shoulders at ")
     shallow = [(0, 1.1100), (4, 1.1012), (8, 1.1070), (12, 1.1000), (16, 1.1072), (20, 1.1015), (24, 1.1068), (25, 1.1090)]
-    assert _cp(_path(shallow), sc.LONG) == "double bottom"               # head only 12 pips lower: not an H&S
+    assert _cp(_path(shallow), sc.LONG).startswith("double bottom")               # head only 12 pips lower: not an H&S
 
 
 def test_same_underlying_flag():
@@ -482,7 +540,14 @@ def test_demo_end_to_end(tmp_path):
     assert all(name in report for name, _ in sc.CONFLUENCES.values())
     rows = json.loads(paths["json"].read_text(encoding="utf-8"))["rows"]
     assert all(isinstance(r[k], bool) for r in rows for k in sc.CONF_KEYS)   # no "True"/"False" text
-    assert all(r["section"] == "developing" for r in rows if r["section"] != "qualified" and r["technical"] >= 2)
+    # gold rules apply to both directions (the zone lookup once overwrote the instrument kind)
+    gold = [r for r in rows if r["symbol"] in ("XAUUSD", "GC")]
+    assert gold and all(r["weekly"] for r in gold)
+    # gold C1 = Weekly + Daily; the 4H is ignored
+    assert all(r["c1"] == (r["daily_bias"] == r["direction"] == r["weekly"]) for r in gold)
+    assert not any(r["grade"] == "B" for r in rows if r["symbol"] in ("SPX500", "ES", "WTI", "CL"))
+    assert all(r["grade"] in ("A", "B") for r in rows if r["section"] == "qualified")
+    assert all(r["grade"] == "A" and r["c4"] for r in rows if r["group"] == "FX cross" and r["section"] == "qualified")
 
 
 # --------------------------------------------------------------- MT5 and journal (cfg-0.5.0)
@@ -584,7 +649,7 @@ def test_setup_label_and_confluence_text():
     row = {"c1": True, "c2": False, "c3": False, "c4": True, "c5": "True", "c6": "False"}
     assert sc.setup_label(row) == "C1+C4+C5"
     assert sc.confluences_text(row) == "C1 Trend alignment; C4 Reversal at the zone; C5 2H EMA momentum"
-    assert sc.confluences_text(row, met=False) == "C2 Key level zone; C3 Fibonacci retracement; C6 Trend line"
+    assert sc.confluences_text(row, met=False) == "C2 Key level zone; C3 Fibonacci retracement; C6 Market structure"
     assert sc.setup_label({}) == "none"
 
 

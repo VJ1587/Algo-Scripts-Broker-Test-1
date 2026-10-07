@@ -79,17 +79,16 @@ See the script header for the CSV format used by `--data-dir` and `--news`.
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.7.0, config `cfg-0.7.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.8.0, config `cfg-0.8.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
-top 5 setups (qualified first, then developing) plus every developing setup. It places no orders and
+top 5 setups (A, then B, then developing) plus every developing setup. It places no orders and
 sizes no positions.
 
-Qualification: qualified = C1 + C4 (a reversal closed in a key level zone, 2H or higher) + at least 3
-of C1-C6 (cfg-0.4.0). Developing = any 2 or more of C1-C6 that do not qualify (cfg-0.7.0). COT and
-sentiment affect ranking only. The full rule set is in the `scanner.py` docstring and the config
-changelog.
+Setups are graded with the owner's **Position Trading Confluence System** (cfg-0.8.0); see
+Setup rules below. COT and sentiment affect ranking only. The full rule set is in the `scanner.py`
+docstring and the config changelog.
 
 ### Confluences C1 to C6
 
@@ -98,12 +97,34 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 
 | Check | Name | Passes when |
 |---|---|---|
-| C1 | Trend alignment | Daily bias and 4H structure (latest two highs and lows both rising for a long, both falling for a short) point in the trade direction. |
-| C2 | Key level zone | Latest completed 2H close is inside the zone around a major or mid round-number level (FX ±15 pips, JPY pairs ±0.15, gold and S&P ±20, oil ±1.00). |
-| C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 38.2%, 50% or 61.8% retracement of the latest qualifying 4H impulse. |
+| C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
+| C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
-| C6 | Trend line | Latest 2H candle touches the unbroken 4H trend line (last two rising lows for a long, last two falling highs for a short) and closes on the trend side. |
+| C6 | Market structure | 4H structure holds at entry: the latest 4H swing low is a higher low (a lower high for a short) and no 2H close has broken it since. A close through it means structure is compromised: skip. |
+
+### Setup rules
+
+These live in `SETUP_RULES` and `grade_setup` in `scanner.py`. A and B setups carry
+`section: qualified` plus `grade: A` or `B` in the scan files.
+
+| Rule | Definition |
+|---|---|
+| A setup | C1 + C2 + C3 at 50% or 61.8% stacked inside the C2 zone + one or more of C4, C5, C6 (4+). Full size; limit order inside the zone at the Fib level; no need to wait for C4 when C1 + C2 + C3 stack. More confluences beyond 4 allow larger size. |
+| B setup | C1 + (C2 or C3 at 50%/61.8%) + one of C4, C5, C6 (3). Smaller size; a limit order is still valid if C1 + C3 are clean. |
+| Minor pairs | FX crosses: only a strong A setup with a closed C4 reversal candle counts. Do not rely on limit orders alone; size smaller than on majors. |
+| S&P and oil | SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing. |
+| Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
+| Stop and targets | Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to breakeven. |
+| Developing | Any 2 or more of C1-C6 that do not make a B setup. Watch only. |
+
+Owner decisions (October 7, 2026): majors are the 7 USD majors in the config (EURUSD, GBPUSD, USDJPY,
+USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 is Weekly + Daily without the
+4H; S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
+every candle and chart pattern counts only at a key level zone; chart patterns name the level they
+formed at. The trade gate already uses the system's targets (TP1 -27 %, TP2 -61.8 %) and the 89.3 %
+stop for FX; it does not yet move the stop to breakeven after TP1.
 
 The journal page labels each trade with its setup (the checks passed in the last scan before entry,
 for example `C1+C4+C5`) and shows win rate and net P/L by section, by setup and for each confluence
@@ -200,7 +221,7 @@ config). Nothing in the scanner sends, changes or closes orders.
 | Strict 2 bar pivots, confirm at k+2, alternation (v1.0 §2) | `find_pivots`, `add_alternating` |
 | Daily bias D01, 4H agreement D02 | `daily_bias`, `structure` |
 | Impulse I01 (6 bar recency, 3 to 30 bars, 2×ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
-| Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `trendline_signal`, `score_instrument` |
+| Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `structure_holding`, `grade_setup`, `score_instrument` |
 | COT index, pair mapping, ±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
 | Sentiment S, themes, direction rules (Add 6.3, 7) | `SentimentEngine` |
 | Calendar countdown and event risk (Add 6.4) | `next_event` |
@@ -223,7 +244,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $20 (XAUUSD
    and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
    grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
-   to the ATR width and is flagged "zone width not set". C3 and C6 tolerance still use the ATR width.
+   to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the
    opposite wick, close not through the zone). Two or more adds a "zone tested: N wicks" flag. It never
@@ -243,10 +264,9 @@ config). Nothing in the scanner sends, changes or closes orders.
    shoulders, the bottom or head in a key level zone, and a candle CLOSE beyond the neckline within the
    last 3 bars (a wick does not count). Distances scale with each instrument's zone width
    (`features.chart_patterns`).
-5e. **Qualification (cfg-0.4.0).** Qualified = C1 + C4 + at least 3 checks: no setup qualifies without
-   a reversal closed in a key level zone. Developing (cfg-0.7.0) = any 2 or more of C1-C6 that do not
-   qualify. On equal totals a Daily confirmation ranks above 4H, and 4H above 2H.
-   `qualification.require_close_in_zone: true` would also demand the latest close sit inside the zone.
+5e. **Grades (cfg-0.8.0).** A, B and developing as in Setup rules above. cfg-0.4.0 required C4 for every
+   qualified setup; an A setup no longer does. On equal totals a Daily confirmation ranks above 4H, and
+   4H above 2H.
 6. **COT publication time.** Assumed position date + 3 days at 15:30 Eastern; holiday delays not
    modelled. Live, the CFTC API only returns published data, so this matters mainly for CSV
    backtests. Cross pair "weekly change" is the change in the rescaled cross index.
