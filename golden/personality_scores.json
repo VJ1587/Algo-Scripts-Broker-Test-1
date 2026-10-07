@@ -1,0 +1,8 @@
+{
+ "data": {
+  "mean_reversion": -0.10257178605905738,
+  "realized_vol": 0.06315823561407938,
+  "trend_strength": 0.5109375204920704
+ },
+ "kind": "dict"
+}

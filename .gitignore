@@ -16,3 +16,6 @@ data/
 # Trade gate: local account list and approved tickets (never pushed)
 accounts.yaml
 tickets/
+
+# StressLab run outputs (regenerated every run)
+reports/

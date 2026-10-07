@@ -3,6 +3,10 @@ numpy>=1.26
 pyyaml>=6.0
 requests>=2.31
 pytest>=8.0
+# StressLab harness
+scipy>=1.11
+beautifulsoup4>=4.12
+ruff>=0.4
 # TradingView bars (unofficial library; install from GitHub):
 #   pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
 # FinBERT sentiment (large download, about 2 GB with torch):
