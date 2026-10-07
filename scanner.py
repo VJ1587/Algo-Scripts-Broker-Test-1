@@ -2972,7 +2972,8 @@ def windows_toast(title: str, body: str, link: Optional[Path] = None) -> bool:
           ".Show([Windows.UI.Notifications.ToastNotification]::new($x))")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))   # no console flash under pythonw
     except (OSError, subprocess.TimeoutExpired) as exc:
         LOG.warning("notification failed: %s", exc)
         return False
