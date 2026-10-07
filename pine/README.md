@@ -1,6 +1,6 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` (v2.0.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+`scaling_scanner.pine` (v2.1.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
 when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
@@ -49,7 +49,7 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
 - **Numbering** restarts every Sunday, New York time. Times are New York time.
 - **Trade type:** Setup A (2H) signals say "Swing Trade / Position Trade - …". Setup B (15m) signals
   say just "Market Execution Buy/Sell".
-- **Follow-up alerts** are numbered: Buy/Sell Limit filled, move stop to breakeven, Take Profit N
+- **Follow-up alerts** carry each trade's own number: Buy/Sell Limit filled, move stop to breakeven, Take Profit N
   hit, stopped at breakeven / stop loss (with a re-entry note if conditions are still valid), and
   structure broken (get out).
 
@@ -71,7 +71,7 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
 | Breakeven | Alert once the trade is +$2 (gold) / +2 pts (ES) in profit. |
 | Exit | Alert when a setup-timeframe candle closes through the last swing low (longs) / high (shorts). |
 | Re-entry | After a stop, if bias and structure still agree, the alert says so; the next signal is tagged RE-ENTRY. |
-| Multiple trades | No daily limit. One tracked trade per setup (A and B). Same-direction signals while one is open are sent as optional add-ons, at most one every 3 setup bars. |
+| Multiple trades / scaling | No daily limit. **Setup B alerts on its own at every 15m close; it never waits for the 2H.** Setup A checks every 2H close. Every entry is a new numbered trade, tracked separately (its own breakeven, TP and exit alerts), up to 5 open per setup. A new entry can fire on every setup candle (cooldown 1 bar). When trades are already open, the private lines list them ("Scaling in. Already open: #3 LONG (BE), …"). |
 | Scaling | Risk % by equity growth: 1% base, 1.5% at +25%, 2% at +50%, 3% at +100%. It drops back a tier if equity falls. Size = equity × risk % ÷ (stop distance × $ per point per lot), rounded down. |
 | Alert timing | On candle close only, in all sessions. A 2H signal fires on the 15m candle that closes the 2H candle. |
 
