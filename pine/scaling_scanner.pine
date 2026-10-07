@@ -1,5 +1,5 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.1.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.2.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
@@ -88,8 +88,9 @@ minTpR   = input.float(0.5, "Skip TPs closer than x stop distance", step = 0.1, 
 
 grpT = "Market structure (swing pivots)"
 cPivot = input.int(5, "Setup timeframe swing length (bars each side)", minval = 1, group = grpT)
-dPivot = input.int(5, "Daily swing length", minval = 1, group = grpT)
-wPivot = input.int(5, "Weekly swing length", minval = 1, group = grpT)
+dPivot = input.int(3, "Daily swing length", minval = 1, group = grpT, tooltip = "Bars each side to confirm a Daily swing. Smaller = reacts faster to a trend change.")
+wPivot = input.int(2, "Weekly swing length", minval = 1, group = grpT)
+biasMode = input.string("Auto (Daily, then Weekly)", "Trade direction", options = ["Auto (Daily, then Weekly)", "Sells only", "Buys only"], group = grpT, tooltip = "Override the automatic Daily/Weekly bias with your own read of the higher timeframe.")
 
 grpR = "Risk and scaling"
 startEq   = input.float(10000.0, "Starting equity ($)", group = grpR)
@@ -213,16 +214,17 @@ f_structure(len) =>
         lastL := pl
     bullBOS = ta.crossover(close, lastH)
     bearBOS = ta.crossunder(close, lastL)
-    if trend != 1 and bullBOS and (trend == 0 or lastL > prevL)
+    // State-based: a swing confirmed a few bars after the break still counts.
+    if trend != 1 and not na(lastH) and close > lastH and (trend == 0 or lastL > prevL)
         trend := 1
-    else if trend != -1 and bearBOS and (trend == 0 or lastH < prevH)
+    else if trend != -1 and not na(lastL) and close < lastL and (trend == 0 or lastH < prevH)
         trend := -1
     [trend, lastH, lastL, bullBOS, bearBOS]
 
 // Higher-timeframe trend as of the last closed HTF bar (no repainting).
 f_htf(len) =>
     [t, h, l, bb, sb] = f_structure(len)
-    t[1]
+    [t[1], h[1], l[1]]
 
 // Candlestick patterns (single, double, triple). Return the pattern name or "".
 f_bullPat(b, ab, at, rg, uw, lw) =>
@@ -378,9 +380,10 @@ f_scan(emaLen, pivLen, retN) =>
 
 // ───────────────────────────── Data ─────────────────────────────
 // Higher-timeframe bias (rule 1): Daily, or Weekly when the Daily has no trend yet.
-dTrend = request.security(syminfo.tickerid, "D", f_htf(dPivot), lookahead = barmerge.lookahead_on)
-wTrend = request.security(syminfo.tickerid, "W", f_htf(wPivot), lookahead = barmerge.lookahead_on)
-bias = dTrend != 0 ? dTrend : wTrend
+[dTrend, dSwH, dSwL] = request.security(syminfo.tickerid, "D", f_htf(dPivot), lookahead = barmerge.lookahead_on)
+[wTrend, wSwH, wSwL] = request.security(syminfo.tickerid, "W", f_htf(wPivot), lookahead = barmerge.lookahead_on)
+autoBias = dTrend != 0 ? dTrend : wTrend
+bias = biasMode == "Sells only" ? -1 : biasMode == "Buys only" ? 1 : autoBias
 
 // Each setup on its own timeframe. A setup is acted on only on the chart bar that closes its bar.
 [aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aEma] = request.security(syminfo.tickerid, tfA, f_scan(emaALen, cPivot, retestN), lookahead = barmerge.lookahead_off)
@@ -603,7 +606,7 @@ if showTable and barstate.islast
     table.cell(tbl, 0, 0, "Instrument", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 0, instName + tfWarn, text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 1, "Daily / Weekly", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 1, f_trendTxt(dTrend) + " / " + f_trendTxt(wTrend), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 1, f_trendTxt(dTrend) + " (D swing H " + f_p(dSwH) + " / L " + f_p(dSwL) + ") / " + f_trendTxt(wTrend) + (biasMode != "Auto (Daily, then Weekly)" ? " | MANUAL: " + biasMode : ""), text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 2, "Trade bias", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 2, bias == 1 ? "BUYS ONLY" : bias == -1 ? "SELLS ONLY" : "STAND ASIDE", text_color = color.white, bgcolor = bCol, text_size = size.small)
     table.cell(tbl, 0, 3, "A structure / EMA", text_color = color.white, text_size = size.small)

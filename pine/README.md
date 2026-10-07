@@ -1,6 +1,6 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` (v2.1.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+`scaling_scanner.pine` (v2.2.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
 when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
@@ -57,7 +57,7 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
 
 | Rule | How the script checks it |
 | --- | --- |
-| HTF direction | Daily swing structure; Weekly only when the Daily has no trend. When they disagree, the Daily wins. Read from the last **closed** D/W bar, so it does not repaint. |
+| HTF direction | Daily swing structure (swing length 3), Weekly (length 2) only when the Daily has no trend; when they disagree, the Daily wins. Read from the last **closed** D/W bar, so it does not repaint. The table shows the Daily swing high/low it is using. **Trade direction** setting: Auto, Sells only, or Buys only to override with your own read. |
 | Sellers / buyers in control | On each setup's timeframe, structure flips bullish only after a higher low **and then** a close above the last swing high (mirror for bearish). No buys while that structure is bearish. |
 | EMA side | Buys only on a close above the EMA (14 on the 2H, 50 on the 15m); sells only below it. |
 | Impulse + correction | Impulse = a close that breaks the last swing high (buys) / low (sells). Correction = a pullback of at least 1 × ATR from the leg extreme that holds the last swing low / high. |
