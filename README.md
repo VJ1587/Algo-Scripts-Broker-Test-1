@@ -7,7 +7,7 @@ Four scripts with separate jobs:
 | `broker_v11_algo.py` | **Research.** Backtests the BROKER-v1.1 rules on historical or synthetic quotes. | No. Simulated orders only. |
 | `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
 | `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
-| `pine/scaling_scanner.pine` | **Scaling alerts.** TradingView indicator for XAUUSD and ES / SPX500 trend continuations (2H EMA14 and 15m EMA50 setups, breakeven and structure exits, equity-tiered sizing). See `pine/README.md`. | Reads the TradingView chart. Sends alerts only. |
+| `pine/scaling_scanner.pine` | **Scaling alerts.** TradingView indicator for XAUUSD and ES / SPX500 trend continuations (2H EMA14 and 15m EMA50 setups in one script per instrument, numbered weekly trade alerts with entry, swing stop and TP1-TP5, breakeven and structure exits, equity-tiered sizing). See `pine/README.md`. | Reads the TradingView chart. Sends alerts only. |
 
 ## Trade gate (the hold)
 

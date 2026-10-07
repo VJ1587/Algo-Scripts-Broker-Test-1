@@ -1,54 +1,95 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` is a TradingView indicator (Pine Script v6) that sends alerts when a
-trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders. Its purpose is to help
-scale the account while these instruments are trending.
+`scaling_scanner.pine` (v2.0.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
 
 1. TradingView → Pine Editor → New → paste `scaling_scanner.pine` → **Add to chart**.
-2. Open the chart(s) you want to scan:
-   - **Setup A:** XAUUSD (or ES1! / SPX500) on the **2H** chart (EMA14).
-   - **Setup B:** the same symbol on the **15m** chart (EMA50 rubber band).
-   With Setup on Auto, the script picks A on 1H and above and B below 1H.
+2. Use **one 15m chart per instrument**: XAUUSD 15m, plus ES1! (or SPX500) 15m. One copy of the
+   script scans both Setup A (2H, EMA14) and Setup B (15m, EMA50), so each instrument numbers its
+   own trades.
 3. Settings → **Risk and scaling** → set **Starting equity** and **Track P&L from** (today).
 4. Create the alert: Alerts → Create → Condition = **ScaleScan** → **Any alert() function call** →
-   pick delivery (app push, email, webhook). Create one alert per chart (for example 4 alerts for
-   gold 2H, gold 15m, ES 2H and ES 15m). Alerts depend on your TradingView plan's alert limits.
+   choose delivery (app push, email, webhook). That's one alert per instrument.
+5. To get only the public signal format, turn off **Add private lines to entry alerts**.
+
+## Alert format
+
+```
+1️⃣st Trade of The Week
+
+🗓️ Wednesday, October 7th @ 3:36pm
+
+💰 XAU/USD Market Execution Sell
+
+🔵 Entry: 4110 to 4100
+
+🛑 Stop Loss: 4125 (200 pips)
+
+✅ Take Profit 1: 4010
+...
+✅ Take Profit 5: 3610
+
+(🔹 Price is at 4105 at the time of this signal)
+
+💎 If the market goes ABOVE 4105 AFTER you see this signal, feel free to enter a Market Execution Sell ...
+
+📝 Take Profit 1 = Most Likely To Win
+📝 Take Profit 5 = Least Likely To Win AT THE MOMENT
+📝 Take Profits are partials, not mandatory.
+🚨 Multiple Take Profits DO NOT MEAN enter multiple trades at the same time.
+
+— Private —
+📊 Setup B (15m EMA50 rubber band) PULLBACK: Bearish engulfing | 4100 major zone | at EMA50 | ✨ ...
+📏 Size: 0.05 lots (risk 1% = $100 of $10,000)
+🧭 Daily DOWN / Weekly DOWN | Setup B structure DOWN
+```
+
+- **Numbering** restarts every Sunday, New York time. Times are New York time.
+- **Trade type:** Setup A (2H) signals say "Swing Trade / Position Trade - …". Setup B (15m) signals
+  say just "Market Execution Buy/Sell".
+- **Follow-up alerts** are numbered: Buy/Sell Limit filled, move stop to breakeven, Take Profit N
+  hit, stopped at breakeven / stop loss (with a re-entry note if conditions are still valid), and
+  structure broken (get out).
 
 ## Rules as coded (owner Q&A, October 7, 2026)
 
 | Rule | How the script checks it |
 | --- | --- |
-| HTF direction (1) | Daily swing structure; Weekly only when the Daily has no trend. When they disagree, the Daily wins. Read from the last **closed** D/W bar, so it does not repaint. |
-| Sellers / buyers in control (6) | Structure flips bullish only after a higher low **and then** a close above the last swing high (mirror for bearish). No buys while chart structure is bearish, and no sells while it is bullish. |
-| EMA side (4) | Buys only on a close above the EMA (14 on the 2H, 50 on the 15m); sells only below it. |
-| Impulse + correction (3) | Impulse = a close that breaks the last swing high (buys) / low (sells). Correction = price pulls back at least 1 × ATR from the leg extreme and holds the last swing low / high. |
-| 3 confluences (5) | All three on the signal candle: (a) a candle pattern in the bias direction, (b) inside a key/mid level zone, (c) at or near the EMA (within 0.5 × ATR by default). |
+| HTF direction | Daily swing structure; Weekly only when the Daily has no trend. When they disagree, the Daily wins. Read from the last **closed** D/W bar, so it does not repaint. |
+| Sellers / buyers in control | On each setup's timeframe, structure flips bullish only after a higher low **and then** a close above the last swing high (mirror for bearish). No buys while that structure is bearish. |
+| EMA side | Buys only on a close above the EMA (14 on the 2H, 50 on the 15m); sells only below it. |
+| Impulse + correction | Impulse = a close that breaks the last swing high (buys) / low (sells). Correction = a pullback of at least 1 × ATR from the leg extreme that holds the last swing low / high. |
+| Confluences | The signal candle must be **inside a key/mid level zone** (always required), with a candle pattern in the bias direction and price at or near the EMA (within 0.5 × ATR by default). So the EMA only counts at a level. |
+| Bonus (not required) | **Stretched + snap-back:** price got at least 2 × ATR away from the EMA since it last touched it. **Impulse → Correction → Continuation into [level]:** the signal candle closes beyond the prior candle's high (buys) / low (sells), heading into the next level. |
 | Candle patterns | Engulfing, morning/evening star, three soldiers/crows, piercing/dark cloud, harami, tweezer, inside-bar break, hammer/pin bar/shooting star, marubozu. |
-| Levels (8, 9) | Gold: majors every $100 with a ±$15 zone, mids every $50 with ±$10. ES: majors every 100 pts with ±10, mids every 50 with ±7. |
-| Breakouts (7) | **BREAKOUT** alert when a candle closes through a level zone in the bias direction. **RETEST** alert when price later returns to that zone and prints a pattern, within 30 bars. A close back through the zone cancels it. |
-| Stop | Gold $50 (500 pips at $0.10 per pip). ES 50 points. |
-| Breakeven (10) | **MOVE STOP TO BREAKEVEN** alert once the trade is +$2 (gold) / +2 pts (ES) in profit. |
-| Exit (10) | **EXIT: STRUCTURE BROKEN** alert when a candle closes through the last swing low (longs) / high (shorts). |
-| Re-entry (10) | After a stop, if bias and structure still agree, the stop alert says so; the next signal is tagged **RE-ENTRY**. |
-| Multiple trades (11) | No daily limit. One tracked trade per chart. Same-direction signals while it is open are sent as optional add-ons, at most one every 3 bars. |
-| Scaling (12) | Risk % by equity growth: 1 % base, 1.5 % at +25 %, 2 % at +50 %, 3 % at +100 %. It drops back a tier if equity falls. Lots = equity × risk % ÷ (stop × $ per point per lot), rounded down to the lot step. |
-| Alert timing | On candle close only, in all sessions. |
+| Levels | Gold: majors every $100 with a ±$15 zone, mids every $50 with ±$10. ES: majors every 100 pts with ±10, mids every 50 with ±7. |
+| Order type | **PULLBACK** = Market Execution, entry range = price ±$5 (±3 pts ES). **BREAKOUT** (close through a level zone) = Buy/Sell Limit at the near edge of the broken zone, cancelled after 30 setup bars unfilled. **RETEST** (return to the broken zone with a pattern) = Market Execution. |
+| Stop loss | $1 / 1 pt beyond the last swing low (buys) / high (sells) on the setup timeframe, **max 500 pips** ($50) gold / 50 pts ES. |
+| Take profits | TP1–TP5 = the next 5 **major** levels in the trade direction, front-run by $10 gold / 5 pts ES (a buy toward 4400 gets TP 4390). TPs closer than 0.5 × the stop distance are skipped. |
+| Breakeven | Alert once the trade is +$2 (gold) / +2 pts (ES) in profit. |
+| Exit | Alert when a setup-timeframe candle closes through the last swing low (longs) / high (shorts). |
+| Re-entry | After a stop, if bias and structure still agree, the alert says so; the next signal is tagged RE-ENTRY. |
+| Multiple trades | No daily limit. One tracked trade per setup (A and B). Same-direction signals while one is open are sent as optional add-ons, at most one every 3 setup bars. |
+| Scaling | Risk % by equity growth: 1% base, 1.5% at +25%, 2% at +50%, 3% at +100%. It drops back a tier if equity falls. Size = equity × risk % ÷ (stop distance × $ per point per lot), rounded down. |
+| Alert timing | On candle close only, in all sessions. A 2H signal fires on the 15m candle that closes the 2H candle. |
 
 ## Things to verify before relying on it
 
+- **Not yet compiled in TradingView.** The script was syntax-checked with an offline Pine parser (v5
+  grammar), not with TradingView's v6 compiler. If the editor shows an error, send it over.
+- **2H timing.** Setup A is evaluated on the 15m candle that closes each 2H candle. I believe
+  TradingView returns the finished 2H values on that candle, both live and in history, but this
+  needs checking. If the chart shows no historical "A" labels at all, tell me: it means the 2H
+  values arrive one 15m candle later, and the timing needs adjusting.
 - **Contract values.** Gold is set to $100 per $1 move per 1.00 lot (100 oz) and ES to $50 per point
   (MES $5). I believe these are the standard specs, but check your broker's contract
-  specification. An SPX500 CFD is usually *not* $50 per point.
-- **Equity is not live.** Pine cannot read the broker account. Equity comes from the P&L of the
-  tracked trades since **Track P&L from**, which assumes you took every alert at the candle close.
-  For accurate sizing, type your real equity into **Current equity override** whenever it changes.
-- **Breakeven at +$2** sits inside normal gold noise, so expect many breakeven stop-outs; the
-  re-entry alerts are meant to cover that.
-- **Untested.** The script has been syntax-checked but not yet run on live charts or forward
-  tested. Run it on a demo or paper account first, and review a few weeks of alerts against the
-  chart before you size up.
-- The defaults the Q&A left open are all inputs: swing length (5), ATR pullback (1.0), near-EMA
-  tolerance (0.5 ATR), retest window (30 bars), add-on cooldown (3 bars) and the mid-zone buffer
-  for ES (±7).
+  specification. An SPX500 CFD is usually not $50 per point.
+- **Equity is not live.** Pine cannot read the broker account. Tracked equity assumes the full
+  position closes at the stop or at the structure exit (TP partials aren't modelled). For accurate
+  sizing, type your real equity into **Current equity override**.
+- **Breakeven at +$2** sits inside normal gold noise, so expect many breakeven stop-outs. The
+  re-entry tag is meant to cover that.
+- **Forward-test first** on demo or paper, and compare a few weeks of alerts with your own read of
+  the chart before you size up.

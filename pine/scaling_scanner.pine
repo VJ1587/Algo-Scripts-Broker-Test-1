@@ -1,40 +1,54 @@
 //@version=6
-// Gold / ES Scaling Scanner v1.0.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.0.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
+// Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
+// together, so trades are numbered once per instrument per week.
 //
 // Owner rules (Q&A, October 7, 2026):
 //   Bias        Trade with the Daily OR Weekly structure; if they conflict the Daily wins.
-//   Structure   Entry timeframe structure must agree. Sellers in control (LH/LL) = no buys until a
+//   Structure   Setup timeframe structure must agree. Sellers in control (LH/LL) = no buys until a
 //               higher low, then a higher high (and the mirror for sells).
-//   Setup A     2H chart, EMA14. Setup B: 15m chart, EMA50 ("rubber band", any pullback counts).
-//               Buy only above the EMA, sell only below it.
-//   Entry       Impulse (break of structure) then correction (pullback that holds the last swing),
-//               with 3 confluences: candle pattern + key/mid level zone + at or near the EMA.
-//   Breakouts   Close through a level zone in the bias direction = BREAKOUT alert; a later return to
-//               the zone with a candle pattern = RETEST alert (the preferred entry).
+//   Setup A     2H, EMA14. Setup B: 15m, EMA50 rubber band. Buy only above the EMA, sell only below.
+//   Entry       Impulse (break of structure) then correction, at a key/mid level zone, with a candle
+//               pattern and price at or near the EMA (EMA only counts at a level).
+//   Bonus       "Stretched + snap-back" to the EMA, and "Impulse -> Correction -> Continuation into
+//               <level>", are noted in the alert when present. Neither is required.
+//   Breakouts   Close through a level zone = Buy/Sell Limit at the zone edge (BREAKOUT). A later return
+//               to the zone with a candle pattern = Market Execution (RETEST).
 //   Levels      Gold: majors every $100 (+/-$15 zone), mids every $50 (+/-$10).
 //               ES:   majors every 100 pts (+/-10), mids every 50 (+/-7).
-//   Stop        Gold $50 (500 pips at $0.10 per pip). ES 50 points.
-//   Management  Breakeven once +$2 / +2 pts in profit. Exit on a break of structure. After a
-//               breakeven stop with conditions still valid, a RE-ENTRY alert.
+//   Stop        Beyond the last swing low/high of the setup timeframe, max 500 pips gold / 50 pts ES.
+//   Targets     TP1-TP5 = next major levels in the trade direction, front-run by the TP offset.
+//               Partials, not mandatory.
+//   Management  Breakeven once +$2 / +2 pts in profit. Exit on a break of structure. After a stop with
+//               conditions still valid, the next signal is tagged RE-ENTRY.
+//   Numbering   "1st Trade of The Week", reset each Sunday (New York time). Times in New York time.
 //   Sizing      Fixed % risk that steps up at equity milestones (editable tiers).
 //
-// Pine cannot read the broker account. Equity = Starting equity + P&L of the alerted trades closed
+// Pine cannot read the broker account. Equity = Starting equity + P&L of the tracked trades closed
 // since "Track P&L from", unless "Current equity" is set (then that value is used as is).
 
 indicator("Gold / ES Scaling Scanner", shorttitle = "ScaleScan", overlay = true, max_labels_count = 500, max_boxes_count = 100)
 
+TZ = "America/New_York"
+
 // ───────────────────────────── Inputs ─────────────────────────────
 grpI = "Instrument"
 profileIn = input.string("Auto", "Profile", options = ["Auto", "Gold (XAUUSD)", "ES / SPX500"], group = grpI, tooltip = "Auto = Gold when the ticker contains XAU or GOLD or starts with GC; otherwise ES / SPX500.")
+gName = input.string("XAU/USD", "Gold name in alerts", group = grpI)
+eName = input.string("ES / S&P 500", "ES name in alerts", group = grpI)
 
 grpG = "Gold settings"
 gMajor  = input.float(100.0, "Major level every ($)", group = grpG)
 gMid    = input.float(50.0, "Mid level every ($)", group = grpG)
 gMajBuf = input.float(15.0, "Major zone +/- ($)", group = grpG)
 gMidBuf = input.float(10.0, "Mid zone +/- ($)", group = grpG)
-gStop   = input.float(50.0, "Stop loss ($ move)", group = grpG, tooltip = "500 pips at $0.10 per pip.")
+gStop   = input.float(50.0, "Max stop loss ($ move)", group = grpG, tooltip = "500 pips at $0.10 per pip.")
+gPad    = input.float(1.0, "Stop beyond swing by ($)", group = grpG)
 gBE     = input.float(2.0, "Breakeven trigger ($ in profit)", group = grpG)
+gFront  = input.float(10.0, "TP front-run before major level ($)", group = grpG)
+gRange  = input.float(5.0, "Market entry range +/- ($)", group = grpG)
+gRound  = input.float(1.0, "Round prices to ($)", group = grpG)
 gValue  = input.float(100.0, "$ per $1 move per 1.00 lot", group = grpG, tooltip = "Usually 100 oz per standard lot. Verify on your broker's contract spec.")
 gStep   = input.float(0.01, "Lot step / minimum lot", group = grpG)
 
@@ -43,26 +57,34 @@ eMajor  = input.float(100.0, "Major level every (pts)", group = grpE)
 eMid    = input.float(50.0, "Mid level every (pts)", group = grpE)
 eMajBuf = input.float(10.0, "Major zone +/- (pts)", group = grpE)
 eMidBuf = input.float(7.0, "Mid zone +/- (pts)", group = grpE)
-eStop   = input.float(50.0, "Stop loss (pts)", group = grpE)
+eStop   = input.float(50.0, "Max stop loss (pts)", group = grpE)
+ePad    = input.float(1.0, "Stop beyond swing by (pts)", group = grpE)
 eBE     = input.float(2.0, "Breakeven trigger (pts in profit)", group = grpE)
+eFront  = input.float(5.0, "TP front-run before major level (pts)", group = grpE)
+eRange  = input.float(3.0, "Market entry range +/- (pts)", group = grpE)
+eRound  = input.float(0.25, "Round prices to (pts)", group = grpE)
 eValue  = input.float(50.0, "$ per point per contract", group = grpE, tooltip = "ES = $50/pt, MES = $5/pt. For an SPX500 CFD use your broker's value per point per lot.")
 eStep   = input.float(1.0, "Contract step / minimum", group = grpE)
-eMicro  = input.float(5.0, "Micro ($ per point, 0 = hide)", group = grpE, tooltip = "Shows the MES equivalent in alerts when the full contract count rounds to 0.")
+eMicro  = input.float(5.0, "Micro ($ per point, 0 = hide)", group = grpE, tooltip = "Shows the MES equivalent when the full contract count rounds to 0.")
 
-grpS = "Setup"
-setupIn  = input.string("Auto (2H = A, 15m = B)", "Setup", options = ["Auto (2H = A, 15m = B)", "A: 2H / EMA14", "B: 15m / EMA50"], group = grpS, tooltip = "Auto uses Setup A on 1H and above, Setup B below 1H.")
+grpS = "Setups"
+tfA      = input.timeframe("120", "Setup A timeframe", group = grpS)
 emaALen  = input.int(14, "Setup A EMA length", minval = 1, group = grpS)
+tfB      = input.timeframe("15", "Setup B timeframe", group = grpS, tooltip = "Put the script on a chart of this timeframe (or lower).")
 emaBLen  = input.int(50, "Setup B EMA length", minval = 1, group = grpS)
 nearMode = input.string("ATR", "'Near the EMA' measured by", options = ["ATR", "Fixed"], group = grpS)
 nearAtr  = input.float(0.5, "Near = within x ATR(14)", step = 0.1, group = grpS)
 nearFix  = input.float(3.0, "Near = within fixed distance ($ / pts)", group = grpS)
-minConf  = input.int(3, "Minimum confluences (of candle, level, EMA)", minval = 2, maxval = 3, group = grpS)
+minConf  = input.int(3, "Minimum confluences (of candle, level, EMA; level always required)", minval = 2, maxval = 3, group = grpS)
 pbAtr    = input.float(1.0, "Correction: min pullback from impulse extreme (x ATR)", step = 0.1, group = grpS)
-retestN  = input.int(30, "Breakout retest window (bars)", minval = 1, group = grpS)
-coolN    = input.int(3, "Add-on alert cooldown while a trade is open (bars)", minval = 1, group = grpS)
+stretchK = input.float(2.0, "Bonus 'stretched': max distance from EMA since last touch (x ATR)", step = 0.1, group = grpS)
+retestN  = input.int(30, "Breakout retest / limit window (setup bars)", minval = 1, group = grpS)
+coolN    = input.int(3, "Add-on cooldown while a trade is open (setup bars)", minval = 1, group = grpS)
+tpCount  = input.int(5, "Number of take profits", minval = 1, maxval = 10, group = grpS)
+minTpR   = input.float(0.5, "Skip TPs closer than x stop distance", step = 0.1, group = grpS)
 
 grpT = "Market structure (swing pivots)"
-cPivot = input.int(5, "Chart swing length (bars each side)", minval = 1, group = grpT)
+cPivot = input.int(5, "Setup timeframe swing length (bars each side)", minval = 1, group = grpT)
 dPivot = input.int(5, "Daily swing length", minval = 1, group = grpT)
 wPivot = input.int(5, "Weekly swing length", minval = 1, group = grpT)
 
@@ -78,7 +100,8 @@ t2r = input.float(2.0, "risk %", step = 0.1, group = grpR, inline = "t2")
 t3g = input.float(100.0, "Tier 3 at equity growth %", group = grpR, inline = "t3")
 t3r = input.float(3.0, "risk %", step = 0.1, group = grpR, inline = "t3")
 
-grpD = "Display"
+grpD = "Alerts and display"
+showPriv  = input.bool(true, "Add private lines to entry alerts (setup, size, bias)", group = grpD, tooltip = "Turn off to get only the public signal format.")
 showZones = input.bool(true, "Show level zones", group = grpD)
 zonesEach = input.int(3, "Zones each side of price", minval = 1, maxval = 10, group = grpD)
 showTable = input.bool(true, "Show status table", group = grpD)
@@ -88,21 +111,87 @@ tk = str.upper(syminfo.ticker)
 isGoldAuto = str.contains(tk, "XAU") or str.contains(tk, "GOLD") or str.startswith(tk, "GC")
 isGold = profileIn == "Gold (XAUUSD)" or (profileIn == "Auto" and isGoldAuto)
 
+instName  = isGold ? gName : eName
 majorStep = isGold ? gMajor : eMajor
 midStep   = isGold ? gMid : eMid
 majBuf    = isGold ? gMajBuf : eMajBuf
 midBuf    = isGold ? gMidBuf : eMidBuf
-stopDist  = isGold ? gStop : eStop
+stopMax   = isGold ? gStop : eStop
+stopPad   = isGold ? gPad : ePad
 beTrig    = isGold ? gBE : eBE
+tpFront   = isGold ? gFront : eFront
+entRange  = isGold ? gRange : eRange
+roundStep = isGold ? gRound : eRound
 valuePt   = isGold ? gValue : eValue
 lotStep   = isGold ? gStep : eStep
-unit      = isGold ? "$" : " pts"
 
-useA = setupIn == "A: 2H / EMA14" or (setupIn == "Auto (2H = A, 15m = B)" and timeframe.in_seconds() >= 3600)
-emaLen = useA ? emaALen : emaBLen
-setupName = useA ? "Setup A (EMA" + str.tostring(emaALen) + ")" : "Setup B (EMA" + str.tostring(emaBLen) + " rubber band)"
+// ───────────────────────────── Helpers ─────────────────────────────
+f_r(x) =>
+    math.round(x / roundStep) * roundStep
 
-// ───────────────────────────── Functions ─────────────────────────────
+f_p(x) =>
+    str.tostring(f_r(x), roundStep >= 1 ? "#" : "#.##")
+
+f_amt(x) =>
+    isGold ? "$" + str.tostring(x) : str.tostring(x) + " pts"
+
+f_dist(d) =>
+    isGold ? str.tostring(math.round(d * 10)) + " pips" : str.tostring(d) + " pts"
+
+f_trendTxt(t) =>
+    t == 1 ? "UP" : t == -1 ? "DOWN" : "NONE"
+
+f_ord(n) =>
+    m100 = n % 100
+    m10 = n % 10
+    m100 >= 11 and m100 <= 13 ? "th" : m10 == 1 ? "st" : m10 == 2 ? "nd" : m10 == 3 ? "rd" : "th"
+
+// 1 -> 1️⃣, 12 -> 1️⃣2️⃣, 10 -> 🔟
+f_keycap(n) =>
+    string out = ""
+    if n == 10
+        out := "🔟"
+    else
+        s = str.tostring(n)
+        for i = 0 to str.length(s) - 1
+            out += str.substring(s, i, i + 1) + "️⃣"
+    out
+
+// "Wednesday, October 7th @ 3:36pm" in New York time.
+f_date(t) =>
+    days = array.from("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
+    months = array.from("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    d = dayofmonth(t, TZ)
+    h = hour(t, TZ)
+    m = minute(t, TZ)
+    h12 = h % 12 == 0 ? 12 : h % 12
+    array.get(days, dayofweek(t, TZ) - 1) + ", " + array.get(months, month(t, TZ) - 1) + " " + str.tostring(d) + f_ord(d) + " @ " + str.tostring(h12) + ":" + (m < 10 ? "0" : "") + str.tostring(m) + (h < 12 ? "am" : "pm")
+
+f_add(a, b) =>
+    a == "" ? b : b == "" ? a : a + "\n\n━━━━━━━━━━\n\n" + b
+
+// Nearest key/mid level to a price, whether it is a major, and its zone half-width.
+f_level(p) =>
+    lvl = math.round(p / midStep) * midStep
+    isMaj = math.abs(lvl / majorStep - math.round(lvl / majorStep)) < 0.0001
+    buf = isMaj ? majBuf : midBuf
+    [lvl, isMaj, buf]
+
+f_lvlTxt(l, maj) =>
+    str.tostring(l, "#.##") + (maj ? " major" : " mid")
+
+// TP1..TPn: next major levels in the trade direction, front-run, at least minTpR x stop away.
+f_tps(dir, entry, sd) =>
+    arr = array.new<float>()
+    base = dir == 1 ? math.floor(entry / majorStep) * majorStep : math.ceil(entry / majorStep) * majorStep
+    for k = 1 to 40
+        tp = f_r(base + dir * k * majorStep - dir * tpFront)
+        if (tp - entry) * dir >= minTpR * sd
+            array.push(arr, tp)
+        if array.size(arr) >= tpCount
+            break
+    arr
+
 // Swing structure. Trend flips bullish only after a higher low and then a close above the last
 // swing high (rule 6); bearish only after a lower high and then a close below the last swing low.
 f_structure(len) =>
@@ -132,260 +221,343 @@ f_htf(len) =>
     [t, h, l, bb, sb] = f_structure(len)
     t[1]
 
-// Nearest key/mid level to a price, whether it is a major, and its zone half-width.
-f_level(p) =>
-    lvl = math.round(p / midStep) * midStep
-    isMaj = math.abs(lvl / majorStep - math.round(lvl / majorStep)) < 0.0001
-    buf = isMaj ? majBuf : midBuf
-    [lvl, isMaj, buf]
-
-f_trendTxt(t) =>
-    t == 1 ? "UP" : t == -1 ? "DOWN" : "NONE"
-
-f_px(x) =>
-    str.tostring(x, format.mintick)
-
-// ───────────────────────────── Series ─────────────────────────────
-atr     = ta.atr(14)
-ema     = ta.ema(close, emaLen)
-body    = math.abs(close - open)
-rng     = high - low
-upW     = high - math.max(open, close)
-loW     = math.min(open, close) - low
-avgBody = ta.sma(body, 14)
-nearTol = nearMode == "ATR" ? nearAtr * atr : nearFix
-
-// Candlestick patterns (single, double, triple). Returns the pattern name or "".
-f_bullPat() =>
+// Candlestick patterns (single, double, triple). Return the pattern name or "".
+f_bullPat(b, ab, at, rg, uw, lw) =>
     string p = ""
-    if close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and body > body[1]
+    if close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and b > b[1]
         p := "Bullish engulfing"
-    else if close[2] < open[2] and body[2] >= avgBody and body[1] <= 0.3 * body[2] and close > open and close > (open[2] + close[2]) / 2
+    else if close[2] < open[2] and b[2] >= ab and b[1] <= 0.3 * b[2] and close > open and close > (open[2] + close[2]) / 2
         p := "Morning star"
-    else if close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2] and open >= open[1] and open <= close[1] and open[1] >= open[2] and open[1] <= close[2] and body >= 0.5 * avgBody and body[1] >= 0.5 * avgBody and body[2] >= 0.5 * avgBody
+    else if close > open and close[1] > open[1] and close[2] > open[2] and close > close[1] and close[1] > close[2] and open >= open[1] and open <= close[1] and open[1] >= open[2] and open[1] <= close[2] and b >= 0.5 * ab and b[1] >= 0.5 * ab and b[2] >= 0.5 * ab
         p := "Three white soldiers"
-    else if close[1] < open[1] and body[1] >= 0.8 * avgBody and close > open and open <= close[1] and close > (open[1] + close[1]) / 2 and close < open[1]
+    else if close[1] < open[1] and b[1] >= 0.8 * ab and close > open and open <= close[1] and close > (open[1] + close[1]) / 2 and close < open[1]
         p := "Piercing line"
-    else if close[1] < open[1] and body[1] >= avgBody and close > open and open >= close[1] and close <= open[1]
+    else if close[1] < open[1] and b[1] >= ab and close > open and open >= close[1] and close <= open[1]
         p := "Bullish harami"
-    else if close[1] < open[1] and close > open and math.abs(low - low[1]) <= 0.1 * atr
+    else if close[1] < open[1] and close > open and math.abs(low - low[1]) <= 0.1 * at
         p := "Tweezer bottom"
     else if high[1] <= high[2] and low[1] >= low[2] and close > high[2]
         p := "Inside bar break (up)"
-    else if rng > 0 and loW >= 2 * body and loW >= 0.6 * rng and upW <= 0.25 * rng
+    else if rg > 0 and lw >= 2 * b and lw >= 0.6 * rg and uw <= 0.25 * rg
         p := "Hammer / bullish pin bar"
-    else if close > open and rng > 0 and body >= 0.85 * rng and rng >= 0.8 * atr
+    else if close > open and rg > 0 and b >= 0.85 * rg and rg >= 0.8 * at
         p := "Bullish marubozu"
     p
 
-f_bearPat() =>
+f_bearPat(b, ab, at, rg, uw, lw) =>
     string p = ""
-    if close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and body > body[1]
+    if close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and b > b[1]
         p := "Bearish engulfing"
-    else if close[2] > open[2] and body[2] >= avgBody and body[1] <= 0.3 * body[2] and close < open and close < (open[2] + close[2]) / 2
+    else if close[2] > open[2] and b[2] >= ab and b[1] <= 0.3 * b[2] and close < open and close < (open[2] + close[2]) / 2
         p := "Evening star"
-    else if close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2] and open <= open[1] and open >= close[1] and open[1] <= open[2] and open[1] >= close[2] and body >= 0.5 * avgBody and body[1] >= 0.5 * avgBody and body[2] >= 0.5 * avgBody
+    else if close < open and close[1] < open[1] and close[2] < open[2] and close < close[1] and close[1] < close[2] and open <= open[1] and open >= close[1] and open[1] <= open[2] and open[1] >= close[2] and b >= 0.5 * ab and b[1] >= 0.5 * ab and b[2] >= 0.5 * ab
         p := "Three black crows"
-    else if close[1] > open[1] and body[1] >= 0.8 * avgBody and close < open and open >= close[1] and close < (open[1] + close[1]) / 2 and close > open[1]
+    else if close[1] > open[1] and b[1] >= 0.8 * ab and close < open and open >= close[1] and close < (open[1] + close[1]) / 2 and close > open[1]
         p := "Dark cloud cover"
-    else if close[1] > open[1] and body[1] >= avgBody and close < open and open <= close[1] and close >= open[1]
+    else if close[1] > open[1] and b[1] >= ab and close < open and open <= close[1] and close >= open[1]
         p := "Bearish harami"
-    else if close[1] > open[1] and close < open and math.abs(high - high[1]) <= 0.1 * atr
+    else if close[1] > open[1] and close < open and math.abs(high - high[1]) <= 0.1 * at
         p := "Tweezer top"
     else if high[1] <= high[2] and low[1] >= low[2] and close < low[2]
         p := "Inside bar break (down)"
-    else if rng > 0 and upW >= 2 * body and upW >= 0.6 * rng and loW <= 0.25 * rng
+    else if rg > 0 and uw >= 2 * b and uw >= 0.6 * rg and lw <= 0.25 * rg
         p := "Shooting star / bearish pin bar"
-    else if close < open and rng > 0 and body >= 0.85 * rng and rng >= 0.8 * atr
+    else if close < open and rg > 0 and b >= 0.85 * rg and rg >= 0.8 * at
         p := "Bearish marubozu"
     p
 
-bullPat = f_bullPat()
-bearPat = f_bearPat()
+// One setup, evaluated on its own timeframe (called through request.security).
+// sig: 0 none, 1 PULLBACK, 2 RETEST, 3 BREAKOUT.
+f_scan(emaLen, pivLen, retN) =>
+    atrV  = ta.atr(14)
+    emaV  = ta.ema(close, emaLen)
+    bodyV = math.abs(close - open)
+    rngV  = high - low
+    upWV  = high - math.max(open, close)
+    loWV  = math.min(open, close) - low
+    avgB  = ta.sma(bodyV, 14)
+    tol   = nearMode == "ATR" ? nearAtr * atrV : nearFix
+    [trend, lastH, lastL, bullBOS, bearBOS] = f_structure(pivLen)
+    pL = f_bullPat(bodyV, avgB, atrV, rngV, upWV, loWV)
+    pS = f_bearPat(bodyV, avgB, atrV, rngV, upWV, loWV)
 
+    // Impulse = break of structure; correction = pullback from the leg extreme that holds the swing.
+    var float legHigh = na
+    var float legLow = na
+    var int bullBar = na
+    var int bearBar = na
+    if bullBOS
+        legHigh := high
+        bullBar := bar_index
+    else if not na(legHigh)
+        legHigh := math.max(legHigh, high)
+    if bearBOS
+        legLow := low
+        bearBar := bar_index
+    else if not na(legLow)
+        legLow := math.min(legLow, low)
+    corrL = trend == 1 and not na(legHigh) and bar_index > bullBar and legHigh - low >= pbAtr * atrV and close > lastL
+    corrS = trend == -1 and not na(legLow) and bar_index > bearBar and high - legLow >= pbAtr * atrV and close < lastH
+
+    // Bonus: price stretched away from the EMA since its last touch, now snapping back.
+    var float runMax = 0.0
+    stretched = runMax >= stretchK * atrV
+    touch = low <= emaV + tol and high >= emaV - tol
+    runMax := touch ? 0.0 : math.max(runMax, math.abs(close - emaV))
+
+    // Confluences: candle, level zone, EMA. The level is always required.
+    emaL = low <= emaV + tol and close > emaV
+    emaS = high >= emaV - tol and close < emaV
+    [lvL, mjL, bfL] = f_level(low)
+    [lvS, mjS, bfS] = f_level(high)
+    atL = low <= lvL + bfL and close >= lvL - bfL
+    atS = high >= lvS - bfS and close <= lvS + bfS
+    nL = (pL != "" ? 1 : 0) + (atL ? 1 : 0) + (emaL ? 1 : 0)
+    nS = (pS != "" ? 1 : 0) + (atS ? 1 : 0) + (emaS ? 1 : 0)
+    setL = trend == 1 and close > emaV and corrL and atL and nL >= minConf
+    setS = trend == -1 and close < emaV and corrS and atS and nS >= minConf
+
+    // Breakouts through a level zone, then the retest.
+    [bkL, bkLMaj, bkLBuf] = f_level(math.floor(close / midStep) * midStep)
+    [bkS, bkSMaj, bkSBuf] = f_level(math.ceil(close / midStep) * midStep)
+    var bool  liveL = false
+    var float bLvlL = na
+    var float bBufL = na
+    var bool  bMajL = false
+    var int   bBarL = na
+    var bool  liveS = false
+    var float bLvlS = na
+    var float bBufS = na
+    var bool  bMajS = false
+    var int   bBarS = na
+    brkL = trend == 1 and close > emaV and close > bkL + bkLBuf and close[1] <= bkL + bkLBuf and not (liveL and bLvlL == bkL)
+    brkS = trend == -1 and close < emaV and close < bkS - bkSBuf and close[1] >= bkS - bkSBuf and not (liveS and bLvlS == bkS)
+    retL = liveL and bar_index > bBarL and low <= bLvlL + bBufL and close >= bLvlL - bBufL and pL != "" and close > emaV and trend == 1
+    retS = liveS and bar_index > bBarS and high >= bLvlS - bBufS and close <= bLvlS + bBufS and pS != "" and close < emaV and trend == -1
+    retTxtL = "Retest of broken " + f_lvlTxt(bLvlL, bMajL) + " level | " + pL
+    retTxtS = "Retest of broken " + f_lvlTxt(bLvlS, bMajS) + " level | " + pS
+    if liveL and (retL or close < bLvlL - bBufL or bar_index - bBarL > retN)
+        liveL := false
+    if liveS and (retS or close > bLvlS + bBufS or bar_index - bBarS > retN)
+        liveS := false
+    if brkL
+        liveL := true
+        bLvlL := bkL
+        bBufL := bkLBuf
+        bMajL := bkLMaj
+        bBarL := bar_index
+    if brkS
+        liveS := true
+        bLvlS := bkS
+        bBufS := bkSBuf
+        bMajS := bkSMaj
+        bBarS := bar_index
+
+    sigL = setL ? 1 : retL ? 2 : brkL ? 3 : 0
+    sigS = setS ? 1 : retS ? 2 : brkS ? 3 : 0
+    emaTag = " | at EMA" + str.tostring(emaLen)
+    txtL = sigL == 1 ? (pL != "" ? pL : "no candle") + " | " + f_lvlTxt(lvL, mjL) + " zone" + (emaL ? emaTag : "") : sigL == 2 ? retTxtL : sigL == 3 ? "Closed through the " + f_lvlTxt(bkL, bkLMaj) + " zone (Buy Limit on the retest)" : ""
+    txtS = sigS == 1 ? (pS != "" ? pS : "no candle") + " | " + f_lvlTxt(lvS, mjS) + " zone" + (emaS ? emaTag : "") : sigS == 2 ? retTxtS : sigS == 3 ? "Closed through the " + f_lvlTxt(bkS, bkSMaj) + " zone (Sell Limit on the retest)" : ""
+    nxtL = (math.floor(close / midStep) + 1) * midStep
+    nxtS = (math.ceil(close / midStep) - 1) * midStep
+    contL = close > open and close > high[1]
+    contS = close < open and close < low[1]
+    snap = stretched ? " | ✨ Stretched + snap-back to EMA" + str.tostring(emaLen) : ""
+    bonusL = snap + (contL ? " | ✨ Impulse → Correction → Continuation into " + str.tostring(nxtL, "#.##") : "")
+    bonusS = snap + (contS ? " | ✨ Impulse → Correction → Continuation into " + str.tostring(nxtS, "#.##") : "")
+    outTxtL = txtL + bonusL
+    outTxtS = txtS + bonusS
+    swStopL = lastL - stopPad
+    swStopS = lastH + stopPad
+    limitL = bkL + bkLBuf
+    limitS = bkS - bkSBuf
+    [trend, sigL, sigS, outTxtL, outTxtS, swStopL, swStopS, limitL, limitS, bullBOS, bearBOS, emaV]
+
+// ───────────────────────────── Data ─────────────────────────────
 // Higher-timeframe bias (rule 1): Daily, or Weekly when the Daily has no trend yet.
 dTrend = request.security(syminfo.tickerid, "D", f_htf(dPivot), lookahead = barmerge.lookahead_on)
 wTrend = request.security(syminfo.tickerid, "W", f_htf(wPivot), lookahead = barmerge.lookahead_on)
 bias = dTrend != 0 ? dTrend : wTrend
 
-// Entry-timeframe structure (rules 3, 6, 10).
-[cTrend, cLastH, cLastL, cBullBOS, cBearBOS] = f_structure(cPivot)
-
-// Impulse = break of structure; track the leg extreme since it for the correction depth.
-var float legHigh = na
-var float legLow = na
-var int bullBosBar = na
-var int bearBosBar = na
-if cBullBOS
-    legHigh := high
-    bullBosBar := bar_index
-else if not na(legHigh)
-    legHigh := math.max(legHigh, high)
-if cBearBOS
-    legLow := low
-    bearBosBar := bar_index
-else if not na(legLow)
-    legLow := math.min(legLow, low)
-
-corrLong  = cTrend == 1 and not na(legHigh) and bar_index > bullBosBar and legHigh - low >= pbAtr * atr and close > cLastL
-corrShort = cTrend == -1 and not na(legLow) and bar_index > bearBosBar and high - legLow >= pbAtr * atr and close < cLastH
-
-// Confluences.
-emaLong  = low <= ema + nearTol and close > ema
-emaShort = high >= ema - nearTol and close < ema
-[lvlL, majL, bufL] = f_level(low)
-[lvlS, majS, bufS] = f_level(high)
-lvlLong  = low <= lvlL + bufL and close >= lvlL - bufL
-lvlShort = high >= lvlS - bufS and close <= lvlS + bufS
-confL = (bullPat != "" ? 1 : 0) + (lvlLong ? 1 : 0) + (emaLong ? 1 : 0)
-confS = (bearPat != "" ? 1 : 0) + (lvlShort ? 1 : 0) + (emaShort ? 1 : 0)
-
-// Breakout candidates: the level just below (long) / above (short) the close.
-[bkL, bkLMaj, bkLBuf] = f_level(math.floor(close / midStep) * midStep)
-[bkS, bkSMaj, bkSBuf] = f_level(math.ceil(close / midStep) * midStep)
+// Each setup on its own timeframe. A setup is acted on only on the chart bar that closes its bar.
+[aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aEma] = request.security(syminfo.tickerid, tfA, f_scan(emaALen, cPivot, retestN), lookahead = barmerge.lookahead_off)
+[bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bEma] = request.security(syminfo.tickerid, tfB, f_scan(emaBLen, cPivot, retestN), lookahead = barmerge.lookahead_off)
+aCloseT = request.security(syminfo.tickerid, tfA, time_close, lookahead = barmerge.lookahead_on)
+bCloseT = request.security(syminfo.tickerid, tfB, time_close, lookahead = barmerge.lookahead_on)
+aIsClose = time_close == aCloseT
+bIsClose = time_close == bCloseT
+chartSec = timeframe.in_seconds()
+ratioA = math.max(1, math.round(timeframe.in_seconds(tfA) / chartSec))
+ratioB = math.max(1, math.round(timeframe.in_seconds(tfB) / chartSec))
+f_tfName(tf) =>
+    sec = timeframe.in_seconds(tf)
+    sec >= 3600 ? str.tostring(math.round(sec / 3600)) + "H" : str.tostring(math.round(sec / 60)) + "m"
+nameA = "Setup A (" + f_tfName(tfA) + " EMA" + str.tostring(emaALen) + ")"
+nameB = "Setup B (" + f_tfName(tfB) + " EMA" + str.tostring(emaBLen) + " rubber band)"
 
 // ───────────────────────────── State ─────────────────────────────
-var int   tDir = 0          // open tracked trade: 1 long, -1 short, 0 flat
-var float tEntry = na
-var float tStop = na
-var bool  tBE = false
-var float tLots = 0.0
-var string tKind = ""
-var float trackedPnL = 0.0
-var int   reArm = 0         // direction armed for re-entry after a breakeven stop
-var int   lastSigBar = na    // bar of the last entry alert
-var int   brkDir = 0        // live breakout awaiting retest
-var float brkLvl = na
-var float brkBuf = na
-var bool  brkMaj = false
-var int   brkBar = na
-var bool  brkRetested = false
+type Trade
+    int dir = 0
+    int num = 0
+    bool pending = false
+    float entry
+    float stop
+    bool be = false
+    float lots = 0.0
+    string kind = ""
+    array<float> tps
+    int tpHit = 0
+    int bar = 0
+    int rearm = 0
 
-f_lvlTxt(l, maj) =>
-    str.tostring(l) + (maj ? " major" : " mid")
+type Book
+    int week = 0
+    float pnl = 0.0
 
-// ───────────────────────────── Per closed bar ─────────────────────────────
-if barstate.isconfirmed
-    hdr = syminfo.ticker + " " + timeframe.period + " | " + setupName
-    biasTxt = "Bias D:" + f_trendTxt(dTrend) + " W:" + f_trendTxt(wTrend) + " | Chart structure " + f_trendTxt(cTrend)
+var Trade trA = Trade.new(tps = array.new<float>())
+var Trade trB = Trade.new(tps = array.new<float>())
+var Book bk = Book.new()
+
+// Weekly count resets on Sunday (New York time), or after a gap of a week or more.
+dowNY = dayofweek(time, TZ)
+if bar_index > 0 and (dowNY < dowNY[1] or time - time[1] >= 7 * 86400000)
+    bk.week := 0
+
+// Manage one setup's tracked trade and look for its next entry. Returns the alert text ("" = none).
+f_run(Trade tr, Book book, string sname, bool swing, bool isClose, int ratio, int trend, int sigL, int sigS, string txtL, string txtS, float stopL, float stopS, float limL, float limS, bool bullBOS, bool bearBOS) =>
+    string out = ""
 
     // 1. Manage the tracked trade (rule 10).
-    if tDir != 0
-        hitStop = tDir == 1 ? low <= tStop : high >= tStop
-        if hitStop
-            pnl = (tStop - tEntry) * tDir * tLots * valuePt
-            if time >= trackFrom
-                trackedPnL += pnl
-            stillValid = bias == tDir and cTrend == tDir
-            what = tBE ? "STOPPED AT BREAKEVEN" : "STOPPED OUT"
-            msg = what + " " + (tDir == 1 ? "LONG" : "SHORT") + "\n" + hdr + "\nEntry " + f_px(tEntry) + " | Stop " + f_px(tStop) + " | P&L $" + str.tostring(pnl, "#,##0") + "\n" + biasTxt
-            if stillValid
-                msg += "\nConditions still valid: watch for RE-ENTRY in the same direction."
-                reArm := tDir
-            alert(msg, alert.freq_once_per_bar_close)
-            label.new(bar_index, tDir == 1 ? low : high, tBE ? "BE" : "SL", color = color.gray, textcolor = color.white, style = tDir == 1 ? label.style_label_up : label.style_label_down, size = size.tiny)
-            tDir := 0
+    if tr.dir != 0
+        d = tr.dir
+        tag = "Trade #" + str.tostring(tr.num) + " | " + instName + " " + (d == 1 ? "Buy" : "Sell") + " (" + sname + ")"
+        if tr.pending
+            if (d == 1 ? low <= tr.entry : high >= tr.entry)
+                tr.pending := false
+                tr.bar := bar_index
+                out := f_add(out, "🔵 " + tag + "\n" + (d == 1 ? "Buy" : "Sell") + " Limit filled at " + f_p(tr.entry) + ". Stop Loss " + f_p(tr.stop) + ".")
+            else if bar_index - tr.bar > retestN * ratio
+                out := f_add(out, "⚪ " + tag + "\nLimit at " + f_p(tr.entry) + " not filled in time: cancel the order.")
+                tr.dir := 0
         else
-            if not tBE and (tDir == 1 ? high >= tEntry + beTrig : low <= tEntry - beTrig)
-                tStop := tEntry
-                tBE := true
-                alert("MOVE STOP TO BREAKEVEN " + (tDir == 1 ? "LONG" : "SHORT") + "\n" + hdr + "\nEntry " + f_px(tEntry) + " is +" + str.tostring(beTrig) + unit + " in profit. New stop " + f_px(tEntry), alert.freq_once_per_bar_close)
-                label.new(bar_index, tDir == 1 ? high : low, "BE", color = color.new(color.blue, 0), textcolor = color.white, style = tDir == 1 ? label.style_label_down : label.style_label_up, size = size.tiny)
-            if (tDir == 1 and cBearBOS) or (tDir == -1 and cBullBOS)
-                pnl = (close - tEntry) * tDir * tLots * valuePt
+            hit = d == 1 ? low <= tr.stop : high >= tr.stop
+            if hit
+                pnl = (tr.stop - tr.entry) * d * tr.lots * valuePt
                 if time >= trackFrom
-                    trackedPnL += pnl
-                alert("EXIT: STRUCTURE BROKEN " + (tDir == 1 ? "LONG" : "SHORT") + "\n" + hdr + "\nClose " + f_px(close) + " broke swing " + f_px(tDir == 1 ? cLastL : cLastH) + " | Entry " + f_px(tEntry) + " | P&L $" + str.tostring(pnl, "#,##0") + "\n" + biasTxt, alert.freq_once_per_bar_close)
-                label.new(bar_index, tDir == 1 ? high : low, "EXIT", color = color.orange, textcolor = color.white, style = tDir == 1 ? label.style_label_down : label.style_label_up, size = size.tiny)
-                tDir := 0
-                reArm := 0
+                    book.pnl += pnl
+                valid = bias == d and trend == d
+                msg = tr.be ? "⚪ " + tag + "\nStopped at breakeven (" + f_p(tr.stop) + ")." : "🛑 " + tag + "\nStop Loss hit at " + f_p(tr.stop) + "."
+                out := f_add(out, msg + (valid ? "\nConditions are still favorable: watching for a RE-ENTRY." : "\nConditions changed: no re-entry for now."))
+                label.new(bar_index, d == 1 ? low : high, tr.be ? "BE #" + str.tostring(tr.num) : "SL #" + str.tostring(tr.num), color = color.gray, textcolor = color.white, style = d == 1 ? label.style_label_up : label.style_label_down, size = size.tiny)
+                tr.rearm := valid ? d : 0
+                tr.dir := 0
+            else
+                if not tr.be and (d == 1 ? high >= tr.entry + beTrig : low <= tr.entry - beTrig)
+                    tr.stop := tr.entry
+                    tr.be := true
+                    out := f_add(out, "🔵 " + tag + "\nPrice is " + f_amt(beTrig) + " in profit: move the Stop Loss to breakeven (" + f_p(tr.entry) + ").")
+                while tr.tpHit < array.size(tr.tps) and (d == 1 ? high >= array.get(tr.tps, tr.tpHit) : low <= array.get(tr.tps, tr.tpHit))
+                    out := f_add(out, "✅ " + tag + "\nTake Profit " + str.tostring(tr.tpHit + 1) + " hit (" + f_p(array.get(tr.tps, tr.tpHit)) + "). Partial is optional.")
+                    tr.tpHit += 1
+                if isClose and (d == 1 ? bearBOS : bullBOS)
+                    pnl = (close - tr.entry) * d * tr.lots * valuePt
+                    if time >= trackFrom
+                        book.pnl += pnl
+                    out := f_add(out, "⚠️ " + tag + "\nStructure broken on the " + sname + " chart: get out (price " + f_p(close) + ").")
+                    label.new(bar_index, d == 1 ? high : low, "EXIT #" + str.tostring(tr.num), color = color.orange, textcolor = color.white, style = d == 1 ? label.style_label_down : label.style_label_up, size = size.tiny)
+                    tr.dir := 0
+                    tr.rearm := 0
 
-    // 2. Breakout bookkeeping: a close back through the zone or an expired window cancels it.
-    if brkDir == 1 and close < brkLvl - brkBuf
-        brkDir := 0
-    if brkDir == -1 and close > brkLvl + brkBuf
-        brkDir := 0
-    if brkDir != 0 and bar_index - brkBar > retestN
-        brkDir := 0
+    // 2. New entry on the close of a setup bar.
+    if isClose
+        dir = bias == 1 and sigL > 0 ? 1 : bias == -1 and sigS > 0 ? -1 : 0
+        if dir != 0 and tr.dir == dir and bar_index - tr.bar < coolN * ratio
+            dir := 0
+        if dir != 0
+            sig = dir == 1 ? sigL : sigS
+            kind = sig == 1 ? "PULLBACK" : sig == 2 ? "RETEST" : "BREAKOUT"
+            isLimit = sig == 3
+            buy = dir == 1
+            entry = f_r(isLimit ? (buy ? limL : limS) : close)
+            swingStop = buy ? stopL : stopS
+            stopPx = f_r(na(swingStop) or (entry - swingStop) * dir <= 0 or math.abs(entry - swingStop) > stopMax ? entry - dir * stopMax : swingStop)
+            sd = math.abs(entry - stopPx)
+            tps = f_tps(dir, entry, sd)
+            isRe = tr.rearm == dir and tr.dir == 0
 
-    // 3. Signals.
-    setupLong  = bias == 1 and cTrend == 1 and close > ema and corrLong and confL >= minConf
-    setupShort = bias == -1 and cTrend == -1 and close < ema and corrShort and confS >= minConf
-    retLong  = brkDir == 1 and not brkRetested and bar_index > brkBar and low <= brkLvl + brkBuf and close >= brkLvl - brkBuf and bullPat != "" and bias == 1 and close > ema
-    retShort = brkDir == -1 and not brkRetested and bar_index > brkBar and high >= brkLvl - brkBuf and close <= brkLvl + brkBuf and bearPat != "" and bias == -1 and close < ema
-    brkLong  = bias == 1 and cTrend == 1 and close > ema and close > bkL + bkLBuf and close[1] <= bkL + bkLBuf and not (brkDir == 1 and brkLvl == bkL)
-    brkShort = bias == -1 and cTrend == -1 and close < ema and close < bkS - bkSBuf and close[1] >= bkS - bkSBuf and not (brkDir == -1 and brkLvl == bkS)
+            // Sizing (rule 12).
+            eqNow = curEq > 0 ? curEq : startEq + book.pnl
+            growth = (eqNow / startEq - 1) * 100
+            riskPct = growth >= t3g ? t3r : growth >= t2g ? t2r : growth >= t1g ? t1r : r0
+            riskUsd = eqNow * riskPct / 100
+            lots = sd > 0 ? math.floor(riskUsd / (sd * valuePt) / lotStep + 1e-9) * lotStep : 0.0
+            sizeTxt = isGold ? str.tostring(lots, "#.##") + " lots" : str.tostring(lots, "#") + " contracts"
+            if lots <= 0
+                sizeTxt := "below the minimum (" + str.tostring(lotStep) + ")"
+                if not isGold and eMicro > 0
+                    sizeTxt += ", or " + str.tostring(math.floor(riskUsd / (sd * eMicro)), "#") + " micros"
 
-    if retLong or retShort
-        brkRetested := true
-    if brkLong
-        brkDir := 1
-        brkLvl := bkL
-        brkBuf := bkLBuf
-        brkMaj := bkLMaj
-        brkBar := bar_index
-        brkRetested := false
-    if brkShort
-        brkDir := -1
-        brkLvl := bkS
-        brkBuf := bkSBuf
-        brkMaj := bkSMaj
-        brkBar := bar_index
-        brkRetested := false
+            book.week += 1
+            n = book.week
+            side = buy ? "Buy" : "Sell"
+            order = isLimit ? side + " Limit" : "Market Execution " + side
+            entryTxt = isLimit ? f_p(entry) : buy ? f_p(close - entRange) + " to " + f_p(close + entRange) : f_p(close + entRange) + " to " + f_p(close - entRange)
+            m = f_keycap(n) + f_ord(n) + " Trade of The Week"
+            m += "\n\n🗓️ " + f_date(time_close)
+            m += "\n\n💰 " + instName + " " + (swing ? "Swing Trade / Position Trade - " : "") + order
+            m += "\n\n🔵 Entry: " + entryTxt
+            m += "\n\n🛑 Stop Loss: " + f_p(stopPx) + " (" + f_dist(sd) + ")"
+            nTp = array.size(tps)
+            if nTp > 0
+                for i = 0 to nTp - 1
+                    m += "\n\n✅ Take Profit " + (nTp > 1 ? str.tostring(i + 1) : "") + ": " + f_p(array.get(tps, i))
+            m += "\n\n(🔹 Price is at " + f_p(close) + " at the time of this signal)"
+            if isLimit
+                m += "\n\n💎 If the market goes " + (buy ? "BELOW" : "ABOVE") + " the entry point AFTER you see this signal, feel free to enter a Market Execution " + side + " using the Stop Loss given and the Take Profit you're comfortable with."
+            else
+                m += "\n\n💎 If the market goes " + (buy ? "BELOW " : "ABOVE ") + f_p(close) + " AFTER you see this signal, feel free to enter a Market Execution " + side + " where the market is at the time you're seeing this trade using the Stop Loss given and the Take Profit you're comfortable with."
+            if nTp > 1
+                m += "\n\n📝 Take Profit 1 = Most Likely To Win"
+                m += "\n\n📝 Take Profit " + str.tostring(nTp) + " = Least Likely To Win AT THE MOMENT"
+                m += "\n\n📝 Take Profits are partials, not mandatory."
+                m += "\n\n🚨 Multiple Take Profits DO NOT MEAN enter multiple trades at the same time."
+            if showPriv
+                m += "\n\n— Private —\n📊 " + sname + " " + kind + (isRe ? " (RE-ENTRY)" : "") + ": " + (buy ? txtL : txtS)
+                m += "\n📏 Size: " + sizeTxt + " (risk " + str.tostring(riskPct) + "% = $" + str.tostring(riskUsd, "#,##0") + " of $" + str.tostring(eqNow, "#,##0") + ")"
+                m += "\n🧭 Daily " + f_trendTxt(dTrend) + " / Weekly " + f_trendTxt(wTrend) + " | " + sname + " structure " + f_trendTxt(trend)
+                if tr.dir == dir
+                    m += "\n➕ Trade #" + str.tostring(tr.num) + " is still open: this is an optional add-on."
+            out := f_add(out, m)
+            label.new(bar_index, buy ? low : high, "#" + str.tostring(n) + " " + (isRe ? "RE " : "") + (buy ? "BUY " : "SELL ") + kind + "\n" + (swing ? "A" : "B"), color = buy ? color.green : color.red, textcolor = color.white, style = buy ? label.style_label_up : label.style_label_down, size = size.small)
 
-    dir = setupLong or retLong or brkLong ? 1 : setupShort or retShort or brkShort ? -1 : 0
-    // While a trade is open in the same direction, add-on alerts respect the cooldown.
-    if dir != 0 and tDir == dir and not na(lastSigBar) and bar_index - lastSigBar < coolN
-        dir := 0
-    if dir != 0
-        lastSigBar := bar_index
-        kind = (dir == 1 ? setupLong : setupShort) ? "PULLBACK" : (dir == 1 ? retLong : retShort) ? "RETEST" : "BREAKOUT"
-        pat = dir == 1 ? bullPat : bearPat
+            if tr.dir == 0
+                tr.dir := dir
+                tr.num := n
+                tr.pending := isLimit
+                tr.entry := entry
+                tr.stop := stopPx
+                tr.be := false
+                tr.lots := math.max(lots, 0)
+                tr.kind := kind
+                tr.tps := tps
+                tr.tpHit := 0
+                tr.bar := bar_index
+                tr.rearm := 0
+    out
 
-        // Sizing (rule 12).
-        eqNow = curEq > 0 ? curEq : startEq + trackedPnL
-        growth = (eqNow / startEq - 1) * 100
-        riskPct = growth >= t3g ? t3r : growth >= t2g ? t2r : growth >= t1g ? t1r : r0
-        riskUsd = eqNow * riskPct / 100
-        lots = math.floor(riskUsd / (stopDist * valuePt) / lotStep + 1e-9) * lotStep
-        sizeTxt = isGold ? "Lots " + str.tostring(lots, "#.##") : "Contracts " + str.tostring(lots, "#")
-        if lots <= 0
-            sizeTxt := "Size below minimum (" + str.tostring(lotStep) + ")"
-            if not isGold and eMicro > 0
-                sizeTxt += " | Micros " + str.tostring(math.floor(riskUsd / (stopDist * eMicro)), "#")
-
-        entry = close
-        stop = entry - dir * stopDist
-        confTxt = ""
-        if kind == "PULLBACK"
-            c1 = pat != "" ? pat : "no candle"
-            c2 = (dir == 1 ? lvlLong : lvlShort) ? "Level " + f_lvlTxt(dir == 1 ? lvlL : lvlS, dir == 1 ? majL : majS) + " zone" : "no level"
-            c3 = (dir == 1 ? emaLong : emaShort) ? "At EMA" + str.tostring(emaLen) : "not at EMA"
-            confTxt := "Confluences " + str.tostring(dir == 1 ? confL : confS) + "/3: " + c1 + " | " + c2 + " | " + c3
-        else if kind == "RETEST"
-            confTxt := "Retest of broken level " + f_lvlTxt(brkLvl, brkMaj) + " | " + pat
-        else
-            confTxt := "Closed through level " + f_lvlTxt(dir == 1 ? bkL : bkS, dir == 1 ? bkLMaj : bkSMaj) + " zone. Ideal entry = RETEST."
-
-        isRe = reArm == dir
-        openTxt = tDir == 0 ? "" : tDir == dir ? "\nTrade already open: optional add-on, not tracked." : "\nOpposite trade still open."
-        msg = (isRe ? "RE-ENTRY " : "") + (dir == 1 ? "BUY " : "SELL ") + kind + "\n" + hdr + "\nEntry ~" + f_px(entry) + " | SL " + f_px(stop) + " (" + str.tostring(stopDist) + unit + ") | BE at " + f_px(entry + dir * beTrig) + "\n" + sizeTxt + " (risk " + str.tostring(riskPct) + "% = $" + str.tostring(riskUsd, "#,##0") + " of $" + str.tostring(eqNow, "#,##0") + ")\n" + confTxt + "\n" + biasTxt + openTxt
-        alert(msg, alert.freq_once_per_bar_close)
-        label.new(bar_index, dir == 1 ? low : high, (isRe ? "RE " : "") + (dir == 1 ? "BUY " : "SELL ") + kind + (pat != "" ? "\n" + pat : ""), color = dir == 1 ? color.new(color.green, 0) : color.new(color.red, 0), textcolor = color.white, style = dir == 1 ? label.style_label_up : label.style_label_down, size = size.small)
-
-        if tDir == 0
-            tDir := dir
-            tEntry := entry
-            tStop := stop
-            tBE := false
-            tLots := math.max(lots, 0)
-            tKind := kind
-            reArm := 0
+// ───────────────────────────── Per closed chart bar ─────────────────────────────
+if barstate.isconfirmed
+    oA = f_run(trA, bk, nameA, true, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear)
+    oB = f_run(trB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear)
+    allMsg = f_add(oA, oB)
+    if allMsg != ""
+        alert(allMsg, alert.freq_once_per_bar_close)
 
 // ───────────────────────────── Drawing ─────────────────────────────
-plot(ema, "EMA", color = color.new(color.yellow, 0), linewidth = 2)
-plot(tDir != 0 ? tEntry : na, "Tracked entry", color = color.new(color.white, 30), style = plot.style_linebr)
-plot(tDir != 0 ? tStop : na, "Tracked stop", color = color.new(color.red, 0), style = plot.style_linebr)
+plot(aEma, "Setup A EMA", color = color.new(color.orange, 0), linewidth = 2)
+plot(bEma, "Setup B EMA", color = color.new(color.yellow, 0), linewidth = 1)
+plot(trA.dir != 0 ? trA.stop : na, "Setup A stop", color = color.new(color.red, 0), style = plot.style_linebr)
+plot(trB.dir != 0 ? trB.stop : na, "Setup B stop", color = color.new(color.red, 40), style = plot.style_linebr)
 
 var array<box> zoneBoxes = array.new<box>()
 if showZones and barstate.islast
@@ -398,31 +570,36 @@ if showZones and barstate.islast
         isMaj = math.abs(lv / majorStep - math.round(lv / majorStep)) < 0.0001
         bf = isMaj ? majBuf : midBuf
         col = isMaj ? color.new(color.orange, 82) : color.new(color.aqua, 88)
-        bx = box.new(math.max(bar_index - 150, 0), lv + bf, bar_index + 10, lv - bf, border_color = color.new(col, 60), bgcolor = col, text = str.tostring(lv) + (isMaj ? " MAJOR" : " mid"), text_size = size.tiny, text_halign = text.align_right, text_color = color.gray)
+        bx = box.new(math.max(bar_index - 150, 0), lv + bf, bar_index + 10, lv - bf, border_color = color.new(col, 60), bgcolor = col, text = str.tostring(lv, "#.##") + (isMaj ? " MAJOR" : " mid"), text_size = size.tiny, text_halign = text.align_right, text_color = color.gray)
         array.push(zoneBoxes, bx)
 
-var table tbl = table.new(position.top_right, 2, 9, bgcolor = color.new(color.black, 20), border_width = 1)
+f_tradeTxt(Trade tr) =>
+    tr.dir == 0 ? "Flat" : "#" + str.tostring(tr.num) + " " + (tr.dir == 1 ? "LONG " : "SHORT ") + tr.kind + " @ " + f_p(tr.entry) + (tr.pending ? " (limit)" : tr.be ? " (BE)" : "")
+
+var table tbl = table.new(position.top_right, 2, 10, bgcolor = color.new(color.black, 20), border_width = 1)
 if showTable and barstate.islast
-    eqShow = curEq > 0 ? curEq : startEq + trackedPnL
+    eqShow = curEq > 0 ? curEq : startEq + bk.pnl
     gShow = (eqShow / startEq - 1) * 100
     rShow = gShow >= t3g ? t3r : gShow >= t2g ? t2r : gShow >= t1g ? t1r : r0
-    lShow = math.floor(eqShow * rShow / 100 / (stopDist * valuePt) / lotStep + 1e-9) * lotStep
     bCol = bias == 1 ? color.green : bias == -1 ? color.red : color.gray
-    table.cell(tbl, 0, 0, "Profile", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 0, (isGold ? "Gold" : "ES / SPX") + " | " + setupName, text_color = color.white, text_size = size.small)
+    tfWarn = chartSec > timeframe.in_seconds(tfB) ? " (chart TF too high!)" : ""
+    table.cell(tbl, 0, 0, "Instrument", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 0, instName + tfWarn, text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 1, "Daily / Weekly", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 1, f_trendTxt(dTrend) + " / " + f_trendTxt(wTrend), text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 2, "Trade bias", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 2, bias == 1 ? "BUYS ONLY" : bias == -1 ? "SELLS ONLY" : "STAND ASIDE", text_color = color.white, bgcolor = bCol, text_size = size.small)
-    table.cell(tbl, 0, 3, "Chart structure", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 3, f_trendTxt(cTrend) + (cTrend != 0 and cTrend != bias ? " (conflict: no entries)" : ""), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 4, "Price vs EMA" + str.tostring(emaLen), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 4, close > ema ? "Above" : "Below", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 5, "Tracked trade", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 5, tDir == 0 ? "Flat" : (tDir == 1 ? "LONG " : "SHORT ") + tKind + " @ " + f_px(tEntry) + (tBE ? " (BE)" : ""), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 6, "Equity", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 6, "$" + str.tostring(eqShow, "#,##0") + " (" + (gShow >= 0 ? "+" : "") + str.tostring(gShow, "0.0") + "%)" + (curEq > 0 ? " manual" : " tracked"), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 7, "Risk tier", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 7, str.tostring(rShow) + "% per trade", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 8, "Next size", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 8, str.tostring(lShow, isGold ? "#.##" : "#") + (isGold ? " lots" : " contracts"), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 3, "A structure / EMA", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 3, f_trendTxt(aTrend) + " / " + (close > aEma ? "above" : "below"), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 4, "B structure / EMA", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 4, f_trendTxt(bTrend) + " / " + (close > bEma ? "above" : "below"), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 5, "Trade A", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 5, f_tradeTxt(trA), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 6, "Trade B", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 6, f_tradeTxt(trB), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 7, "Trades this week", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 7, str.tostring(bk.week), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 8, "Equity", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 8, "$" + str.tostring(eqShow, "#,##0") + " (" + (gShow >= 0 ? "+" : "") + str.tostring(gShow, "0.0") + "%)" + (curEq > 0 ? " manual" : " tracked"), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 9, "Risk tier", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 9, str.tostring(rShow) + "% per trade", text_color = color.white, text_size = size.small)
