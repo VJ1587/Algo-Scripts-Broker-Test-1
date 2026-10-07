@@ -47,8 +47,9 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
 
     4. Qualification.                                          setup_section, rank
        Qualified  = C1 + C4 + at least 3 of C1-C6. Nothing qualifies without a zone reversal.
-       Developing = C1 + C2 (price in the zone) + 2 or more checks, reversal not closed yet.
+       Developing = any 2 or more of C1-C6 that do not qualify (cfg-0.7.0).
        Equal totals rank Daily confirmations above 4H, and 4H above 2H.
+       C1-C6 are defined in words in CONFLUENCES; the dashboard, journal and trade gate use those names.
 
 What it does NOT do
     It places no orders or sizes no positions. The qualification rule is a screening change, not a
@@ -104,7 +105,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.6.0"
+SCANNER_CODE_VERSION = "0.7.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -860,6 +861,46 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 # =============================================================================
 # Confluences  [v1.0 Section 4]
 # =============================================================================
+
+# [OWNER cfg-0.7.0] Plain-language C1-C6 definitions: one source for the dashboard, the journal and the
+# trade gate, so every logged trade names the checks it had. Edit with the code that tests them.
+CONFLUENCES = {
+    "c1": ("Trend alignment", "Daily bias and 4H structure (latest two highs and lows both rising for a long, both "
+                              "falling for a short) point in the trade direction."),
+    "c2": ("Key level zone", "Latest completed 2H close is inside the zone around a major or mid round-number level "
+                             "(FX +/-15 pips, JPY pairs +/-0.15, gold and S&P +/-20, oil +/-1.00)."),
+    "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 38.2%, 50% or 61.8% "
+                                    "retracement of the latest qualifying 4H impulse."),
+    "c4": ("Reversal at the zone", "A reversal that started in the key level zone and closed on the Daily, 4H or 2H "
+                                   "chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, "
+                                   "morning or evening star, reversal + marubozu, or a double top/bottom or head and "
+                                   "shoulders closed beyond the neckline."),
+    "c5": ("2H EMA momentum", "On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short."),
+    "c6": ("Trend line", "Latest 2H candle touches the unbroken 4H trend line (last two rising lows for a long, last "
+                         "two falling highs for a short) and closes on the trend side."),
+}
+CONF_KEYS = tuple(CONFLUENCES)
+
+
+def flag(v) -> bool:
+    """A C1-C6 value from a Row or a saved scan. Scans before cfg-0.7.0 stored C5 as the text 'True'/'False'."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1")
+    return bool(v) if v is not None else False
+
+
+def _get(row, k):
+    return row.get(k) if isinstance(row, dict) else getattr(row, k, None)
+
+
+def setup_label(row) -> str:
+    """The checks a setup passed, e.g. 'C1+C4+C5'. Groups journal results by setup."""
+    return "+".join(k.upper() for k in CONF_KEYS if flag(_get(row, k))) or "none"
+
+
+def confluences_text(row, met: bool = True) -> str:
+    """'C1 Trend alignment; C4 Reversal at the zone' for the checks met (or missing, with met=False)."""
+    return "; ".join(f"{k.upper()} {CONFLUENCES[k][0]}" for k in CONF_KEYS if flag(_get(row, k)) == met)
 
 def _prior_trend(c: np.ndarray, last: int, n: int) -> str:
     """Direction of 2H closes over the n bars ending at index last: 'down', 'up' or ''."""
@@ -1617,6 +1658,7 @@ class Row:
     c5: bool = False
     c6: bool = False
     technical: int = 0
+    setup: str = ""                # checks passed, e.g. "C1+C4+C5"
     cot_points: int = 0
     sentiment_points: int = 0
     total: int = 0
@@ -1661,10 +1703,10 @@ class InstrumentResult:
 
 def setup_section(c1: bool, c2: bool, c4: bool, technical: int, require_close_in_zone: bool = False) -> str:
     """[OWNER cfg-0.4.0] Qualified: C1, a reversal confirmation closed in a key level zone (C4, 2H or higher),
-    and at least 3 checks. Developing: C1 and price in the zone (C2) with 2+ checks, no reversal yet."""
+    and at least 3 checks. [OWNER cfg-0.7.0] Developing: any 2 or more of C1-C6 that do not qualify."""
     if c1 and c4 and technical >= 3 and (c2 or not require_close_in_zone):
         return "qualified"
-    if c1 and c2 and technical >= 2:
+    if technical >= 2:
         return "developing"
     return "not shown"
 
@@ -1735,9 +1777,12 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
                 break
         r.c4 = bool(r.candle)
         if np.isfinite(e_fast[-1]) and np.isfinite(e_slow[-1]):
-            r.c5 = e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1]
+            # bool(): numpy bools were saved to the scan JSON as the text "True"/"False"
+            r.c5 = bool(e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1])
         r.c6, r.trendline = trendline_signal(df4, piv_4, df2, direction, hw)
+        r.c1, r.c2, r.c3, r.c6 = bool(r.c1), bool(r.c2), bool(r.c3), bool(r.c6)
         r.technical = int(sum([r.c1, r.c2, r.c3, r.c4, r.c5, r.c6]))
+        r.setup = setup_label(r)
         # Overlays [Add 6.2, 6.3]: rank, never qualify
         r.cot_points = cot_points(cot_reading, direction, cfg["cot"])
         cr = asdict(cot_reading)
@@ -1824,6 +1869,20 @@ def _fmt(v, nd=5):
 
 def _ck(b: bool) -> str:
     return '<span class="ok">✓</span>' if b else '<span class="no">·</span>'
+
+
+def _conf_th() -> str:
+    """C1-C6 column headers; hovering shows the definition."""
+    return "".join(f"<th title='{html.escape(CONFLUENCES[k][0] + ': ' + CONFLUENCES[k][1])}'>{k.upper()}</th>"
+                   for k in CONF_KEYS)
+
+
+def render_definitions() -> str:
+    return ("<h2>Confluence definitions</h2><div class='wrap'><table><tr><th>Check</th><th>Name</th><th>Passes when</th></tr>"
+            + "".join(f"<tr><td><b>{k.upper()}</b></td><td>{html.escape(n)}</td><td class='wrapc'>{html.escape(d)}</td></tr>"
+                      for k, (n, d) in CONFLUENCES.items())
+            + "</table></div><p class='muted'>Qualified: C1 + C4 + at least 3 of C1-C6. Developing: any 2 or more "
+              "of C1-C6 that do not qualify. COT and sentiment add points for ranking; they never qualify a setup.</p>")
 
 
 def render_broker(broker: Optional[dict]) -> str:
@@ -1984,7 +2043,7 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
         body += f"<p class='muted'>{n} setup(s) met the qualified or developing definition; the list is not padded.</p>"
     if n:
         body += "<div class='wrap'><table><tr><th>#</th><th>Section</th><th>Instrument</th><th>Group</th><th>Dir</th>" \
-                "<th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th><th class='num'>Tech</th>" \
+                f"{_conf_th()}<th class='num'>Tech</th>" \
                 "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Zone</th><th>Ladder in zone</th>" \
                 "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th></tr>"
         for r in top:
@@ -2020,20 +2079,26 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     body += render_broker(broker)
     if news_view:
         body += render_news(news_view, ZoneInfo(news_view.get("tz", "America/Chicago")))
-    # all scored candidates
-    cands = sorted([r for r in all_rows if r.section != "not shown"], key=lambda r: (r.section != "qualified", -r.total))
-    body += ("<p class='muted'>Qualified: C1 + a reversal closed in a key level zone (C4, 2H or higher) + at least 3 of C1-C6. "
-             "Developing: C1 + price in the zone (C2) + 2 or more checks, reversal not closed yet.</p>")
-    body += f"<details><summary>All qualified and developing setups ({len(cands)})</summary><div class='wrap'><table>" \
-            "<tr><th>Instrument</th><th>Dir</th><th>Section</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>" \
-            "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Notes</th></tr>"
-    for r in cands:
-        body += (f"<tr><td>{e(r.symbol)}</td><td class='{r.direction}'>{r.direction}</td><td>{e(r.section)}</td>"
-                 + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
-                 + f"<td class='num'>{r.technical}</td>"
-                 f"<td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td><td class='num'>{r.total}</td>"
-                 f"<td class='wrapc'>{e('; '.join(r.flags))}</td></tr>")
-    body += "</table></div></details>"
+    # [OWNER cfg-0.7.0] every developing setup, with the checks it has and the ones it still needs
+    dev = sorted([r for r in all_rows if r.section == "developing"],
+                 key=lambda r: (-r.total, -r.technical, -r.c4_tf_rank, r.symbol, r.direction))
+    body += (f"<h2>Developing setups ({len(dev)})</h2><p class='muted'>Two or more of C1-C6 but not qualified "
+             "(qualified needs C1 + C4 + at least 3). Watch these; they are not a trade yet.</p>")
+    if dev:
+        body += ("<div class='wrap'><table><tr><th>Instrument</th><th>Dir</th><th>Setup</th>" + _conf_th()
+                 + "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th>"
+                 "<th>Has</th><th>Still needs</th><th>Zone / reversal</th><th>Flags</th></tr>")
+        for r in dev:
+            body += (f"<tr class='d'><td><b>{e(r.symbol)}</b><br><span class='muted'>{_fmt(r.ref_price, 6)}</span></td>"
+                     f"<td class='{r.direction}'>{r.direction}</td><td>{e(r.setup)}</td>"
+                     + "".join(f"<td>{_ck(x)}</td>" for x in (r.c1, r.c2, r.c3, r.c4, r.c5, r.c6))
+                     + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td>"
+                     f"<td class='num'>{r.sentiment_points:+d}</td><td class='num'><b>{r.total}</b></td>"
+                     f"<td class='wrapc'>{e(confluences_text(r))}</td><td class='wrapc'>{e(confluences_text(r, met=False))}</td>"
+                     f"<td>{_fmt(r.zone_level, 6)} {e(r.zone_kind)}{'<br>' + e(r.candle) if r.candle else ''}</td>"
+                     f"<td class='wrapc'>{e('; '.join(r.flags))}</td></tr>")
+        body += "</table></div>"
+    body += render_definitions()
     # footer
     body += "<h2>Every instrument scanned</h2><div class='wrap'><table><tr><th>Instrument</th><th>Group</th><th>Daily bias</th><th>4H</th><th>Status / rejection reason</th><th>Bars</th></tr>"
     for f in footer:
@@ -2060,7 +2125,7 @@ def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row]
         payload["broker"] = {k: v for k, v in broker.items() if k != "account"}
     paths["json"].write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     flat_keys = ["symbol", "group", "direction", "section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical",
-                 "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
+                 "setup", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
                  "zone_half_width", "zone_low", "zone_high", "zone_width_source", "zone_wicks", "daily_bias", "bias_invalidation", "structure_4h", "candle", "c4_tf", "trendline",
                  "impulse_note", "short_test", "same_underlying", "roll"]
     with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:
@@ -2098,7 +2163,7 @@ def append_c2_log(log_dir: Path, meta: dict, results: list[InstrumentResult]) ->
 
 DEAL_BUY, DEAL_SELL = 0, 1
 DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT, DEAL_ENTRY_OUT_BY = 0, 1, 2, 3
-JOURNAL_CONF_KEYS = ("section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical", "cot_points",
+JOURNAL_CONF_KEYS = ("section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical", "setup", "cot_points",
                      "sentiment_points", "total", "candle", "c4_tf", "zone_level", "zone_kind", "daily_bias",
                      "structure_4h", "reason", "flags")
 
@@ -2159,7 +2224,12 @@ def load_scan_history(out_dir: Path) -> list[dict]:
         m = d.get("meta", {})
         if m.get("demo") or "asof_utc" not in m:
             continue
-        rows = {(r["symbol"], r["direction"]): {k: r.get(k) for k in JOURNAL_CONF_KEYS} for r in d.get("rows", [])}
+        rows = {}
+        for r in d.get("rows", []):
+            cf = {k: r.get(k) for k in JOURNAL_CONF_KEYS}
+            cf.update({k: flag(r.get(k)) for k in CONF_KEYS})   # older scans saved C5 as text
+            cf["setup"] = setup_label(cf)
+            rows[(r["symbol"], r["direction"])] = cf
         scans.append({"asof": pd.Timestamp(m["asof_utc"], tz=UTC), "file": p.with_suffix(".html").name,
                       "run_type": m.get("run_type", ""), "config_version": m.get("config_version", ""), "rows": rows})
     scans.sort(key=lambda s: s["asof"])
@@ -2174,6 +2244,62 @@ def confluences_before(scans: list[dict], symbol: str, direction: str, entry: pd
                     "scan_run": s["run_type"], "config_version": s["config_version"],
                     "age_hours": round((entry - s["asof"]).total_seconds() / 3600, 1)}
     return None
+
+
+def _stats(ts: list[dict]) -> dict:
+    n = len(ts)
+    wins = sum(1 for t in ts if t["net"] > 0)
+    net = sum(t["net"] for t in ts)
+    return {"trades": n, "wins": wins, "win_rate": wins / n if n else None, "net": net, "avg": net / n if n else None}
+
+
+def setup_results(trades: list[dict]) -> dict:
+    """[OWNER cfg-0.7.0] Closed trades with a scan before entry, grouped three ways: by section, by setup
+    (the exact checks passed, e.g. C1+C4+C5) and by each confluence present vs absent. Win = net P/L > 0."""
+    closed = [t for t in trades if t["status"] == "closed" and t.get("confluences")]
+
+    def group(key) -> list[dict]:
+        g: dict[str, list[dict]] = {}
+        for t in closed:
+            g.setdefault(key(t["confluences"]), []).append(t)
+        return sorted(({"group": k, **_stats(v)} for k, v in g.items()), key=lambda x: (-x["trades"], -x["net"]))
+
+    per_check = [{"check": k.upper(), "name": CONFLUENCES[k][0],
+                  "with": _stats([t for t in closed if flag(t["confluences"].get(k))]),
+                  "without": _stats([t for t in closed if not flag(t["confluences"].get(k))])} for k in CONF_KEYS]
+    return {"closed": len(closed), "by_section": group(lambda c: c.get("section") or "not shown"),
+            "by_setup": group(lambda c: c.get("setup") or setup_label(c)), "by_check": per_check}
+
+
+def render_setup_results(res: dict) -> str:
+    e = html.escape
+
+    def cells(s: dict) -> str:
+        if not s["trades"]:
+            return "<td class='num'>0</td><td class='num'>–</td><td class='num'>–</td><td class='num'>–</td>"
+        cls = "long" if s["net"] >= 0 else "short"
+        return (f"<td class='num'>{s['trades']}</td><td class='num'>{s['win_rate']:.0%}</td>"
+                f"<td class='num {cls}'>{_money(s['net'])}</td><td class='num'>{_money(s['avg'])}</td>")
+
+    head = "<th class='num'>Trades</th><th class='num'>Win rate</th><th class='num'>Net P/L</th><th class='num'>Avg</th>"
+    out = (f"<h2>Results by setup</h2><p class='muted'>{res['closed']} closed trade(s) with a scan logged before entry. "
+           "Setup = the checks that scan showed for that instrument and direction. Win = net P/L above zero after costs. "
+           "Under about 20 trades a group is too small to tell a working setup from luck.</p>")
+    if not res["closed"]:
+        return out
+    out += "<div class='wrap'><table><tr><th>Section at entry</th>" + head + "</tr>"
+    out += "".join(f"<tr><td>{e(s['group'])}</td>{cells(s)}</tr>" for s in res["by_section"]) + "</table></div>"
+    out += "<div class='wrap'><table><tr><th>Setup</th><th>Confluences</th>" + head + "</tr>"
+    for s in res["by_setup"]:
+        names = "; ".join(f"{k} {CONFLUENCES[k.lower()][0]}" for k in s["group"].split("+") if k.lower() in CONFLUENCES)
+        out += f"<tr><td><b>{e(s['group'])}</b></td><td class='wrapc'>{e(names or 'no checks passed')}</td>{cells(s)}</tr>"
+    out += "</table></div>"
+    out += ("<div class='wrap'><table><tr><th>Check</th><th>Name</th><th class='num'>With: trades</th><th class='num'>Win rate</th>"
+            "<th class='num'>Net P/L</th><th class='num'>Avg</th><th class='num'>Without: trades</th><th class='num'>Win rate</th>"
+            "<th class='num'>Net P/L</th><th class='num'>Avg</th></tr>")
+    out += "".join(f"<tr><td><b>{c['check']}</b></td><td>{e(c['name'])}</td>{cells(c['with'])}{cells(c['without'])}</tr>"
+                   for c in res["by_check"]) + "</table></div>"
+    return out
 
 
 def append_account_snapshot(log_dir: Path, label: str, asof: pd.Timestamp, acct: dict) -> Path:
@@ -2248,8 +2374,8 @@ def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, histo
     else:
         body += ("<div class='wrap'><table><tr><th>Position</th><th>Instrument</th><th>Dir</th><th class='num'>Lots</th>"
                  "<th>Opened</th><th class='num'>Entry</th><th>Closed</th><th class='num'>Exit</th><th class='num'>Net P/L</th>"
-                 "<th>Status</th><th>Scan before entry</th><th>Setup</th><th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th>"
-                 "<th class='num'>Total</th><th>Reversal / zone</th></tr>")
+                 "<th>Status</th><th>Scan before entry</th><th>Setup</th>" + _conf_th()
+                 + "<th class='num'>Total</th><th>Confluences met / missing</th><th>Reversal / zone</th></tr>")
         for t in trades:
             cf = t.get("confluences")
             pl_cls = "long" if t["net"] >= 0 else "short"
@@ -2258,21 +2384,26 @@ def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, histo
                    f"<td>{e(local(t['close_ts']))}</td><td class='num'>{_fmt(t['exit_price'], 6)}</td>"
                    f"<td class='num {pl_cls}'>{_money(t['net'])}</td><td>{e(t['status'])}</td>")
             if not cf:
-                row += f"<td colspan='10' class='muted'>{e(t.get('confluence_note', 'no scan logged before entry'))}</td></tr>"
+                row += f"<td colspan='11' class='muted'>{e(t.get('confluence_note', 'no scan logged before entry'))}</td></tr>"
             else:
                 sec = cf.get("section") or ""
                 cls = "q" if sec == "qualified" else "d" if sec == "developing" else ""
                 stale = cf["age_hours"] > 24
                 row += (f"<td><a href='{e(cf['scan_file'])}'>{e(cf['scan_asof'].strftime('%m-%d %H:%M'))} UTC</a><br>"
                         f"<span class='{'warn' if stale else 'muted'}'>{cf['age_hours']}h before entry</span></td>"
-                        f"<td><span class='tag {cls}'>{e(sec)}</span>{(' #' + str(cf['rank'])) if cf.get('rank') else ''}</td>"
-                        + "".join(f"<td>{_ck(bool(cf.get(k)))}</td>" for k in ("c1", "c2", "c3", "c4", "c5", "c6"))
-                        + f"<td class='num'>{cf.get('total')}</td><td class='wrapc'>{e(cf.get('candle') or '')}"
+                        f"<td><span class='tag {cls}'>{e(sec)}</span>{(' #' + str(cf['rank'])) if cf.get('rank') else ''}"
+                        f"<br><b>{e(cf.get('setup') or setup_label(cf))}</b></td>"
+                        + "".join(f"<td>{_ck(flag(cf.get(k)))}</td>" for k in CONF_KEYS)
+                        + f"<td class='num'>{cf.get('total')}</td>"
+                        f"<td class='wrapc'>{e(confluences_text(cf) or 'none')}<br>"
+                        f"<span class='muted'>missing: {e(confluences_text(cf, met=False) or 'none')}</span></td>"
+                        f"<td class='wrapc'>{e(cf.get('candle') or '')}"
                         f"{' · ' if cf.get('candle') else ''}zone {_fmt(cf.get('zone_level'), 6)} {e(cf.get('zone_kind') or '')}"
                         + (f"<br><span class='muted'>{e(cf.get('reason') or '')}</span>" if sec == "not shown" else "")
                         + "</td></tr>")
             body += row
         body += "</table></div>"
+    body += render_setup_results(setup_results(trades))
     body += "<h2>Trade decisions at the hold (trade_gate.py)</h2>"
     if decisions is None or decisions.empty:
         body += "<p class='muted'>No decisions logged yet. Run python trade_gate.py after a scan.</p>"
@@ -2303,6 +2434,7 @@ def render_journal_html(asof: pd.Timestamp, disp_tz: ZoneInfo, acct: dict, histo
             body += (f"<tr><td>{e(local(d['time']))}</td><td class='num'>{_money(d['profit'] + d['commission'] + d['fee'])}</td>"
                      f"<td>{e(d['comment'])}</td></tr>")
         body += "</table></div>"
+    body += render_definitions()
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             f"<title>Trading Journal</title><style>{_CSS}</style></head><body><main>{nav}{head}{body}</main></body></html>")
 
@@ -2346,13 +2478,16 @@ def write_journal(cfg: dict, base: Path, out_dir: Path, client: Optional[Mt5Clie
     with open(log_dir / "trade_journal.csv", "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
         wr.writerow(["position_id", "symbol", "mt5_symbol", "direction", "volume", "open_utc", "entry_price", "close_utc",
-                     "exit_price", "net", "status", "comment", "scan_asof_utc", "scan_age_hours"] + list(JOURNAL_CONF_KEYS))
+                     "exit_price", "net", "status", "comment", "scan_asof_utc", "scan_age_hours"] + list(JOURNAL_CONF_KEYS)
+                    + ["confluences_met", "confluences_missing", "scan_config_version"])
         for t in trades:
             cf = t.get("confluences") or {}
             wr.writerow([t["position_id"], t["symbol"], t["mt5_symbol"], t["direction"], t["volume"], fmt_ts(t["open_ts"]),
                          t["entry_price"], fmt_ts(t["close_ts"]), t["exit_price"], round(t["net"], 2), t["status"], t["comment"],
                          fmt_ts(cf.get("scan_asof")), cf.get("age_hours")]
-                        + [("; ".join(cf[k]) if k == "flags" and cf.get(k) else cf.get(k)) for k in JOURNAL_CONF_KEYS])
+                        + [("; ".join(cf[k]) if k == "flags" and cf.get(k) else cf.get(k)) for k in JOURNAL_CONF_KEYS]
+                        + ([confluences_text(cf), confluences_text(cf, met=False), cf.get("config_version")] if cf
+                           else ["", "", ""]))
     LOG.info("journal: %d positions, %d open; wrote %s", len(trades), sum(1 for t in trades if t["status"] != "closed"), path)
     return path
 
@@ -2481,6 +2616,7 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
             "asof_local": asof.tz_convert(disp_tz).strftime("%Y-%m-%d %I:%M %p %Z"),
             "stamp": asof.strftime("%Y%m%dT%H%MZ"), "addendum_version": cfg["addendum_version"],
             "config_version": cfg["config_version"], "code_version": SCANNER_CODE_VERSION, "demo": demo,
+            "confluence_definitions": {k.upper(): {"name": n, "definition": d} for k, (n, d) in CONFLUENCES.items()},
             "daily_cutoff_utc": daily_cutoff.strftime("%Y-%m-%d %H:%M"),
             "freshness": {
                 "Bars": f"{src.name}; last D close {fmt_ts(latest[TF_D])}, 4H {fmt_ts(latest[TF_4H])}, 2H {fmt_ts(latest[TF_2H])}",

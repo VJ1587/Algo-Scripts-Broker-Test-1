@@ -32,7 +32,7 @@ Safety rules [OWNER gate-0.1.0]
 
 Usage
     python trade_gate.py                          # latest live scan, qualified setups
-    python trade_gate.py --include-developing     # also list developing setups (reversal not closed)
+    python trade_gate.py --include-developing     # also list developing setups (2+ checks, not qualified)
     python trade_gate.py --scan output/scan_<stamp>_<run>.json
 """
 from __future__ import annotations
@@ -404,7 +404,7 @@ def decision_row(t: Ticket, decision: str, now: pd.Timestamp) -> dict:
     r = t.row
     return {"time_utc": now.strftime("%Y-%m-%d %H:%M:%S"), "ticket_id": t.ticket_id, "scan_stamp": t.scan_stamp,
             "symbol": t.symbol, "direction": t.direction, "section": r.get("section"), "total": r.get("total"),
-            **{k: int(bool(r.get(k))) for k in ("c1", "c2", "c3", "c4", "c5", "c6")},
+            **{k: int(sc.flag(r.get(k))) for k in sc.CONF_KEYS},
             "decision": decision, "account": t.account.id, "mode": t.mode, "route": t.route,
             "entries": fmt_levels(t.entries), "lots": fmt_levels(t.lots), "stop": t.stop, "tp1": t.tp1, "tp2": t.tp2,
             "risk": None if t.risk is None else round(float(t.risk), 2),
@@ -594,9 +594,11 @@ class Gate:
 
     def review(self, row: dict, meta: dict) -> list[Ticket]:
         say, inst = self.p.say, self.universe.get(row["symbol"])
-        checks = " ".join(f"C{i}{'+' if row.get(f'c{i}') else '-'}" for i in range(1, 7))
+        checks = " ".join(f"{k.upper()}{'+' if sc.flag(row.get(k)) else '-'}" for k in sc.CONF_KEYS)
         say(f"\n=== {row['symbol']} {row['direction'].upper()}  {row['section']}"
             f"{' #' + str(row['rank']) if row.get('rank') else ''}  total {row.get('total')}  {checks}")
+        say(f"    has: {sc.confluences_text(row) or 'none'}")
+        say(f"    missing: {sc.confluences_text(row, met=False) or 'none'}")
         say(f"    zone {row.get('zone_level')} ({row.get('zone_low')} to {row.get('zone_high')})  "
             f"reversal: {row.get('candle') or 'none yet'}  price at scan {row.get('ref_price')}")
         cal = row.get("calendar") or {}
@@ -606,8 +608,10 @@ class Gate:
         if row.get("flags"):
             say(f"    flags: {'; '.join(row['flags'])}")
         if row["section"] != "qualified":
-            say("    NOTE: developing, not qualified: the reversal has not closed. The scanner says this is not "
-                "enough to take a trade yet.")
+            need = [f"{k.upper()} {sc.CONFLUENCES[k][0]}" for k in ("c1", "c4") if not sc.flag(row.get(k))]
+            say("    NOTE: developing, not qualified (qualified needs C1 + C4 + at least 3 checks). "
+                + (f"Missing {' and '.join(need)}. " if need else "Needs one more check. ")
+                + "The scanner says this is not enough to take a trade yet.")
         stamp = meta["stamp"]
         if inst is None:
             say("    not in the scanner universe; skipped")

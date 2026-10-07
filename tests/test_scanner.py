@@ -1,4 +1,5 @@
 """Unit tests for scanner.py. Run: python -m pytest -q"""
+import json
 import sys
 from pathlib import Path
 
@@ -341,10 +342,12 @@ def test_old_headlines_ignored():
         (True, False, True, 3, "qualified"),     # reversal closed in zone, close now just beyond it
         (True, True, True, 3, "qualified"),
         (True, True, False, 4, "developing"),    # in zone, 4 checks, but no reversal candle closed yet
-        (True, False, False, 4, "not shown"),    # no zone, no reversal: never qualifies on other checks
-        (False, True, True, 4, "not shown"),
+        (True, False, False, 4, "developing"),   # cfg-0.7.0: any 2+ checks that do not qualify
+        (False, True, True, 4, "developing"),    # no C1: never qualifies, still developing
         (True, True, False, 2, "developing"),
-        (True, False, True, 2, "not shown"),
+        (True, False, True, 2, "developing"),    # C1 + C4 but only 2 checks
+        (False, False, False, 1, "not shown"),
+        (True, False, False, 1, "not shown"),
     ],
 )
 def test_setup_section_qualification_rules(c1, c2, c4, technical, expected):
@@ -352,7 +355,7 @@ def test_setup_section_qualification_rules(c1, c2, c4, technical, expected):
 
 
 def test_setup_section_strict_close_in_zone():
-    assert sc.setup_section(True, False, True, 3, require_close_in_zone=True) == "not shown"
+    assert sc.setup_section(True, False, True, 3, require_close_in_zone=True) == "developing"   # 3 checks, not qualified
     assert sc.setup_section(True, True, True, 3, require_close_in_zone=True) == "qualified"
 
 
@@ -474,8 +477,12 @@ def test_demo_end_to_end(tmp_path):
                         "tradingview", demo=True, out_dir=tmp_path)
     assert paths["html"].exists() and paths["json"].exists() and paths["csv"].exists()
     report = paths["html"].read_text(encoding="utf-8")
-    assert all(f"<th>C{i}</th>" in report for i in range(1, 7))
-    assert "reversal closed in a key level zone" in report
+    assert all(f">C{i}</th>" in report for i in range(1, 7))
+    assert "Developing setups (" in report and "Confluence definitions" in report
+    assert all(name in report for name, _ in sc.CONFLUENCES.values())
+    rows = json.loads(paths["json"].read_text(encoding="utf-8"))["rows"]
+    assert all(isinstance(r[k], bool) for r in rows for k in sc.CONF_KEYS)   # no "True"/"False" text
+    assert all(r["section"] == "developing" for r in rows if r["section"] != "qualified" and r["technical"] >= 2)
 
 
 # --------------------------------------------------------------- MT5 and journal (cfg-0.5.0)
@@ -566,6 +573,46 @@ def test_confluences_before_uses_last_scan_before_entry():
     assert cf["total"] == 4 and cf["age_hours"] == pytest.approx(0.9)
     assert sc.confluences_before(scans, "CHFJPY", "long", pd.Timestamp("2026-10-06 13:00", tz="UTC")) is None
     assert sc.confluences_before(scans, "CHFJPY", "short", pd.Timestamp("2026-10-05 13:00", tz="UTC")) is None
+
+
+def test_flag_reads_text_booleans_from_older_scans():
+    assert sc.flag("False") is False and sc.flag("True") is True
+    assert sc.flag(np.bool_(True)) is True and sc.flag(None) is False and sc.flag(0) is False
+
+
+def test_setup_label_and_confluence_text():
+    row = {"c1": True, "c2": False, "c3": False, "c4": True, "c5": "True", "c6": "False"}
+    assert sc.setup_label(row) == "C1+C4+C5"
+    assert sc.confluences_text(row) == "C1 Trend alignment; C4 Reversal at the zone; C5 2H EMA momentum"
+    assert sc.confluences_text(row, met=False) == "C2 Key level zone; C3 Fibonacci retracement; C6 Trend line"
+    assert sc.setup_label({}) == "none"
+
+
+def test_load_scan_history_fixes_text_c5(tmp_path):
+    row = {"symbol": "EURUSD", "direction": "long", "section": "developing", "c1": True, "c2": True,
+           "c3": False, "c4": False, "c5": "False", "c6": False}
+    (tmp_path / "scan_20261006T1205Z_preNY.json").write_text(
+        json.dumps({"meta": {"asof_utc": "2026-10-06 12:05"}, "rows": [row]}), encoding="utf-8")
+    cf = sc.load_scan_history(tmp_path)[0]["rows"][("EURUSD", "long")]
+    assert cf["c5"] is False and cf["setup"] == "C1+C2"
+
+
+def test_setup_results_groups_closed_trades():
+    def tr(net, setup_flags, section="qualified", status="closed"):
+        cf = {k: k in setup_flags for k in sc.CONF_KEYS}
+        cf.update(section=section, setup=sc.setup_label(cf))
+        return {"net": net, "status": status, "confluences": cf}
+    trades = [tr(50, {"c1", "c4", "c5"}), tr(-20, {"c1", "c4", "c5"}), tr(-10, {"c2", "c5"}, "developing"),
+              tr(99, {"c1"}, status="open"), {"net": 5, "status": "closed", "confluences": None}]
+    res = sc.setup_results(trades)
+    assert res["closed"] == 3
+    top = res["by_setup"][0]
+    assert top["group"] == "C1+C4+C5" and top["trades"] == 2 and top["win_rate"] == 0.5 and top["net"] == 30
+    c5 = next(c for c in res["by_check"] if c["check"] == "C5")
+    assert c5["with"]["trades"] == 3 and c5["without"]["trades"] == 0
+    c1 = next(c for c in res["by_check"] if c["check"] == "C1")
+    assert c1["with"]["net"] == 30 and c1["without"]["net"] == -10
+    assert "Results by setup" in sc.render_setup_results(res)
 
 
 def test_journal_page_without_mt5(tmp_path):

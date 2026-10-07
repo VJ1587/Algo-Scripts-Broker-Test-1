@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.6.0"
+config_version: "cfg-0.7.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -18,6 +18,7 @@ changelog:
   - {version: "cfg-0.4.1", date: "2026-10-06", change: "Engulfing counts only if the engulfing candle itself wicks into the zone; confirmation close beyond the zone stays valid", reason: "Owner: pattern initiates at the zone, the close tells you which way it decided"}
   - {version: "cfg-0.5.0", date: "2026-10-06", change: "Currency pair bars come from the MT5 terminal (Forex.com); CFDs and futures stay on TradingView. Dashboard adds MT5 broker prices and open positions; new journal page with balance history and positions matched to the confluences logged before entry", reason: "Owner: MT5 for currency data only, TradingView for futures; monitor balance and journal every position"}
   - {version: "cfg-0.6.0", date: "2026-10-06", change: "Forex Factory red-folder news: dashboard list of upcoming High impact events with affected instruments; reaction tracker (currency strength move 15m/1h/4h after each red event, MT5 5 minute bars); trade gate news check; backtest news CSV export", reason: "Owner: use Forex Factory red folders for upcoming news across scanner and trading scripts and track how news moves currencies"}
+  - {version: "cfg-0.7.0", date: "2026-10-07", change: "Developing = any 2+ of C1-C6 that do not qualify (was C1 + C2 + 2 checks); trade gate --include-developing offers all of them. C1-C6 named and defined in one place; dashboard lists every developing setup with checks met and missing; journal spells out each trade's confluences and adds results by section, setup and confluence", reason: "Owner: report must show developing setups with 2 confluences; spell out C1-C6 in the journal to see which setups work"}
 
 # Run times fixed in UTC (Addendum Section 4); used by --daemon
 runs:
@@ -99,6 +100,7 @@ features:
 
 # ---------------------------------------------------------------- qualification (cfg-0.4.0)
 # Qualified always needs C1 + C4 (reversal closed in a key level zone, 2H or higher) + 3 checks.
+# Developing (cfg-0.7.0): any 2 or more of C1-C6 that do not qualify.
 # require_close_in_zone: true also demands the latest 2H close sits inside the zone (C2). Left false so an
 # engulfing candle or neckline break that closes just beyond the zone still qualifies.
 qualification:

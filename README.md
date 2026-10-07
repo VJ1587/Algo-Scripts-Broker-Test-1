@@ -26,7 +26,7 @@ Run it after a scan. For each qualified setup in the latest live scan it asks, i
 ```powershell
 copy accounts.example.yaml accounts.yaml   # then list your accounts (git-ignored, stays local)
 python trade_gate.py                        # latest live scan, qualified setups
-python trade_gate.py --include-developing   # also show developing setups, with a warning
+python trade_gate.py --include-developing   # also show developing setups (2+ checks), with a warning
 ```
 
 Safety rules:
@@ -79,16 +79,35 @@ See the script header for the CSV format used by `--data-dir` and `--news`.
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.5.0, config `cfg-0.5.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.7.0, config `cfg-0.7.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
-top 5 setups (qualified first, then developing). It places no orders and sizes no positions.
+top 5 setups (qualified first, then developing) plus every developing setup. It places no orders and
+sizes no positions.
 
-Qualification (cfg-0.4.0): qualified = C1 + C4 (a reversal closed in a key level zone, 2H or higher) +
-at least 3 of C1-C6. Developing = C1 + C2 (price in the zone) + 2 or more checks, reversal not closed
-yet. COT and sentiment affect ranking only. The full rule set is in the `scanner.py` docstring and the
-config changelog.
+Qualification: qualified = C1 + C4 (a reversal closed in a key level zone, 2H or higher) + at least 3
+of C1-C6 (cfg-0.4.0). Developing = any 2 or more of C1-C6 that do not qualify (cfg-0.7.0). COT and
+sentiment affect ranking only. The full rule set is in the `scanner.py` docstring and the config
+changelog.
+
+### Confluences C1 to C6
+
+The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, the journal page,
+`logs/trade_journal.csv` and the trade gate all use them, and each scan JSON stores the definitions it ran with.
+
+| Check | Name | Passes when |
+|---|---|---|
+| C1 | Trend alignment | Daily bias and 4H structure (latest two highs and lows both rising for a long, both falling for a short) point in the trade direction. |
+| C2 | Key level zone | Latest completed 2H close is inside the zone around a major or mid round-number level (FX ±15 pips, JPY pairs ±0.15, gold and S&P ±20, oil ±1.00). |
+| C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 38.2%, 50% or 61.8% retracement of the latest qualifying 4H impulse. |
+| C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
+| C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
+| C6 | Trend line | Latest 2H candle touches the unbroken 4H trend line (last two rising lows for a long, last two falling highs for a short) and closes on the trend side. |
+
+The journal page labels each trade with its setup (the checks passed in the last scan before entry,
+for example `C1+C4+C5`) and shows win rate and net P/L by section, by setup and for each confluence
+with versus without. Under about 20 closed trades a group is too small to judge.
 
 ## Files
 
@@ -225,8 +244,8 @@ config). Nothing in the scanner sends, changes or closes orders.
    last 3 bars (a wick does not count). Distances scale with each instrument's zone width
    (`features.chart_patterns`).
 5e. **Qualification (cfg-0.4.0).** Qualified = C1 + C4 + at least 3 checks: no setup qualifies without
-   a reversal closed in a key level zone. Developing = C1 + C2 (price in the zone) + 2 or more checks,
-   reversal not closed yet. On equal totals a Daily confirmation ranks above 4H, and 4H above 2H.
+   a reversal closed in a key level zone. Developing (cfg-0.7.0) = any 2 or more of C1-C6 that do not
+   qualify. On equal totals a Daily confirmation ranks above 4H, and 4H above 2H.
    `qualification.require_close_in_zone: true` would also demand the latest close sit inside the zone.
 6. **COT publication time.** Assumed position date + 3 days at 15:30 Eastern; holiday delays not
    modelled. Live, the CFTC API only returns published data, so this matters mainly for CSV
