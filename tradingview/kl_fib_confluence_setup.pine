@@ -64,6 +64,13 @@ tfImp       = input.timeframe("120", "Impulse timeframe", display = display.none
 swLen       = input.int(5, "Swing length (bars each side)", minval = 2, display = display.none, group = grpI)
 impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, display = display.none, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
 impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, display = display.none, group = grpI)
+impMinBars  = input.int(3, "Min candles in the impulse", minval = 2, display = display.none, group = grpI, tooltip = "One big candle is not an impulse: it must be a series.")
+impDirPct   = input.float(60, "Min % of candles closing in the move direction", minval = 0, maxval = 100, display = display.none, group = grpI)
+impBodyPct  = input.float(50, "Min body as % of candle range (average)", minval = 0, maxval = 100, display = display.none, group = grpI, tooltip = "Real bodies, not just wicks.")
+impEffPct   = input.float(50, "Min slope cleanness (net move / path, %)", minval = 0, maxval = 100, display = display.none, group = grpI, tooltip = "100 = every candle moved the same way. Low values mean scattered candles with no clear slope.")
+preLen      = input.int(20, "Bars before A checked for a range", minval = 5, display = display.none, group = grpI)
+consolAtr   = input.float(4, "Range before A if its height is under (x ATR)", minval = 1, display = display.none, group = grpI, tooltip = "A move that starts from a tight range and escapes it is a breakout, not an impulse: no fib until the retest.")
+retestPips  = input.float(10, "Retest tolerance beyond the key box (pips)", minval = 0, display = display.none, group = grpI)
 expiryBars  = input.int(60, "Setup expires after (impulse-timeframe bars from B, no entry)", minval = 5, display = display.none, group = grpI)
 fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, display = display.none, group = grpI)
 slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, display = display.none, group = grpI)
@@ -248,9 +255,14 @@ cBias   = request.security(syminfo.tickerid, tfConf, f_structure(structLen), loo
 biasDir = dBias != 0 and dBias == cBias ? dBias : 0
 
 // ─────────────────────────────────────────────────────────── 5 · Impulse (A -> B) on the 2H
-// Latest clean bullish impulse (swing low A -> swing high B) and latest clean bearish impulse
-// (swing high A -> swing low B) on the impulse timeframe, with the bar times of A and B.
-f_impulses(int len, float mult, int maxBars) =>
+// Impulse  = a series of candles in one direction inside an existing trend: enough candles, most closing
+//            beyond the one before, real bodies, a clean slope. Fib it.
+// Breakout = the move starts from a tight range and escapes it, or blows through a MAJOR key level box.
+//            No fib on the breakout. Wait for price to come back and retest the broken level; then the
+//            fib goes from the retest low (high) to the breakout high (low).
+// Kind: 1 = impulse in trend, 2 = retest after a breakout.
+f_impulses(int len, float mult, int maxBars, int minBars, float dirPct, float bodyPct, float effPct, int pre, float consMult,
+     float mjStep, float hw, float rtTol) =>
     ph = ta.pivothigh(high, len, len)
     pl = ta.pivotlow(low, len, len)
     a  = ta.atr(14)
@@ -264,33 +276,134 @@ f_impulses(int len, float mult, int maxBars) =>
     var float uB  = na
     var int   uAt = na
     var int   uBt = na
+    var int   uK  = 0
     var float dA  = na
     var float dB  = na
     var int   dAt = na
     var int   dBt = na
-    if not na(ph)
-        pb = bar_index - len
-        if not na(pLp) and pLi < pb and ph - pLp >= mult * a[len] and pb - pLi <= maxBars
-            uA  := pLp
-            uAt := pLt
-            uB  := ph
-            uBt := time[len]
-        pHp := ph
-        pHt := time[len]
-        pHi := pb
+    var int   dK  = 0
+    var float ubLvl = na    // bullish breakout: level to retest from above
+    var float ubX   = na    // breakout high so far
+    var int   ubXt  = na
+    var int   ubXi  = na
+    var float dbLvl = na    // bearish breakout: level to retest from below
+    var float dbX   = na
+    var int   dbXt  = na
+    var int   dbXi  = na
+    // follow a pending breakout: extend its extreme, cancel it on a close back inside
+    if not na(ubLvl)
+        if high > ubX
+            ubX  := high
+            ubXt := time
+            ubXi := bar_index
+        if close < ubLvl - hw
+            ubLvl := na
+    if not na(dbLvl)
+        if low < dbX
+            dbX  := low
+            dbXt := time
+            dbXi := bar_index
+        if close > dbLvl + hw
+            dbLvl := na
+    // swing low: bullish retest, then the bearish impulse into it
     if not na(pl)
         pb = bar_index - len
-        if not na(pHp) and pHi < pb and pHp - pl >= mult * a[len] and pb - pHi <= maxBars
-            dA  := pHp
-            dAt := pHt
-            dB  := pl
-            dBt := time[len]
+        if not na(ubLvl) and ubXi < pb and math.abs(pl - ubLvl) <= rtTol
+            uA    := pl
+            uAt   := time[len]
+            uB    := ubX
+            uBt   := ubXt
+            uK    := 2
+            ubLvl := na
+        if not na(pHp) and pHi < pb and pHp - pl >= mult * a[len] and pb - pHi <= maxBars and pb - pHi >= minBars
+            offA = bar_index - pHi
+            int   n = offA - len
+            int   dn = 0
+            float bodies = 0.0
+            float ranges = 0.0
+            float path   = 0.0
+            for k = len to offA - 1
+                if close[k] < close[k + 1]
+                    dn += 1
+                bodies += math.abs(close[k] - open[k])
+                ranges += high[k] - low[k]
+                path   += math.abs(close[k] - close[k + 1])
+            eff = path > 0 ? (close[offA] - close[len]) / path : 0.0
+            if dn >= dirPct / 100 * n and ranges > 0 and bodies / ranges >= bodyPct / 100 and eff >= effPct / 100
+                float preHi = high[offA + 1]
+                float preLo = low[offA + 1]
+                for k = offA + 1 to offA + pre
+                    preHi := math.max(preHi, high[k])
+                    preLo := math.min(preLo, low[k])
+                consol = preHi - preLo <= consMult * a[offA] and pl < preLo
+                mj     = math.floor(pHp / mjStep) * mjStep        // highest major at or under A
+                thruMj = mj < pHp - hw and pl < mj - hw            // the move blew through a major box
+                if consol or thruMj
+                    dbLvl := consol ? preLo : mj
+                    dbX   := pl
+                    dbXt  := time[len]
+                    dbXi  := pb
+                else
+                    dA  := pHp
+                    dAt := pHt
+                    dB  := pl
+                    dBt := time[len]
+                    dK  := 1
         pLp := pl
         pLt := time[len]
         pLi := pb
-    [uA[1], uB[1], uAt[1], uBt[1], dA[1], dB[1], dAt[1], dBt[1]]   // last closed bar: no repainting
+    // swing high: bearish retest, then the bullish impulse into it
+    if not na(ph)
+        pb = bar_index - len
+        if not na(dbLvl) and dbXi < pb and math.abs(ph - dbLvl) <= rtTol
+            dA    := ph
+            dAt   := time[len]
+            dB    := dbX
+            dBt   := dbXt
+            dK    := 2
+            dbLvl := na
+        if not na(pLp) and pLi < pb and ph - pLp >= mult * a[len] and pb - pLi <= maxBars and pb - pLi >= minBars
+            offA = bar_index - pLi
+            int   n = offA - len
+            int   up = 0
+            float bodies = 0.0
+            float ranges = 0.0
+            float path   = 0.0
+            for k = len to offA - 1
+                if close[k] > close[k + 1]
+                    up += 1
+                bodies += math.abs(close[k] - open[k])
+                ranges += high[k] - low[k]
+                path   += math.abs(close[k] - close[k + 1])
+            eff = path > 0 ? (close[len] - close[offA]) / path : 0.0
+            if up >= dirPct / 100 * n and ranges > 0 and bodies / ranges >= bodyPct / 100 and eff >= effPct / 100
+                float preHi = high[offA + 1]
+                float preLo = low[offA + 1]
+                for k = offA + 1 to offA + pre
+                    preHi := math.max(preHi, high[k])
+                    preLo := math.min(preLo, low[k])
+                consol = preHi - preLo <= consMult * a[offA] and ph > preHi
+                mj     = math.ceil(pLp / mjStep) * mjStep         // lowest major at or above A
+                thruMj = mj > pLp + hw and ph > mj + hw
+                if consol or thruMj
+                    ubLvl := consol ? preHi : mj
+                    ubX   := ph
+                    ubXt  := time[len]
+                    ubXi  := pb
+                else
+                    uA  := pLp
+                    uAt := pLt
+                    uB  := ph
+                    uBt := time[len]
+                    uK  := 1
+        pHp := ph
+        pHt := time[len]
+        pHi := pb
+    [uA[1], uB[1], uAt[1], uBt[1], uK[1], ubLvl[1], dA[1], dB[1], dAt[1], dBt[1], dK[1], dbLvl[1]]   // last closed bar: no repainting
 
-[uA, uB, uAt, uBt, dA, dB, dAt, dBt] = request.security(syminfo.tickerid, tfImp, f_impulses(swLen, impAtr, impMaxBars), lookahead = barmerge.lookahead_on)
+[uA, uB, uAt, uBt, uK, ubWait, dA, dB, dAt, dBt, dK, dbWait] = request.security(syminfo.tickerid, tfImp,
+     f_impulses(swLen, impAtr, impMaxBars, impMinBars, impDirPct, impBodyPct, impEffPct, preLen, consolAtr, majorStep, half, half + retestPips * pip),
+     lookahead = barmerge.lookahead_on)
 impMs = timeframe.in_seconds(tfImp) * 1000
 
 // ─────────────────────────────────────────────────────────── 6 · Fibonacci setup state
@@ -313,6 +426,9 @@ wA  = biasDir == 1 ? uA : biasDir == -1 ? dA : na
 wB  = biasDir == 1 ? uB : biasDir == -1 ? dB : na
 wAt = biasDir == 1 ? uAt : biasDir == -1 ? dAt : na
 wBt = biasDir == 1 ? uBt : biasDir == -1 ? dBt : na
+wK  = biasDir == 1 ? uK : biasDir == -1 ? dK : 0
+var int fK = 0                     // 1 impulse in trend, 2 retest after breakout
+brkWait = biasDir == 1 ? ubWait : biasDir == -1 ? dbWait : na   // broken level still waiting for its retest
 
 // bias no longer aligned: a setup that has not been entered is dropped
 if not tradeLive and (fState == 0 or fState == 1) and fDir != 0 and biasDir != fDir
@@ -323,6 +439,7 @@ if not tradeLive and biasDir != 0 and not na(wBt) and (na(fBt) or wBt != fBt or 
     fA      := wA
     fB      := wB
     fAt     := wAt
+    fK      := wK
     fBt     := wBt
     fState  := 0
     fZone   := false
@@ -414,7 +531,7 @@ if fDir != 0 and barstate.isconfirmed
             invEvent := true
         else if beyondB
             fState := -4      // impulse extended past B: wait for the next swing to set a new A-to-B
-        else if time - fBt > expiryBars * impMs
+        else if time - math.max(fAt, fBt) > expiryBars * impMs
             fState := -3      // too old: no entry within the expiry window (counted in impulse-timeframe bars)
         else
             t382 = isLong ? low <= L382 + tol : high >= L382 - tol
@@ -561,7 +678,9 @@ if barstate.islast and showTable
     f_row(2, "2 Range", rState != 1, rangeTxt)
     f_row(3, "3 Daily bias", dBias != 0, f_biasTxt(dBias))
     f_row(4, "4 4H aligns", biasDir != 0, f_biasTxt(cBias))
-    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (isLong ? "Up " : "Down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt + "" : (biasDir == 0 ? "no fib: Daily / 4H not aligned" : "none active")) + tfWarn)
+    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (fK == 2 ? "Retest after breakout, " : "In trend, ") + (isLong ? "up " : "down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt +
+         (f_inKeyBox(fB) ? ", ends at key level" : "") : biasDir == 0 ? "no fib: Daily / 4H not aligned" :
+         not na(brkWait) ? "breakout: waiting for retest of " + f_px(brkWait) : "none active") + tfWarn)
     f_row(6, "6 Fib placed", hasFib, hasFib ? "A " + f_px(fA) + " → B " + f_px(fB) : "-")
     ent = hasFib and fState >= 2
     f_row(7, "7 Fib in key box", hasFib and (key382 or key50 or key618), keyTxt)
