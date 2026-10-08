@@ -24,7 +24,9 @@ PROFILE_TRAITS = ["energy", "conviction", "patience", "fear_beta", "rate_beta", 
 
 
 def period_bounds(asof: pd.Timestamp, kind: str) -> tuple[pd.Timestamp, pd.Timestamp, str]:
-    """The period just completed (or running, if forced mid-period): previous month or quarter."""
+    """The period just completed (or running, if forced mid-period): previous month, quarter or calendar year."""
+    if kind == "annual":
+        return pd.Timestamp(asof.year - 1, 1, 1), pd.Timestamp(asof.year - 1, 12, 31), str(asof.year - 1)
     if kind == "monthly":
         first_this = asof.replace(day=1)
         start = (first_this - pd.DateOffset(months=1)).normalize()
@@ -88,6 +90,44 @@ def hypotheses_step(ctx, kind_label: str) -> dict:
                                                "metric": r["metric"], "expect": r["expect"], "now": r["now"], "long_run": r["long_run"],
                                                "status": r["status"], "regimes": r["regimes"]} for r in res])
     return {"results": res, "changes": changes}
+
+
+def personality_history(traits_cache: dict, kind: str, end: pd.Timestamp, top_n: int = 3) -> dict:
+    """Personality measured over whole periods instead of day to day. Each trait is the median of its daily
+    values inside each quarter (or year), using only data up to `end`, so the history is point in time.
+    Each period's trait is scored as a robust z against the instrument's own periods (median and MAD), so a
+    period far outside its usual range counts for more than one that is merely the highest. shift = mean
+    absolute move in those z scores across traits from one period to the next; a shift at or above the
+    instrument's own 90th percentile of shifts is a personality change for that instrument."""
+    freq, min_days = ("YE", 150) if kind == "annual" else ("QE", 40)
+    latest, history, biggest = [], {}, {}
+    for sym, df in traits_cache.items():
+        cols = [t for t in PROFILE_TRAITS if t in df]
+        d = df.loc[df.index <= end, cols]
+        if d.empty:
+            continue
+        g = d.resample(freq)
+        med = g.median()[g.count().max(axis=1) >= min_days].dropna(how="all", axis=1)
+        if len(med) < 4:
+            continue
+        rank = med.rank(pct=True) * 100  # each period against the instrument's own periods
+        mad = (med - med.median()).abs().median() * 1.4826
+        z = (med - med.median()) / mad.where(mad > 0)
+        shift = z.diff().abs().mean(axis=1).iloc[1:]
+        label = (lambda ts: str(ts.year)) if kind == "annual" else (lambda ts: f"{ts.year}-Q{(ts.month - 1) // 3 + 1}")
+        history[sym] = {label(ts): round(float(v), 1) for ts, v in shift.items()}
+        biggest[sym] = [{"period": label(ts), "shift": round(float(v), 1),
+                         "moved": [t for t in z.columns if abs(z[t].diff().loc[ts]) >= 2]}
+                        for ts, v in shift.nlargest(top_n).items()]
+        now, zn, zp = rank.iloc[-1], z.iloc[-1], z.iloc[-2]
+        s_now = float(shift.iloc[-1])
+        s_pct = float((shift <= s_now).mean() * 100)
+        latest.append({"symbol": sym, "period": label(rank.index[-1]), "periods": len(rank),
+                       "shift": round(s_now, 1), "shift_pct": round(s_pct, 0), "changed": s_pct >= 90,
+                       "high": [t for t in rank.columns if now[t] >= 80], "low": [t for t in rank.columns if now[t] <= 20],
+                       "moved": [f"{t} {'up' if zn[t] > zp[t] else 'down'}" for t in z.columns if abs(zn[t] - zp[t]) >= 2]})
+    latest.sort(key=lambda r: -r["shift_pct"])
+    return {"kind": kind, "latest": latest, "history": history, "biggest": biggest}
 
 
 def profile_snapshot(ctx, kind_label: str, views: dict) -> dict:
@@ -340,6 +380,12 @@ def pivot_checks(ctx, views: dict, lvl: dict, start: pd.Timestamp, end: pd.Times
 
 def run_review(ctx, kind: str, daily: dict) -> dict:
     start, end, label = period_bounds(ctx.asof, kind)
+    # a forced rerun of a review replaces that period's rows instead of logging them twice
+    for name, keep in (("profiles.csv", lambda d: d["period"] != label), ("hypotheses_log.csv", lambda d: d["period"] != label),
+                       ("reviews.csv", lambda d: (d["kind"] != kind) | (d["period"] != label))):
+        old = ctx.journal.read(name)
+        if not old.empty and not keep(old).all():
+            ctx.journal.rewrite(name, old[keep(old)])
     fc = ctx.journal.read("forecasts.csv")
     period_fc = fc
     if not fc.empty:
@@ -370,11 +416,13 @@ def run_review(ctx, kind: str, daily: dict) -> dict:
     lc = ctx.journal.read("ledger_changes.csv")
     if not lc.empty:
         out["ledger_changes"] = lc[pd.to_datetime(lc["run"]) >= start].to_dict("records")
-    if kind == "quarterly":
+    if kind in ("quarterly", "annual"):
+        out["personality_history"] = personality_history(getattr(ctx, "traits_cache", {}), kind, end)
         lvl = level_edge_test(views)
         out["validation"] = {"levels": lvl, "traits": trait_oos_test(ctx), "pair_math": pair_beta_test(views),
                              "incentive_gap": gap_test(ctx)}
-        out["recalibration"] = recalibrate(ctx, fc)
+        # parameters are tuned once a quarter; the annual review reads them, it does not tune them again
+        out["recalibration"] = recalibrate(ctx, fc) if kind == "quarterly" else []
         out["pivots"] = pivot_checks(ctx, views, lvl, start, end)
         out["ledger_review"] = [{"player": p, "weight": v.get("weight"), "evidence": v.get("weight_evidence", "working assumption")}
                                 for p, v in ctx.ledger.players.items()]

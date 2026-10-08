@@ -1,4 +1,4 @@
-"""HTML reports for the daily monitor and the monthly and quarterly reviews (plus JSON copies)."""
+"""HTML reports for the daily monitor and the monthly, quarterly and annual reviews (plus JSON copies)."""
 from __future__ import annotations
 
 import html
@@ -378,9 +378,33 @@ def render_review(rv: dict) -> str:
     st = rv.get("cycle_staleness") or []
     if st:
         out.append(f'<p class="warn">{len(st)} cycle scorecard inputs are unknown or stale: update them at primary sources.</p>')
-    if m["kind"] == "quarterly":
+    if m["kind"] in ("quarterly", "annual"):
+        ph = rv.get("personality_history") or {}
+        unit = "year" if m["kind"] == "annual" else "quarter"
+        out.append(f"<h2>6. Personality over time ({unit} by {unit})</h2>"
+                   f'<p class="mut">Each trait is its median over the whole {unit}, ranked against the same instrument\'s own '
+                   f'{unit}s since the data starts. Shift is the average move, in robust standard deviations of its own '
+                   f'history, from the previous {unit}; it is flagged as a personality change when it is at or above that '
+                   f'instrument\'s own 90th percentile of shifts. '
+                   f'High and low mean the top or bottom fifth of its own history.</p>')
+        out.append(table(["Instrument", unit.title(), "Shift", "Shift pct", "Change", "High (top fifth)", "Low (bottom fifth)",
+                          f"Moved 2+ sd since last {unit}"],
+                         [[f"<b>{e(r['symbol'])}</b>", e(r["period"]), f(r["shift"], 1), f(r["shift_pct"], 0),
+                           '<span class="bad">yes</span>' if r["changed"] else '<span class="mut">no</span>',
+                           e(", ".join(r["high"])), e(", ".join(r["low"])), e(", ".join(r["moved"]))]
+                          for r in ph.get("latest") or []], {5, 6, 7}))
+        if ph.get("biggest"):
+            out.append(f"<h3>Largest personality shifts on record (match these {unit}s to events)</h3>" + table(
+                ["Instrument"] + [f"#{i}" for i in (1, 2, 3)],
+                [[f"<b>{e(s)}</b>"] + [f'{e(x["period"])} ({f(x["shift"], 1)}){": " + e(", ".join(x["moved"])) if x["moved"] else ""}'
+                                       for x in rows] for s, rows in ph["biggest"].items()], {1, 2, 3}))
+        if m["kind"] == "annual" and ph.get("history"):
+            years = sorted({y for h in ph["history"].values() for y in h})[-20:]
+            out.append("<h3>Shift by year (higher = personality moved more that year)</h3>" + table(
+                ["Instrument"] + years,
+                [[f"<b>{e(s)}</b>"] + [f(h.get(y), 1) for y in years] for s, h in ph["history"].items()]))
         va = rv["validation"]
-        out.append("<h2>6. Validation tests</h2>")
+        out.append("<h2>7. Validation tests</h2>")
         lv = va["levels"]
         out.append(f'<h3>Levels versus random</h3><p>Round zones: <b>{e(lv["round"])}</b> (median z {f(lv["round_median_z"])}) · '
                    f'market-made levels: <b>{e(lv["market"])}</b> (median z {f(lv["market_median_z"])})</p>' + table(
@@ -397,12 +421,13 @@ def render_review(rv: dict) -> str:
         out.append(f'<h3>Incentive gap closure</h3><p>Median share of gaps beyond 2 closing within 60 days: {f(ig["median_rate"])} '
                    f'{"" if ig["pass"] is None else yes(ig["pass"])} · {e(ig["note"])}</p>' + table(
                        ["Pair", "Excursions", "Closed", "Rate"], [[e(k), e(x["excursions"]), e(x["closed"]), f(x["rate"])] for k, x in ig["pairs"].items()]))
-        out.append("<h2>7. Recalibration (applied automatically)</h2>" + table(
+        out.append("<h2>8. Recalibration (applied automatically)</h2>" + (table(
             ["Parameter", "Old", "New", "Note"], [[e(x.get("key")), e(x.get("old")), e(x.get("new")), e(x.get("note") or x.get("hit_rate") or "")]
-                                                 for x in rv["recalibration"]]))
-        out.append("<h2>8. Pivot triggers</h2>" + ("".join(f'<p class="bad">{e(p["trigger"])}: {e(p["action"])}</p>' for p in rv["pivots"])
+                                                 for x in rv["recalibration"]]) if rv["recalibration"] else
+                   '<p class="mut">Parameters are tuned in the quarterly review; the annual review does not tune them again.</p>'))
+        out.append("<h2>9. Pivot triggers</h2>" + ("".join(f'<p class="bad">{e(p["trigger"])}: {e(p["action"])}</p>' for p in rv["pivots"])
                                                   or '<p class="ok">None fired.</p>'))
-        out.append("<h2>9. Ledger review due</h2><p>Player weights are judgment, not measured. Revisit each one:</p>" + table(
+        out.append("<h2>10. Ledger review due</h2><p>Player weights are judgment, not measured. Revisit each one:</p>" + table(
             ["Player", "Weight", "Evidence"], [[e(x["player"]), f(x["weight"]), e(x["evidence"])] for x in rv["ledger_review"]]))
         out.append(f'<p class="mut">{e(rv.get("independence_note"))}</p>')
     return page(f"{kind} review {m['period']}", "".join(out))

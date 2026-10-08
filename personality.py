@@ -15,9 +15,12 @@ Cadence
                alignment and pivot triggers, pressure half lives refit.
     Quarterly  validation tests (levels vs random, trait rankings out of sample, pair math identity,
                incentive gap closure), recalibration of T, lambda and grade thresholds, setup retirement,
-               pivot triggers, ledger review.
+               pivot triggers, ledger review, personality quarter by quarter.
+    Annual     the quarterly validation tests (no second recalibration) and personality year by year over the
+               whole history: which instruments changed, and the years each one changed most.
     --run auto (default) runs the daily loop, then the monthly review if last month has none yet, then
-    the quarterly review if last quarter has none yet. Changes apply automatically and are logged.
+    the quarterly and annual reviews if last quarter or last year has none yet. Changes apply automatically
+    and are logged.
 
 Inputs
     personality_config.yaml   versioned parameters, universe, sources, scanners to compare against
@@ -29,11 +32,13 @@ Usage
     python personality.py --demo                 # synthetic data, no network: check the install
     python personality.py                        # live daily run (+ monthly/quarterly when due)
     python personality.py --run monthly          # force a review now
+    python personality.py --run annual           # last calendar year, personality year by year
     python personality.py --asof 2026-10-06      # point in time
     python personality.py --daemon               # stay running, daily at schedule.daily_utc on weekdays
 
 Outputs
-    output/personality/daily_<date>.html|json, monthly_<YYYY-MM>.html|json, quarterly_<YYYY-Qn>.html|json
+    output/personality/daily_<date>.html|json, monthly_<YYYY-MM>.html|json, quarterly_<YYYY-Qn>.html|json,
+               annual_<YYYY>.html|json
     data/personality/   the journal: forecasts, traits, changes, flips, hypotheses, parameters, ledger snapshots
 
 Nothing here places orders. It is an analytical framework, not investment advice.
@@ -84,8 +89,10 @@ def run_once(cfg_path: Path, asof: Optional[pd.Timestamp], run: str, demo: bool)
     kinds = []
     if run in ("monthly", "quarterly"):
         kinds = ["monthly"] + (["quarterly"] if run == "quarterly" else [])
+    elif run == "annual":
+        kinds = ["annual"]
     elif run == "auto":
-        kinds = [k for k in ("monthly", "quarterly") if review_due(ctx, k)]
+        kinds = [k for k in ("monthly", "quarterly", "annual") if review_due(ctx, k)]
     for k in kinds:
         rv = run_review(ctx, k, daily)
         stem = f"{k}_{rv['meta']['period']}"
@@ -117,7 +124,7 @@ def daemon(cfg_path: Path, demo: bool) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=f"Empire Game Market Personality engine {ENGINE_VERSION}")
     ap.add_argument("--config", default="personality_config.yaml")
-    ap.add_argument("--run", default="auto", choices=["auto", "daily", "monthly", "quarterly"])
+    ap.add_argument("--run", default="auto", choices=["auto", "daily", "monthly", "quarterly", "annual"])
     ap.add_argument("--asof", default=None, help="point in time date, e.g. 2026-10-06 (default: today)")
     ap.add_argument("--demo", action="store_true", help="synthetic data, no network; separate state and output folders")
     ap.add_argument("--daemon", action="store_true")

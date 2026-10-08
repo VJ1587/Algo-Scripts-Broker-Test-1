@@ -394,3 +394,19 @@ def test_personality_change_is_one_row_per_instrument_with_the_trait_mix(tmp_pat
     out = personality_changes(ctx, "XAUUSD", drift, None)
     log = j.read("personality_changes.csv")
     assert len(log) == 1 and log.iloc[0]["status"] == "closed" and out[0]["status"] == "closed"
+
+
+def test_personality_history_flags_a_shift_and_stays_point_in_time():
+    from empire.review import personality_history
+    idx = pd.bdate_range("2006-01-02", "2025-12-31")
+    rng = np.random.default_rng(3)
+    df = pd.DataFrame({t: 1.0 + 0.01 * rng.normal(size=len(idx)) for t in ("energy", "conviction", "patience", "asymmetry")}, idx)
+    df.loc[df.index.year == 2020, ["energy", "conviction", "patience", "asymmetry"]] += 5.0  # one year out of character
+    ph = personality_history({"XAUUSD": df}, "annual", pd.Timestamp("2025-12-31"))
+    top = ph["biggest"]["XAUUSD"]
+    assert {top[0]["period"], top[1]["period"]} == {"2020", "2021"}  # into and out of the odd year
+    assert ph["latest"][0]["period"] == "2025" and not ph["latest"][0]["changed"]
+    cut = personality_history({"XAUUSD": df}, "annual", pd.Timestamp("2019-12-31"))
+    assert "2020" not in cut["history"]["XAUUSD"]  # nothing after the period end
+    q = personality_history({"XAUUSD": df}, "quarterly", pd.Timestamp("2025-09-30"))
+    assert q["latest"][0]["period"] == "2025-Q3"
