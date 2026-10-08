@@ -493,3 +493,41 @@ def test_shipped_politics_and_scorecard_files_load():
     sc = load_yaml(ROOT / "ledger" / "cycle_scorecard.yaml")
     assert len(sc["values"]) == 9 and sum(len(v) for v in sc["values"].values()) == 63
     assert set(sc["indicators"]) == set(sc["values"]["US"])
+
+
+def test_factor_profile_tracks_how_long_each_reading_has_held():
+    from empire.evolution import factor_profile
+    idx = pd.date_range("2006-12-31", periods=10, freq="YE")
+    med = pd.DataFrame({"energy": [1, 1, 1, 1, 1, 1, 1, 5, 5, 5.0],            # wilder since year 8
+                        "fear_beta": [0.002] * 4 + [-0.002] * 6}, idx)        # falls in fear since year 5
+    rank = med.rank(pct=True) * 100
+    labels = [str(y) for y in idx.year]
+    p = factor_profile(med, rank, labels)
+    by = {f["factor"]: f for f in p["factors"]}
+    assert by["energy"]["reading"] == "wilder than usual" and by["energy"]["since"] == "2013" and by["energy"]["held"] == 3
+    assert by["fear_beta"]["reading"] == "falls when fear rises" and by["fear_beta"]["since"] == "2010"
+    assert by["fear_beta"]["before"] == "rises when fear rises"
+    assert p["overall"] == "falls when fear rises; wilder than usual"   # role first, then temper
+
+
+def test_major_change_status_separates_recent_from_long_standing():
+    from empire.evolution import major_change
+    yrs = [{"period": str(y), "phase": "stable", "flips": [], "moved": []} for y in range(2010, 2026)]
+    yrs[5]["phase"] = "new phase"  # 2015
+    old = major_change(yrs, [])
+    assert old["last"]["period"] == "2015" and old["held_years"] == 10 and old["status"] == "long-standing (6+ years)"
+    yrs[-1]["flips"] = ["fear_beta + to -"]
+    assert major_change(yrs, [])["status"] == "changing now"
+    yrs[-1]["flips"] = []
+    q = [{"period": "2025-Q4", "phase": "new phase", "flips": []}]
+    assert major_change(yrs, q)["status"] == "changing now (latest quarters)"
+
+
+def test_human_profiles_merge_into_the_ledger_with_their_label(tmp_path):
+    from empire.players import merge_profiles
+    (tmp_path / "p.yaml").write_text('label: "human judgement / bias"\nprofiles:\n  XAUUSD:\n    overall: {take: "dips get bought"}\n'
+                                     '    factors:\n      central_bank_buying: {take: "floor", direction: up}\n', encoding="utf-8")
+    raw = merge_profiles({"players": {}}, tmp_path / "p.yaml")
+    assert raw["human_label"] == "human judgement / bias"
+    assert raw["human_profiles"]["XAUUSD"]["factors"]["central_bank_buying"]["direction"] == "up"
+    assert merge_profiles({"players": {}}, tmp_path / "missing.yaml") == {"players": {}}

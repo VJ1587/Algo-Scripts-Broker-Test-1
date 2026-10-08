@@ -180,3 +180,99 @@ def classify_phases(med: pd.DataFrame, z: pd.DataFrame, warmup: int = 5) -> list
                      "moved": [f"{c} {'up' if Z[t, j] > Z[t - 1, j] else 'down'}" for j, c in enumerate(z.columns)
                                if np.isfinite(Z[t, j] - Z[t - 1, j]) and abs(Z[t, j] - Z[t - 1, j]) >= 2]})
     return rows
+
+
+# =============================================================================
+# Profiles: the overall personality, built from its factors, each tracked over time
+# =============================================================================
+
+# measured factors in plain words; level factors are read against the instrument's own history (top or bottom
+# fifth of its own years), sign factors by direction (a sensitivity at least half its typical size)
+FACTORS = {
+    "energy": ("Energy (how much it moves)", "level", ("wilder than usual", "quieter than usual", "usual energy")),
+    "conviction": ("Conviction (trend vs range)", "level", ("trending more than usual", "ranging more than usual", "usual trend")),
+    "patience": ("Patience (how slowly it reverts)", "level", ("slower to revert than usual", "quicker to revert than usual", "usual reversion")),
+    "asymmetry": ("Asymmetry (falls vs rises)", "level", ("falls sharper than usual", "rises sharper than usual", "usual balance")),
+    "event_reactivity": ("Event reactivity", "level", ("reacts more to events than usual", "shrugs off events more than usual", "usual event response")),
+    "fear_beta": ("Fear response", "sign", ("rises when fear rises", "falls when fear rises", "little fear response")),
+    "rate_beta": ("Rate sensitivity", "sign", ("rises when its rate gap widens", "falls when its rate gap widens", "little rate response")),
+    "resource_beta": ("Resource link", "sign", ("rises with commodities", "falls when commodities rise", "little commodity link")),
+}
+NEUTRAL = {v[2][2] for v in FACTORS.values()}
+
+
+def factor_states(kind: str, texts: tuple, values: pd.Series, ranks: pd.Series, floor: float) -> list[str]:
+    """Reading per period with a buffer, so a factor near a cut-off does not flip back and forth every year.
+    level: enters high at the top fifth of its own history (rank 80) and stays until rank falls below 60;
+           low mirrors it (enter at 20, leave above 40).
+    sign:  enters a direction when the value is beyond the floor (half its typical size) and keeps it until the
+           value drops back inside half the floor."""
+    out, cur = [], None
+    for v, r in zip(values, ranks):
+        if v is None or pd.isna(v):
+            out.append("unknown")
+            continue
+        x = r if kind == "level" else v
+        hi_in, hi_out, lo_in, lo_out = (80, 60, 20, 40) if kind == "level" else (floor, floor / 2, -floor, -floor / 2)
+        if cur == texts[0] and x >= hi_out or x >= hi_in:
+            cur = texts[0]
+        elif cur == texts[1] and x <= lo_out or x <= lo_in:
+            cur = texts[1]
+        else:
+            cur = texts[2]
+        out.append(cur)
+    return out
+
+
+def factor_profile(med: pd.DataFrame, rank: pd.DataFrame, labels: list[str]) -> dict:
+    """Each measured factor now, how long it has read the same way, and what it read before. The overall
+    personality is the set of factors that are not at their usual or neutral reading: role (fear, rate,
+    resource) first, then temper (energy, conviction, patience, asymmetry, events). new_factors lists role changes
+    this period (personality); temper_moves lists temper readings that changed (mood)."""
+    factors = []
+    for t, (name, kind, texts) in FACTORS.items():
+        if t not in med or med[t].notna().sum() < 4:
+            continue
+        floor = 0.5 * float(med[t].abs().median())
+        states = factor_states(kind, texts, med[t], rank[t], floor)
+        now = states[-1]
+        i = len(states) - 1
+        while i > 0 and states[i - 1] == now:
+            i -= 1
+        factors.append({"factor": t, "name": name, "kind": kind, "reading": now, "value": None if pd.isna(med[t].iloc[-1]) else float(med[t].iloc[-1]),
+                        "rank": None if pd.isna(rank[t].iloc[-1]) else round(float(rank[t].iloc[-1]), 0),
+                        "since": labels[i], "held": len(states) - i, "before": states[i - 1] if i > 0 else None,
+                        "history": dict(zip(labels, states))})
+    role = [f["reading"] for f in factors if f["kind"] == "sign" and f["reading"] not in NEUTRAL | {"unknown"}]
+    temper = [f["reading"] for f in factors if f["kind"] == "level" and f["reading"] not in NEUTRAL | {"unknown"}]
+    return {"factors": factors, "role": role, "temper": temper,
+            "overall": "; ".join(role + temper) or "behaving like its usual self",
+            # a change of role (fear, rate, resource) is a personality change; temper is read against its own history,
+            # so about 40 percent of years sit in a top or bottom fifth by construction: that is mood, listed apart
+            "new_factors": [f["name"] for f in factors if f["kind"] == "sign" and f["held"] == 1 and f["before"] is not None],
+            "temper_moves": [f["name"] for f in factors if f["kind"] == "level" and f["held"] == 1 and f["before"] is not None]}
+
+
+def major_change(periods: list[dict], quarters: list[dict]) -> dict:
+    """The last major change in the yearly history (new phase, complete change, a move into a known phase, or a
+    behavior flip) and how long the instrument has held since, plus any new phase in the latest quarters."""
+    big = [r for r in periods if r["phase"] in ("new phase", "complete change", "known phase") or r["flips"]]
+    last_year = periods[-1]["period"] if periods else None
+    out: dict = {"last": None, "held_years": None, "status": "no history"}
+    if big:
+        r = big[-1]
+        held = int(last_year) - int(r["period"]) if last_year and r["period"].isdigit() and last_year.isdigit() else None
+        what = r["phase"] if r["phase"] != "stable" else "behavior flip"
+        out = {"last": {"period": r["period"], "what": what, "like": r.get("nearest_period"), "flips": r["flips"], "moved": r["moved"]},
+               "held_years": held,
+               "status": ("changing now" if held == 0 else "recent (1 to 2 years)" if held is not None and held <= 2
+                          else "settled (3 to 5 years)" if held is not None and held <= 5 else "long-standing (6+ years)")}
+    elif periods:
+        first = next((r["period"] for r in periods if r["phase"] != "warm-up"), periods[0]["period"])
+        out = {"last": None, "held_years": None, "status": f"no major change since {first}"}
+    q = [r for r in quarters[-4:] if r["phase"] in ("new phase", "complete change") or r["flips"]]
+    out["recent_quarter"] = ({"period": q[-1]["period"], "what": q[-1]["phase"] if q[-1]["phase"] != "stable" else "behavior flip",
+                              "flips": q[-1]["flips"]} if q else None)
+    if out["recent_quarter"] and out["status"] not in ("changing now",):
+        out["status"] = "changing now (latest quarters)"
+    return out

@@ -19,7 +19,8 @@ import numpy as np
 import pandas as pd
 
 from .config import load_yaml
-from .evolution import classify_phases, countries_for, events_by_period, load_politics, period_label, regime_mix, timeline
+from .evolution import (classify_phases, countries_for, events_by_period, factor_profile, load_politics, major_change,
+                        period_label, regime_mix, timeline)
 from .journal import fit_temperature, scorecard
 from .pairs import gap_closure_rate
 from .players import cycle_staleness, evaluate_hypothesis
@@ -106,7 +107,7 @@ def personality_history(traits_cache: dict, kind: str, end: pd.Timestamp, top_n:
     gets a phase (stable, known phase, new phase, complete change) and any behavior flips: see
     evolution.classify_phases."""
     freq, min_days = ("YE", 150) if kind == "annual" else ("QE", 40)
-    latest, history, biggest, periods = [], {}, {}, {}
+    latest, history, biggest, periods, profiles = [], {}, {}, {}, {}
     for sym, df in traits_cache.items():
         cols = [t for t in PROFILE_TRAITS if t in df]
         d = df.loc[df.index <= end, cols]
@@ -124,6 +125,7 @@ def personality_history(traits_cache: dict, kind: str, end: pd.Timestamp, top_n:
         phases = classify_phases(med, z, warmup=5 if kind == "annual" else 8)
         periods[sym] = [{"period": labels[r["t"]], "nearest_period": None if r["nearest"] is None else labels[r["nearest"]],
                          **{k: v for k, v in r.items() if k not in ("t", "nearest")}} for r in phases]
+        profiles[sym] = factor_profile(med, rank, labels)
         history[sym] = {period_label(ts, kind): round(float(v), 1) for ts, v in shift.items()}
         biggest[sym] = [{"period": period_label(ts, kind), "shift": round(float(v), 1),
                          "moved": [t for t in z.columns if abs(z[t].diff().loc[ts]) >= 2]}
@@ -138,7 +140,7 @@ def personality_history(traits_cache: dict, kind: str, end: pd.Timestamp, top_n:
                        "high": [t for t in rank.columns if now[t] >= 80], "low": [t for t in rank.columns if now[t] <= 20],
                        "moved": [f"{t} {'up' if zn[t] > zp[t] else 'down'}" for t in z.columns if abs(zn[t] - zp[t]) >= 2]})
     latest.sort(key=lambda r: -r["shift_pct"])
-    return {"kind": kind, "latest": latest, "history": history, "biggest": biggest, "periods": periods}
+    return {"kind": kind, "latest": latest, "history": history, "biggest": biggest, "periods": periods, "profiles": profiles}
 
 
 def evolution_view(ctx, end: pd.Timestamp, annual: dict, quarterly: dict) -> dict:
@@ -151,12 +153,24 @@ def evolution_view(ctx, end: pd.Timestamp, annual: dict, quarterly: dict) -> dic
     regimes = getattr(ctx, "regimes", None)
     regimes = regimes[regimes.index <= end] if regimes is not None and len(regimes) else regimes
     syms = sorted(set(annual.get("periods", {})) | set(quarterly.get("periods", {})))
+    human = ctx.ledger.raw.get("human_profiles") or {}
+    summary = []
+    for s in syms:
+        pa, pq = annual.get("periods", {}).get(s, []), quarterly.get("periods", {}).get(s, [])
+        prof = annual.get("profiles", {}).get(s) or {}
+        summary.append({"symbol": s, "overall": prof.get("overall"), "role": prof.get("role", []), "temper": prof.get("temper", []),
+                        "year": pa[-1] if pa else None, "quarter": pq[-1] if pq else None,
+                        "change": major_change(pa, pq), "new_factors": prof.get("new_factors", []),
+                        "human": (human.get(s) or {}).get("overall")})
     return {"end": str(end.date()), "politics_version": pol.get("politics_version"),
             "countries": {s: countries_for(s, ctx.insts.get(s), pol) for s in syms},
             "country_names": {c: v.get("name", c) for c, v in (pol.get("countries") or {}).items()},
             "annual": annual.get("periods", {}), "quarterly": {s: rows[-12:] for s, rows in quarterly.get("periods", {}).items()},
             "events_annual": events_by_period(tl, "annual"), "events_quarterly": events_by_period(tl, "quarterly"),
             "regimes_annual": regime_mix(regimes, "annual"), "regimes_quarterly": regime_mix(regimes, "quarterly"),
+            "summary": summary, "profiles": annual.get("profiles", {}), "human": human,
+            "human_label": ctx.ledger.raw.get("human_label", "human judgement / bias"),
+            "partial_year": end.month != 12 or end.day != 31,
             "unverified": sum(1 for e in tl if e.get("evidence") == "unverified"),
             "to_check": [e for e in tl if e.get("check")]}
 

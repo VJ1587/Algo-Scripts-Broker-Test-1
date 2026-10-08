@@ -229,6 +229,19 @@ def merge_scorecard(raw: dict, path: Path) -> dict:
     return raw
 
 
+def merge_profiles(raw: dict, path: Path) -> dict:
+    """Fold ledger/personality_profiles.yaml (our own take, labelled human judgement / bias) into the raw ledger so
+    edits are snapshotted and diffed with it. It never feeds a measurement, likelihood or grade."""
+    if not path.exists():
+        return raw
+    pf = load_yaml(path) or {}
+    raw = dict(raw)
+    raw["human_profiles"] = copy.deepcopy(pf.get("profiles") or {})
+    raw["human_label"] = pf.get("label", "human judgement / bias")
+    raw["human_profiles_version"] = pf.get("profiles_version")
+    return raw
+
+
 def cycle_staleness(ledger: Ledger, asof: pd.Timestamp, max_days: int = 100) -> list[dict]:
     """Inputs that are blank, or older than their indicator's refresh window (max_age_days in the scorecard
     file; `max_days` when an indicator does not set one). Inputs marked applicable: false are skipped."""

@@ -30,7 +30,7 @@ from .journal import FORECAST_FIELDS, Journal, resolve_forecasts
 from .levels import (Zone, build_map, distance_units, forward_excursions, outcome_base_rates, touch_probability,
                      touch_probability_formula, vacuum_between, zone_edge_ok)
 from .pairs import carry_appeal, dominance, incentive_gap, predicted_pair_beta, predicted_pair_energy
-from .players import merge_scorecard, alignment_scores, cycle_staleness, incentive_weights, parse_ledger
+from .players import merge_profiles, merge_scorecard, alignment_scores, cycle_staleness, incentive_weights, parse_ledger
 from .push import efficiency_ratio, push_score, push_signals
 from .regimes import REGIME_TEXT, regime_faces, regime_frame, relationship_status
 from .stories import (DIR, alignment_cell, ev_entry, exposure_check, gate_results, grade, likelihood,
@@ -78,7 +78,8 @@ def build_context(cfg_path: Path, asof: Optional[pd.Timestamp], run_type: str, d
     cfg = load_config(cfg_path)
     base = cfg_path.parent
     ledger_path = base / cfg["paths"]["ledger"]
-    ledger = parse_ledger(merge_scorecard(load_yaml(ledger_path), base / cfg["paths"].get("cycle_scorecard", "ledger/cycle_scorecard.yaml")))
+    raw_ledger = merge_scorecard(load_yaml(ledger_path), base / cfg["paths"].get("cycle_scorecard", "ledger/cycle_scorecard.yaml"))
+    ledger = parse_ledger(merge_profiles(raw_ledger, base / cfg["paths"].get("profiles", "ledger/personality_profiles.yaml")))
     state = base / cfg["paths"]["state_dir"]
     if demo:
         state = state / "demo"

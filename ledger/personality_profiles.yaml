@@ -1,0 +1,29 @@
+# Personality profiles: the human layer
+# =====================================
+# The engine measures each instrument's factors automatically on every run (energy, conviction, patience,
+# asymmetry, event reactivity, fear response, rate sensitivity, resource link). This file is where we add our own
+# take. Everything here is shown on the reports labelled HUMAN JUDGEMENT / BIAS, next to (never mixed into) the
+# measured values, so it is always clear which parts of a personality come from the algorithm and which from us.
+#
+# The file is merged into the ledger on load, so every edit is snapshotted and listed in the ledger change log.
+# Nothing here changes a measurement, a likelihood or a grade.
+#
+# Per instrument (symbols as in personality_config.yaml, e.g. XAUUSD, EURUSD, JPY_IDX):
+#   overall:  {take: "...", date: YYYY-MM-DD, by: name, confidence: low | medium | high}
+#   factors:
+#     <measured factor>:  {take: "...", date: ..., by: ..., agrees: yes | no | partly}
+#         comment on a measured factor (energy, conviction, patience, asymmetry, event_reactivity,
+#         fear_beta, rate_beta, resource_beta); agrees = does our view match the measurement
+#     <your own factor>:  {take: "...", date: ..., by: ..., direction: up | down | mixed}
+#         a factor the algorithm does not measure (e.g. central_bank_buying, opec_policy, carry_demand)
+#
+# Example (commented out, not a real view):
+#   XAUUSD:
+#     overall: {take: "Reserve asset for central banks; dips get bought", date: 2026-10-08, by: owner, confidence: medium}
+#     factors:
+#       fear_beta: {take: "Safe haven in wars, not in dollar squeezes", date: 2026-10-08, by: owner, agrees: partly}
+#       central_bank_buying: {take: "Official buying sets a floor", date: 2026-10-08, by: owner, direction: up}
+
+profiles_version: "profiles-1.0.0"
+label: "human judgement / bias"
+profiles: {}
