@@ -445,7 +445,8 @@ class DataLoader:
                 ok, why = self._agree(primary["close"], cache["close"], inst.additive)
                 if not ok and not cache[cache.index.isin(primary.index)].empty:
                     notes.append(f"cache disagrees with fresh data ({why}); cache rows outside the fresh window kept")
-            merged = pd.concat([keep, primary]).sort_index()
+            # an empty cache has object columns; pandas 3 would turn every merged column into object
+            merged = pd.concat([keep, primary]).sort_index() if not keep.empty else primary.sort_index()
             merged = merged[~merged.index.duplicated(keep="last")]
             self.write_cache(inst.symbol, merged)
         if used:
