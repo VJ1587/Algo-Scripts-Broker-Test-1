@@ -59,13 +59,12 @@ tfConf    = input.timeframe("240", "Confirmation timeframe", display = display.n
 structLen = input.int(5, "HTF swing length (bars each side)", minval = 2, display = display.none, group = grpB)
 
 // ─────────────────────────────────────────────────────────── 5-6 · Impulse and Fibonacci
-grpI = "5-6 · Impulse + Fib (use on the 2H chart)"
+grpI = "5-6 · Impulse + Fib (found on the 2H)"
+tfImp       = input.timeframe("120", "Impulse timeframe", display = display.none, group = grpI, tooltip = "The A-to-B impulse is always taken from this timeframe, whatever chart you are on.")
 swLen       = input.int(5, "Swing length (bars each side)", minval = 2, display = display.none, group = grpI)
 impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, display = display.none, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
 impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, display = display.none, group = grpI)
-allowNoBias = input.bool(true, "Draw watch-only fib when Daily and 4H are not aligned", display = display.none, group = grpI,
-     tooltip = "Draws the latest impulse in grey so you can see it. Watch only: signals still need Daily and 4H to agree. It follows the Daily direction if the Daily has one, else the 4H.")
-expiryBars  = input.int(60, "Setup expires after (bars from B, no entry)", minval = 5, display = display.none, group = grpI)
+expiryBars  = input.int(60, "Setup expires after (impulse-timeframe bars from B, no entry)", minval = 5, display = display.none, group = grpI)
 fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, display = display.none, group = grpI)
 slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, display = display.none, group = grpI)
 
@@ -248,48 +247,60 @@ dBias   = request.security(syminfo.tickerid, tfBias, f_structure(structLen), loo
 cBias   = request.security(syminfo.tickerid, tfConf, f_structure(structLen), lookahead = barmerge.lookahead_on)
 biasDir = dBias != 0 and dBias == cBias ? dBias : 0
 
-// ─────────────────────────────────────────────────────────── 5 · Impulse (A -> B)
-ph = ta.pivothigh(high, swLen, swLen)
-pl = ta.pivotlow(low, swLen, swLen)
-var float lastPH  = na
-var int   lastPHb = na
-var float lastPL  = na
-var int   lastPLb = na
-bool  newBull = false
-bool  newBear = false
-float cA  = na
-float cB  = na
-int   cAb = na
-int   cBb = na
+// ─────────────────────────────────────────────────────────── 5 · Impulse (A -> B) on the 2H
+// Latest clean bullish impulse (swing low A -> swing high B) and latest clean bearish impulse
+// (swing high A -> swing low B) on the impulse timeframe, with the bar times of A and B.
+f_impulses(int len, float mult, int maxBars) =>
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    a  = ta.atr(14)
+    var float pHp = na
+    var int   pHt = na
+    var int   pHi = na
+    var float pLp = na
+    var int   pLt = na
+    var int   pLi = na
+    var float uA  = na
+    var float uB  = na
+    var int   uAt = na
+    var int   uBt = na
+    var float dA  = na
+    var float dB  = na
+    var int   dAt = na
+    var int   dBt = na
+    if not na(ph)
+        pb = bar_index - len
+        if not na(pLp) and pLi < pb and ph - pLp >= mult * a[len] and pb - pLi <= maxBars
+            uA  := pLp
+            uAt := pLt
+            uB  := ph
+            uBt := time[len]
+        pHp := ph
+        pHt := time[len]
+        pHi := pb
+    if not na(pl)
+        pb = bar_index - len
+        if not na(pHp) and pHi < pb and pHp - pl >= mult * a[len] and pb - pHi <= maxBars
+            dA  := pHp
+            dAt := pHt
+            dB  := pl
+            dBt := time[len]
+        pLp := pl
+        pLt := time[len]
+        pLi := pb
+    [uA[1], uB[1], uAt[1], uBt[1], dA[1], dB[1], dAt[1], dBt[1]]   // last closed bar: no repainting
 
-if not na(ph)
-    phb = bar_index - swLen
-    if not na(lastPL) and lastPLb < phb and ph - lastPL >= impAtr * atr[swLen] and phb - lastPLb <= impMaxBars
-        newBull := true
-        cA  := lastPL
-        cAb := lastPLb
-        cB  := ph
-        cBb := phb
-    lastPH  := ph
-    lastPHb := phb
-if not na(pl)
-    plb = bar_index - swLen
-    if not na(lastPH) and lastPHb < plb and lastPH - pl >= impAtr * atr[swLen] and plb - lastPHb <= impMaxBars
-        newBear := true
-        cA  := lastPH
-        cAb := lastPHb
-        cB  := pl
-        cBb := plb
-    lastPL  := pl
-    lastPLb := plb
+[uA, uB, uAt, uBt, dA, dB, dAt, dBt] = request.security(syminfo.tickerid, tfImp, f_impulses(swLen, impAtr, impMaxBars), lookahead = barmerge.lookahead_on)
+impMs = timeframe.in_seconds(tfImp) * 1000
 
 // ─────────────────────────────────────────────────────────── 6 · Fibonacci setup state
+// Daily sideways or 4H disagreeing = no fib. Aligned = fib on the most recent impulse in the Daily direction.
 var int    fDir    = 0       // 1 long, -1 short
 var float  fA      = na
 var float  fB      = na
-var int    fAb     = na
-var int    fBb     = na
-var int    fState  = 0       // 0 waiting, 1 in zone, 2 entered, 3 TP1 hit (SL at BE), 4 TP2 hit, 5 BE exit, -1 invalid (78.6 close), -2 stopped
+var int    fAt     = na      // bar time of A
+var int    fBt     = na      // bar time of B
+var int    fState  = 0       // 0 waiting, 1 in zone, 2 entered, 3 TP1 hit (SL at BE), 4 TP2 hit, 5 BE exit, -1 invalid (78.6 close), -2 stopped, -3 expired, -4 closed beyond B, -5 bias lost
 var bool   fZone   = false
 var float  fDeep   = 0.0
 var bool   fHL     = false
@@ -298,16 +309,21 @@ var string fCandle = ""
 var int    fConf   = 0
 
 tradeLive = fState == 2 or fState == 3
-watchDir  = dBias != 0 ? dBias : cBias   // direction a watch-only fib follows when Daily and 4H disagree
-takeBull  = newBull and (biasDir == 1 or (allowNoBias and biasDir == 0 and watchDir != -1))
-takeBear  = newBear and (biasDir == -1 or (allowNoBias and biasDir == 0 and watchDir != 1))
+wA  = biasDir == 1 ? uA : biasDir == -1 ? dA : na
+wB  = biasDir == 1 ? uB : biasDir == -1 ? dB : na
+wAt = biasDir == 1 ? uAt : biasDir == -1 ? dAt : na
+wBt = biasDir == 1 ? uBt : biasDir == -1 ? dBt : na
 
-if not tradeLive and (takeBull or takeBear)
-    fDir    := takeBull ? 1 : -1
-    fA      := cA
-    fB      := cB
-    fAb     := cAb
-    fBb     := cBb
+// bias no longer aligned: a setup that has not been entered is dropped
+if not tradeLive and (fState == 0 or fState == 1) and fDir != 0 and biasDir != fDir
+    fState := -5
+
+if not tradeLive and biasDir != 0 and not na(wBt) and (na(fBt) or wBt != fBt or fDir != biasDir or fState == -5)
+    fDir    := biasDir
+    fA      := wA
+    fB      := wB
+    fAt     := wAt
+    fBt     := wBt
     fState  := 0
     fZone   := false
     fDeep   := 0.0
@@ -398,8 +414,8 @@ if fDir != 0 and barstate.isconfirmed
             invEvent := true
         else if beyondB
             fState := -4      // impulse extended past B: wait for the next swing to set a new A-to-B
-        else if bar_index - fBb > expiryBars
-            fState := -3      // too old: no entry within the expiry window
+        else if time - fBt > expiryBars * impMs
+            fState := -3      // too old: no entry within the expiry window (counted in impulse-timeframe bars)
         else
             t382 = isLong ? low <= L382 + tol : high >= L382 - tol
             t50  = isLong ? low <= L50 + tol : high >= L50 - tol
@@ -422,7 +438,7 @@ if fDir != 0 and barstate.isconfirmed
             c3 := fHL
             c4 := candleNow != "" and patInZone
             cnt := (c1 ? 1 : 0) + (c2 ? 1 : 0) + (c3 ? 1 : 0) + (c4 ? 1 : 0)
-            biasOk  = biasDir == fDir   // watch-only fibs never signal
+            biasOk  = biasDir == fDir
             rangeOk = not (blockInRange and inRange)
             stopOk  = isLong ? close > SL : close < SL
             if c1 and c4 and (c2 or not reqKey) and cnt >= minConf and biasOk and rangeOk and stopOk
@@ -464,6 +480,7 @@ f_stateText(int s) =>
         -2 => "Stopped out"
         -3 => "Expired: no entry within " + str.tostring(expiryBars) + " bars of B"
         -4 => "Closed beyond B: waiting for a new impulse"
+        -5 => "Daily / 4H no longer aligned: setup dropped"
         => "-"
 
 if barstate.islast
@@ -476,11 +493,11 @@ if barstate.islast
     box.delete(fibZoneBox)
     if fDir != 0 and fState >= 0 and fState <= 3
         isLong = fDir == 1
-        dc     = biasDir != fDir and fState < 2 ? color.gray : isLong ? colBull : colBear   // grey = watch only
-        right  = bar_index + 15
+        dc     = isLong ? colBull : colBear
+        right  = time + 15 * timeframe.in_seconds() * 1000
         side   = isLong ? "Buy limit" : "Sell limit"
-        array.push(fibLines, line.new(fAb, fA, fBb, fB, color = color.new(dc, 30), width = 2, style = line.style_dotted))
-        fibZoneBox := box.new(fBb, L382, right, L618, border_color = color.new(dc, 100), bgcolor = color.new(dc, 88))
+        array.push(fibLines, line.new(fAt, fA, fBt, fB, xloc = xloc.bar_time, color = color.new(dc, 30), width = 2, style = line.style_dotted))
+        fibZoneBox := box.new(fBt, L382, right, L618, xloc = xloc.bar_time, border_color = color.new(dc, 100), bgcolor = color.new(dc, 88))
         levels = array.from(0.0, 0.382, 0.5, 0.618, 0.786, 1.0, -0.27, -0.618)
         for r in levels
             p = f_lv(r)
@@ -502,12 +519,12 @@ if barstate.islast
             else
                 txt := "TP2 -0.618  " + f_px(p)
             lc = r == 0.786 ? color.gray : r < 0 ? color.new(color.green, 0) : color.new(dc, 0)
-            array.push(fibLines, line.new(fBb, p, right, p, color = lc, width = (r == 0.618 ? 2 : 1),
+            array.push(fibLines, line.new(fBt, p, right, p, xloc = xloc.bar_time, color = lc, width = (r == 0.618 ? 2 : 1),
                  style = (r == 0.786 or r < 0) ? line.style_dashed : line.style_solid))
-            array.push(fibLabels, label.new(right, p, txt, style = label.style_label_left, color = color.new(lc, 85),
+            array.push(fibLabels, label.new(right, p, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(lc, 85),
                  textcolor = lc, size = size.small))
-        array.push(fibLines, line.new(fBb, SL, right, SL, color = color.red, width = 2))
-        array.push(fibLabels, label.new(right, SL, "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 61.8)",
+        array.push(fibLines, line.new(fBt, SL, right, SL, xloc = xloc.bar_time, color = color.red, width = 2))
+        array.push(fibLabels, label.new(right, SL, xloc = xloc.bar_time, text = "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 61.8)",
              style = label.style_label_left, color = color.new(color.red, 85), textcolor = color.red, size = size.small))
 
 // ─────────────────────────────────────────────────────────── Checklist table
@@ -526,9 +543,8 @@ f_row(int row, string item, bool ok, string detail) =>
     table.cell(tbl, 2, row, tableDetail ? detail : "", text_color = color.silver, text_size = tSize, text_halign = text.align_left)
 
 if barstate.islast and showTable
-    tfWarn = timeframe.period == "120" ? "" : "  (chart " + timeframe.period + ", spec: 2H)"
+    tfWarn = timeframe.period == tfImp ? "" : "  (entries: use the 2H chart)"
     hasFib = fDir != 0 and fState >= 0 and fState <= 3
-    watchOnly = hasFib and biasDir != fDir and fState < 2
     isLong = fDir == 1
     rangeTxt = rState == 1 ? "Inside range " + f_pips(rTop - rBot) + " " + unitTxt + ", wait for break" :
          rState == 2 ? "Broke UP, target " + f_px(rTarget) : rState == -2 ? "Broke DOWN, target " + f_px(rTarget) : "No range on this timeframe"
@@ -545,7 +561,7 @@ if barstate.islast and showTable
     f_row(2, "2 Range", rState != 1, rangeTxt)
     f_row(3, "3 Daily bias", dBias != 0, f_biasTxt(dBias))
     f_row(4, "4 4H aligns", biasDir != 0, f_biasTxt(cBias))
-    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (isLong ? "Up " : "Down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt + "" : "none active") + (watchOnly ? " · WATCH ONLY" : "") + tfWarn)
+    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (isLong ? "Up " : "Down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt + "" : (biasDir == 0 ? "no fib: Daily / 4H not aligned" : "none active")) + tfWarn)
     f_row(6, "6 Fib placed", hasFib, hasFib ? "A " + f_px(fA) + " → B " + f_px(fB) : "-")
     ent = hasFib and fState >= 2
     f_row(7, "7 Fib in key box", hasFib and (key382 or key50 or key618), keyTxt)
@@ -554,7 +570,7 @@ if barstate.islast and showTable
          str.tostring(confNow) + "/4  fib " + f_mark(ent or c1) + " key " + f_mark(ent or c2) + " struct " + f_mark(fHL) + " candle " + f_mark(ent or c4))
     table.cell(tbl, 0, 10, "Status", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 10, "")
-    table.cell(tbl, 2, 10, fDir == 0 ? "No setup" : (watchOnly ? "Watch only (bias not aligned): " : "") + f_stateText(fState), text_color = fState == 2 or fState == 3 ? color.lime : fState < 0 ? color.orange : color.white,
+    table.cell(tbl, 2, 10, fDir == 0 ? "No setup" : f_stateText(fState), text_color = fState == 2 or fState == 3 ? color.lime : fState < 0 ? color.orange : color.white,
          text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 0, 11, "Limits filled", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 11, "")
