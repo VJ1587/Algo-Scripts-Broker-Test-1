@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.9.0"
+config_version: "cfg-0.13.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -21,6 +21,10 @@ changelog:
   - {version: "cfg-0.7.0", date: "2026-10-07", change: "Developing = any 2+ of C1-C6 that do not qualify (was C1 + C2 + 2 checks); trade gate --include-developing offers all of them. C1-C6 named and defined in one place; dashboard lists every developing setup with checks met and missing; journal spells out each trade's confluences and adds results by section, setup and confluence", reason: "Owner: report must show developing setups with 2 confluences; spell out C1-C6 in the journal to see which setups work"}
   - {version: "cfg-0.8.0", date: "2026-10-07", change: "Position Trading Confluence System: A setup = C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6 (C4 no longer required); B setup = C1 + (C2 or C3 at 50/61.8) + one of C4/C5/C6; C6 becomes 4H market structure holding (trend line is information only); FX crosses need an A setup with C4; S&P and oil trade A setups only; gold C1 = Weekly + Daily (no 4H), B = C1 + C2 + C3, A adds stacked Fib + C4, DXY shown as context; dashboard shows Fib stop 78.6/89 and TP1 -27 / TP2 -61.8", reason: "Owner document: Position Trading Confluence System and gold confluences; owner answers October 7 (7 USD majors, gold Weekly + Daily, S&P and oil A only, full C4 pattern list at key levels)"}
   - {version: "cfg-0.9.0", date: "2026-10-07", change: "Daemon runs every 2 hours at :05 UTC (intraday runs keep the Daily bias from the last evening run); Windows notification for new or upgraded A/B setups; calendar snapshot reused for 4 hours and used when a fetch fails; intraday HTML/CSV pruned after 14 days; chart patterns name their key level", reason: "Owner: update the scanner through the day so a setup that fully develops is caught; 2-hourly matches the 2H bar close"}
+  - {version: "cfg-0.10.0", date: "2026-10-08", change: "Gold, S&P and oil (XAUUSD, GC, SPX500, ES, WTI, CL): C1 = Weekly bias + Daily confirmation, Weekly overrides (aligned = trade, Daily retracing = wait for the Daily reversal, against the Weekly = avoid, Weekly consolidating = no bias); C6 = Daily structure; open positions checked every run (Daily violated = get out with a notification, 4H broke with Daily intact = stay in); daemon stamps runs with the scheduled minute", reason: "Owner: how to read Weekly/Daily structure for gold and futures, and when structure is broken"}
+  - {version: "cfg-0.11.0", date: "2026-10-08", change: "Gold (XAUUSD and GC) mid levels (every $50) get a +/-$8 zone via grids.gold.mid_zone_half_width; majors (every $100) stay +/-$20. Zone coverage of all gold prices drops from 80% to 56%", reason: "Owner: a $50 mid is a weaker level and was triggering C2 too often; tighten it so the filter screens more"}
+  - {version: "cfg-0.12.0", date: "2026-10-08", change: "Gold (XAUUSD and GC) major levels (every $100) zone narrowed from +/-$20 to +/-$10; mids stay +/-$8. Zone coverage of all gold prices drops from 56% to 36%. New grids.gold.pattern_half_width: 20 keeps double top/bottom and head and shoulders sizes on the old $20 basis", reason: "Owner: quality setups only; filter out setups that are off the key levels"}
+  - {version: "cfg-0.13.0", date: "2026-10-08", change: "Dynamic Structure and Personality Layer v0.1 (dynamics.py), logged only: volatility scaled swings and structure score on 4H/Daily/Weekly, timeframe ladder, pullback location, break significance, maturity and coil flags, weekly personality traits (energy, noise, wickiness, swing rhythm, retracement profile, break follow through, dollar tie; shared per underlying), scaled parameters T1-T6, four zone widths logged in c2_rejections.csv, dollar basket + DXY + breadth + correlation break + context points. Daily pull 400 -> 1,300 bars (bars.n_bars_daily); the v1.0 scoring keeps its 400 bar window (bars.n_bars_daily_scoring); Weekly minimum 150 bars; new block dynamics", reason: "Owner build instructions, October 8, 2026: side by side rollout, nothing switched on; Daily bias is path dependent so the scoring window is unchanged (planning/decisions/2026-10-08-dynamics-layer-side-by-side.md)"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -60,10 +64,56 @@ bars:
   intraday_mode: resample_1h  # resample_1h | native
   n_bars_1h: 5000             # tvDatafeed maximum per request
   n_bars_native: 1500
-  n_bars_daily: 400
+  n_bars_daily: 1300          # cfg-0.13.0 [Dyn 1.1]: about 5 years, read by the dynamics layer (Weekly built from it)
+  n_bars_daily_scoring: 400   # cfg-0.13.0: the v1.0 scoring (Daily bias, structure, C1-C6) keeps its 400 bar window
   min_completed_bars: 250     # v1.0 Section 2
   request_pause_sec: 1.0
   retries: 3
+
+# ---------------------------------------------------------------- dynamics layer (cfg-0.13.0), logged only
+# Dynamic Structure and Personality Layer v0.1 [Dyn 7.4]. Every value is a test default; nothing here decides.
+# Fields start with dyn_ in the JSON, CSV and dashboard. Keys left out fall back to DEFAULTS in dynamics.py.
+dynamics:
+  enabled: true
+  trait_refresh: weekly       # weekly = first run after the Saturday COT pull, reused all week | always
+  percentile_window: 756      # PR(x): trailing Daily values (about 3 years)
+  percentile_min_values: 100  # [IMPL] fewer values than this -> percentile rank unavailable
+  shrinkage_k: 20             # x_used = (n x_own + 20 x_group) / (n + 20)
+  min_observations: 30        # below this: shrink toward the group (FX majors | FX crosses | gold | S&P | oil), flag "thin"
+  weekly_min_bars: 150        # [Dyn 1.3] owner exception to the 250 bar rule; fewer -> "noisy mode unavailable"
+  daily_pull_bars: 1300       # symbols returning fewer Daily bars are flagged in the trait file
+  bands: {core: [0.25, 0.75], stretched: [0.10, 0.90]}
+  energy: {volatile_ratio: 1.5}                                        # P1: NATR / median NATR of the 7 majors
+  noise: {er_bars: 20, window: 250}                                     # P2: 1 - median efficiency ratio
+  wick: {window: 250}                                                   # P3
+  swing: {theta_base: 1.5, theta_min: 1.0, theta_max: 3.0, min_gap_bars: 2, legs_window: 40}   # S1, P4
+  structure_score: {atr_scale: 1.0}                                    # S2: tanh(delta swing / (scale x ATR14))
+  clarity: {legs: 8, noisy_below: 0.40, normal_above: 0.50}            # S3 timeframe ladder, hysteresis
+  retracement: {levels: [0.382, 0.5, 0.618], fail: 0.893, percentiles: [25, 50, 75, 90]}        # P5
+  breaks: {deltas: [0.0, 0.10, 0.25, 0.50], follow_through_atr: 1.0, min_phi: 0.60, default_depth: 0.50}  # P6
+  scaled:                                                              # Section 5 (v1.0 fixed values in brackets)
+    impulse_atr: {pct: 60, lo: 1.5, hi: 3.0}                           # T1 (2.0)
+    impulse_eff: {pct: 60, lo: 0.45, hi: 0.75}                         # T2 (0.60)
+    zone_frac: {base: 0.10, lo: 0.05, hi: 0.15}                        # T3 (0.10)
+    stop_buffer: {base: 0.10, lo: 0.05, hi: 0.20}                      # T5 (0.10, gold and S&P only)
+    ladder_expiry: {mult: 1.5, lo: 4, hi: 12}                          # T6 (6 x 4H bars)
+  zone_alt: {atr_period_daily: 20, fraction: 0.25}                     # T4 alternative width: 0.25 x Daily ATR20
+  maturity: {ema_long: 50, ema_fast: 8, ema_slow: 14, stretched_rank: 0.90, exhaustion_body: 0.25}   # S6
+  coil: {atr_short: 5, atr_long: 50, ratio: 0.70, release_range_atr: 2.0, release_clv: 0.6}          # S7
+  context:                                                             # X1 to X5
+    usd_weight: 0.6
+    peer_weight: 0.4
+    peer_corr_min: 0.50
+    breadth_min: 0.30
+    disagree_min: 0.20
+    usd_corr_bars: 60
+    corr_short: 20
+    corr_long: 250
+    corr_break_z: 2.0
+    corr_break_rho: 0.30
+    points: {plus2: 0.30, plus1: 0.10, minus1: -0.10, minus2: -0.30}
+    links: [[EURUSD, GBPUSD], [XAUUSD, USD], [AUDUSD, XAUUSD]]         # USD = the equal weight basket U
+  stability_min_spearman: 0.60                                         # E1 report in the weekly trait file
 
 # ---------------------------------------------------------------- MetaTrader 5 (cfg-0.5.0), read only
 # Attaches to the MT5 terminal already open and logged in. Never sends, changes or closes orders.
@@ -123,12 +173,14 @@ features:
 
 # ---------------------------------------------------------------- psychological grid (Addendum Section 5)
 # zone_half_width: fixed half-width in price units for the zone drawn around every major and mid level
-# (FX 15 pips = 0.0015; JPY pairs 15 pips = 0.15). null = not set by owner yet: that instrument keeps
+# (FX 15 pips = 0.0015; JPY pairs 15 pips = 0.15). Optional mid_zone_half_width overrides it at mid
+# levels only (cfg-0.11.0); left out = mids use zone_half_width. Optional pattern_half_width (cfg-0.12.0) sizes
+# chart patterns (features.chart_patterns) instead of zone_half_width. null = not set by owner yet: that instrument keeps
 # the ATR width (max(2 ticks, 0.10 x 4H ATR)) and every row carries a "zone width not set" flag.
 grids:
   fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0015}
   jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.15}
-  gold: {major: 100,    mid: 50,     zone_half_width: 20}     # owner default $20 (range $15-25)
+  gold: {major: 100,    mid: 50,     zone_half_width: 10, mid_zone_half_width: 8, pattern_half_width: 20}  # $10 at majors (cfg-0.12.0), $8 at mids (cfg-0.11.0); patterns sized on $20
   spx:  {major: 100,    mid: 50,     zone_half_width: 20}     # follows gold for now
   oil:  {major: 5.00,   mid: 2.50,   zone_half_width: 1.00}   # gold ratio (20% of major); grid untested
 

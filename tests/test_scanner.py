@@ -124,14 +124,27 @@ def test_psych_zone_fixed_15_pips_fx_and_atr_where_unset():
     eu, uj, xau = UNIVERSE["EURUSD"], UNIVERSE["USDJPY"], UNIVERSE["XAUUSD"]
     assert sc.psych_zone_half_width(eu, 0.0004) == (pytest.approx(0.0015), "fixed")
     assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.15), "fixed")
-    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(20.0), "fixed")  # gold +/- $20
-    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(20.0), "fixed")
-    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P follows gold
+    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(10.0), "fixed")  # gold majors +/- $10 (cfg-0.12.0)
+    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(10.0), "fixed")
+    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P unchanged
     assert sc.psych_zone_half_width(UNIVERSE["WTI"], 0.3) == (pytest.approx(1.0), "fixed")  # oil: gold ratio
     assert all(i.psych_zone_hw is not None for i in UNIVERSE.values())                       # no ATR fallback left
-    # gold 3,300 major: 3,282 is inside the $3,280-$3,320 zone, 3,278 is outside
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[1:] == (pytest.approx(3300.0), "major")
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[0] and not sc.in_psych_zone(xau, 3278.0, 20.0)[0]
+    # gold 3,300 major: 3,291 is inside the $3,290-$3,310 zone, 3,289 is outside (was inside at +/- $20)
+    assert sc.in_psych_zone(xau, 3291.0, 10.0)[1:] == (pytest.approx(3300.0), "major")
+    assert sc.in_psych_zone(xau, 3291.0, 10.0)[0] and not sc.in_psych_zone(xau, 3289.0, 10.0)[0]
+    # cfg-0.11.0: gold mids (every $50) are +/- $8; S&P mids unchanged
+    assert sc.in_psych_zone(xau, 4142.0, 10.0)[1:] == (pytest.approx(4150.0), "mid")
+    assert sc.in_psych_zone(xau, 4142.0, 10.0)[0] and sc.in_psych_zone(xau, 4158.0, 10.0)[0]
+    assert not sc.in_psych_zone(xau, 4141.0, 10.0)[0] and not sc.in_psych_zone(xau, 4136.5, 10.0)[0]
+    assert not sc.in_psych_zone(xau, 4119.7, 10.0)[0]                                        # 4,100 major: $19.70 away
+    assert sc.in_psych_zone(xau, 4109.9, 10.0)[0]
+    assert sc.in_psych_zone(UNIVERSE["GC"], 4141.0, 10.0)[0] is False                        # GC shares the gold grid
+    assert sc.in_psych_zone(UNIVERSE["ES"], 4141.0, 20.0)[0]                                 # S&P mid still +/- 20
+    assert sc.level_half_width(xau, "mid", 10.0) == pytest.approx(8.0)
+    assert sc.level_half_width(xau, "major", 10.0) == pytest.approx(10.0)
+    # cfg-0.12.0: gold chart patterns still sized on $20; other grids use their zone width
+    assert xau.pattern_hw == pytest.approx(20.0) and UNIVERSE["EURUSD"].pattern_hw is None
+    assert sc.level_half_width(UNIVERSE["EURUSD"], "mid", 0.0015) == pytest.approx(0.0015)    # no mid width set
     # 1.1736 is 14 pips under the 1.1750 mid level: inside; 1.1734 is 16 pips under: outside
     assert sc.in_psych_zone(eu, 1.1736, 0.0015)[0] and not sc.in_psych_zone(eu, 1.1734, 0.0015)[0]
 
@@ -746,3 +759,74 @@ def test_prune_only_old_intraday_html_and_csv(tmp_path):
     assert sc.prune_outputs(tmp_path, pd.Timestamp("2026-10-07 12:05", tz="UTC"), 14) == 2
     left = sorted(p.name for p in tmp_path.iterdir())
     assert left == ["scan_20260901T1205Z_preNY.html", "scan_20260901T1405Z_intraday.json", "scan_20261006T1405Z_intraday.html"]
+
+
+# --------------------------------------------------------------- Weekly/Daily structure (cfg-0.10.0)
+@pytest.mark.parametrize(
+    "weekly,daily,direction,c1,phrase",
+    [
+        ("long", "long", "long", True, "look for buys, high confidence"),
+        ("short", "short", "short", True, "look for sells"),
+        ("long", "short", "long", False, "wait for a Daily higher low and reversal, then buy"),
+        ("long", "short", "short", False, "Against the Weekly"),          # no shorting a bullish Weekly
+        ("short", "long", "long", False, "small bounce possible but risky"),
+        ("short", "long", "short", False, "wait for a Daily lower high and reversal, then sell"),
+        (None, "long", "long", False, "Weekly consolidating"),
+        ("long", None, "long", False, "wait for the Daily to confirm"),
+    ],
+)
+def test_weekly_daily_read(weekly, daily, direction, c1, phrase):
+    ok, note = sc.weekly_daily_read(weekly, daily, direction)
+    assert ok is c1 and phrase in note
+
+
+@pytest.mark.parametrize(
+    "daily,bias,h4,direction,status",
+    [
+        ("intact", "long", "intact", "long", "ok"),
+        ("intact", "long", "broken", "long", "hold"),     # 4H broke, Daily intact: stay in
+        ("broken", "long", "intact", "long", "exit"),     # Daily closed through the higher low: get out
+        ("intact", "short", "intact", "long", "exit"),    # Daily bias turned against the trade
+        ("none", "neutral", "intact", "long", "watch"),
+    ],
+)
+def test_exit_check(daily, bias, h4, direction, status):
+    assert sc.exit_check(daily, bias, h4, direction)[0] == status
+
+
+def test_structure_check_reports_a_close_through_as_broken():
+    idx4 = pd.date_range("2026-09-01", periods=9, freq="4h", tz="UTC")
+    df4 = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}, index=idx4)
+    lower = [sc.Pivot(1, "L", 1.10, 3), sc.Pivot(3, "H", 1.13, 5), sc.Pivot(5, "L", 1.09, 7)]
+    idx2 = pd.date_range(idx4[5], periods=4, freq="2h", tz="UTC")
+    held = pd.DataFrame({"close": [1.10, 1.11, 1.12, 1.11]}, index=idx2)
+    assert sc.structure_check(df4, lower, held, "long")[0] == "none"        # lower low, nothing to hold
+    through = held.assign(close=[1.10, 1.08, 1.12, 1.11])
+    assert sc.structure_check(df4, lower, through, "long")[0] == "broken"
+
+
+def test_exit_alert_once_per_violation(monkeypatch):
+    sent = []
+    monkeypatch.setattr(sc, "windows_toast", lambda title, body, link=None: sent.append(title) or True)
+    rows = []
+    for d in ("long", "short"):
+        r = sc.Row("XAUUSD", "CFD", d)
+        r.daily_struct, r.h4_struct, r.daily_bias = ("broken" if d == "long" else "none"), "intact", "neutral"
+        rows.append(r)
+    pos = [{"ticket": 7, "symbol": "XAUUSD", "direction": "long"}, {"ticket": 8, "symbol": "EURUSD", "direction": "long"}]
+    sc.annotate_structure(pos, rows, UNIVERSE)
+    assert pos[0]["structure"] == "exit" and "structure" not in pos[1]          # FX positions are not checked
+    sc.alert_exits(CFG, pos, {}, Path("x.html"))
+    sc.alert_exits(CFG, pos, {7: "exit"}, Path("x.html"))                       # already flagged last run
+    assert sent == ["Scanner: EXIT 1 position"]
+
+
+def test_demo_weekly_instruments_use_weekly_daily_and_daily_c6(tmp_path):
+    paths = sc.run_scan(CFG, Path(__file__).resolve().parents[1], "preny", pd.Timestamp("2026-10-02T12:05Z"),
+                        "tradingview", demo=True, out_dir=tmp_path)
+    rows = json.loads(paths["json"].read_text(encoding="utf-8"))["rows"]
+    wk = [r for r in rows if r["symbol"] in ("XAUUSD", "GC", "SPX500", "ES", "WTI", "CL")]
+    assert len(wk) == 12 and all(r["weekly"] and r["htf_note"] for r in wk)
+    assert all(r["c6"] == (r["daily_struct"] == "intact") for r in wk)
+    fx = [r for r in rows if r["group"].startswith("FX")]
+    assert all(not r["weekly"] and r["c6"] == (r["h4_struct"] == "intact") for r in fx)

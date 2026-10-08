@@ -79,7 +79,7 @@ See the script header for the CSV format used by `--data-dir` and `--news`.
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.9.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.13.0, config `cfg-0.13.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
@@ -97,12 +97,12 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 
 | Check | Name | Passes when |
 |---|---|---|
-| C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
+| C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold, S&P and oil: Weekly = bias, Daily = confirmation, no 4H (see Weekly and Daily). |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold every 100 ±10 and every 50 (mid) ±8; S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
-| C6 | Market structure | 4H structure holds at entry: the latest 4H swing low is a higher low (a lower high for a short) and no 2H close has broken it since. A close through it means structure is compromised: skip. |
+| C6 | Market structure | 4H structure holds at entry: the latest 4H swing low is a higher low (a lower high for a short) and no 2H close has broken it since. A close through it means structure is compromised: skip. Gold, S&P and oil use the Daily swing and Daily closes. |
 
 ### Setup rules
 
@@ -117,11 +117,13 @@ These live in `SETUP_RULES` and `grade_setup` in `scanner.py`. A and B setups ca
 | S&P and oil | SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing. |
 | Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
 | Stop and targets | Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to breakeven. |
+| Weekly and Daily | Gold, S&P and oil: Weekly = bias, Daily = confirmation, and the Weekly overrides. Both bullish: buys only; both bearish: sells only (high confidence). Weekly bullish, Daily bearish: a retracement, wait for a Daily higher low and reversal, then buy (mirror for sells). Against the Weekly: avoid. Weekly consolidating: no bias, don't force it. |
+| Structure break | Gold, S&P and oil positions, checked every run: Daily intact but 4H broke = normal retracement, stay in and watch. Daily violated (a Daily close through the last higher low, or lower high for a short, or the Daily bias turning against the trade) = trade is done, get out; a Windows notification is sent. |
 | Developing | Any 2 or more of C1-C6 that do not make a B setup. Watch only. |
 
 Owner decisions (October 7, 2026): majors are the 7 USD majors in the config (EURUSD, GBPUSD, USDJPY,
-USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 is Weekly + Daily without the
-4H; S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
+USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold, S&P and oil C1 is Weekly bias + Daily
+confirmation without the 4H, and their C6 uses Daily structure (October 8); S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
 every candle and chart pattern counts only at a key level zone; chart patterns name the level they
 formed at. The trade gate already uses the system's targets (TP1 -27 %, TP2 -61.8 %) and the 89.3 %
 stop for FX; it does not yet move the stop to breakeven after TP1.
@@ -130,13 +132,57 @@ The journal page labels each trade with its setup (the checks passed in the last
 for example `C1+C4+C5`) and shows win rate and net P/L by section, by setup and for each confluence
 with versus without. Under about 20 closed trades a group is too small to judge.
 
+## Dynamic layer (cfg-0.13.0): logged only, does not affect rank
+
+`dynamics.py` implements **Dynamic Structure and Personality Layer: Build Instructions v0.1** (October 8,
+2026; spec in `Development/planning/specs/dynamic-structure-personality-layer_spec.md`). It runs once per
+scan after the v1.0 scoring, ranking and footer are complete, and writes every reading beside the old
+result. Nothing in it changes a check, a grade, a rank, a score or a total; the acceptance test runs the
+demo with the layer off and on and requires every pre existing column to match.
+
+What it reads, per instrument and direction (fields start with `dyn_`):
+
+| Block | Readings |
+|---|---|
+| Trend (S1, S2, S3) | Volatility scaled swings (theta = 1.5 x noise / noise of the majors, clipped 1 to 3), a structure score in -1 to +1 on 4H, Daily and Weekly, whether it agrees with the v1.0 structure, 4H clarity and a timeframe ladder mode (normal / noisy, with hysteresis). |
+| Location (S4) | Pullback depth of the frozen impulse, its rank against the instrument's own continued retracements, and the reach and hold rates for the nearest ladder level. |
+| Condition (S5, S6, S7) | Daily close depth beyond the bias invalidation in ATR against the instrument's break_depth_min; stretched, momentum fading, exhaustion candle, exhaustion confirmed, coiled and release flags. |
+| Scaled parameters (T1 to T6) | Impulse size and efficiency gates, zone fraction, stop buffer and ladder expiry from the instrument's own legs, logged beside the fixed values; whether the latest impulse would pass the scaled gates. |
+| Zone widths (T4) | Four widths with their C2 result, distance and expected pass rate: the fixed grid zone that decides today, the v1.0 ATR width, 0.25 x Daily ATR20, and the noise scaled width. Also appended to `logs/c2_rejections.csv`. |
+| Context (X1 to X5) | Dollar basket score from the 7 majors, DXY cross check, breadth, correlation breaks (EURUSD-GBPUSD, XAUUSD-basket, AUDUSD-XAUUSD) and context points -2 to +2. Shown in their own column; never added to total. |
+
+Personality traits (energy, noise, wickiness, swing rhythm, retracement profile, break follow through,
+dollar tie) are computed once a week on the first run after the Saturday COT pull and saved to
+`data/personality/personality_<date>.json` (never overwritten, reused all week; `dynamics.trait_refresh:
+always` recomputes every run). A CFD and the futures contract on the same underlying share one trait set.
+Fewer than 30 observations shrinks a statistic toward its group (FX majors, FX crosses, gold, S&P, oil) and
+flags it "thin". The file also holds the E1 stability report (Spearman between the first and second half
+of history per trait) and the Daily bar count per symbol; anything under 1,300 bars is flagged.
+
+Data: the Daily pull is now 1,300 bars (`bars.n_bars_daily`) and Weekly bars are built from it (minimum
+150, else "noisy mode unavailable"). The v1.0 scoring keeps reading the most recent 400 Daily bars
+(`bars.n_bars_daily_scoring`), because the Daily bias walk is path dependent and a longer history would
+have moved live bias readings; see `planning/decisions/2026-10-08-dynamics-layer-side-by-side.md`.
+
+Where it shows up: a `dynamics` object per row in the scan JSON, `dyn_` columns after the existing CSV
+columns, a "Dynamic layer" column on the top 5 table with four lines (Trend, Location, Condition, Context),
+a "Dynamics" line in the dashboard header, `logs/dynamics_compare.csv` (one line per instrument per scan:
+v1.0 structure vs S2 state, fixed vs scaled impulse gates, the four widths and their C2 results), and the
+extra width columns in `logs/c2_rejections.csv` (the pre existing log is kept as
+`c2_rejections_pre_dynamics.csv`). `data/personality/dyn_tf_mode.json` persists the ladder mode.
+
+Before anything is switched on: the Section 9 evidence (E1 to E6) on at least 100 closed ideas, then a
+config version bump with the reason. P7 (conviction, level respect) waits for the empire modules.
+
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `scanner.py` | The scanner (single module) |
-| `scanner_config.yaml` | Versioned parameters: universe, grids, COT codes, theme weights, keywords |
+| `dynamics.py` | Dynamic Structure and Personality Layer (cfg-0.13.0), logged beside the v1.0 results |
+| `scanner_config.yaml` | Versioned parameters: universe, grids, COT codes, theme weights, keywords, the `dynamics` block |
 | `tests/test_scanner.py` | Unit tests (pivots, bias, impulse, zones, candles, COT, sentiment, ranking, MT5 time and routing, journal) |
+| `tests/test_dynamics.py` | The ten build tests of the dynamics instructions plus the S2, X4 and X5 check values |
 | `requirements.txt` | Dependencies |
 
 ## Install
@@ -219,7 +265,12 @@ config). Nothing in the scanner sends, changes or closes orders.
   position (from deal history, `journal.history_days`) with open and close time, prices, net P/L, and
   the confluences the last live scan before the entry logged for that instrument and direction
 - `logs/mt5_account.csv`: balance snapshot log; `logs/trade_journal.csv`: the journal as a table
-- `logs/c2_rejections.csv`: C2 pass/fail and distance to the nearest level per instrument per run
+- `logs/c2_rejections.csv`: C2 pass/fail and distance to the nearest level per instrument per run, plus the
+  four zone widths of the dynamics layer (cfg-0.13.0)
+- `logs/dynamics_compare.csv`: v1.0 structure vs the dynamic structure state, fixed vs scaled impulse gates,
+  zone widths and context points, one line per instrument per scan
+- `data/personality/personality_<date>.json`: the weekly trait file; `data/personality/dyn_tf_mode.json`: the
+  timeframe ladder mode per instrument
 - `logs/scanner.log`: run log, including the CFTC market name returned for each COT code
 - `data/calendar_snapshots/`: Forex Factory snapshots (the feed keeps no history)
 - `data/headlines/`: headline archive (sentiment backtests start from the first capture date)
@@ -240,6 +291,7 @@ config). Nothing in the scanner sends, changes or closes orders.
 | Calendar countdown and event risk (Add 6.4) | `next_event` |
 | Sections and ranking (Add 8) | `score_instrument`, `rank` |
 | Dashboard and machine readable copy (Add 9) | `render_html`, `write_outputs` |
+| Dynamic layer S1 to S7, P1 to P8, T1 to T6, X1 to X5 (Dyn v0.1) | `dynamics.py`: `vol_swings`, `structure_score`, `raw_traits`, `summarize_traits`, `instrument_readings`, `context_all`, `apply_layer` |
 
 ## Implementation choices the documents leave open (test defaults, all flagged `[IMPL]` in code)
 
@@ -254,9 +306,12 @@ config). Nothing in the scanner sends, changes or closes orders.
 4. **Impulse void.** An impulse is dropped once a 4H close passes its origin A (config switch).
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
 5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
-   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $20 (XAUUSD
+   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 at majors (XAUUSD
    and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
-   grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
+   grid). Gold mid levels (every $50) use a tighter $8 zone (`mid_zone_half_width`, cfg-0.11.0): a mid is a
+   weaker level, and at ±$20 the gold zones covered 80% of all prices, so C2 barely filtered. Majors narrowed to ±$10 (cfg-0.12.0): coverage is now 36%. Gold chart pattern
+   sizes stay on the old $20 basis (`pattern_half_width`) so only the key level filter changed.
+   C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
    to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the
@@ -289,6 +344,16 @@ config). Nothing in the scanner sends, changes or closes orders.
    weights without recency. JPY and CHF get the higher conflict weight only; no safe haven sign flip
    was specified, so none is applied.
 8. **Hawk/dove and supply direction** come from keyword lists in config, versioned with the weights.
+9. **Dynamic layer (cfg-0.13.0), choices the build instructions leave open.** S1 starts with both trackers
+   running until the first swing (the earlier extreme wins a same bar tie) and confirms at most one swing per
+   bar. P5 counts "continued" when a bar both retraces to the fail level and trades beyond B, and T6 uses the
+   median bars to the deepest point among continued impulses. P6 "followed through" means a further 1 ATR past
+   the break close before any Daily close back through the swing level. Percentile ranks need 100 values; the
+   FX major references need 4 of the 7 majors, else theta falls back to its base with a flag. The E1 stability
+   split halves each series by its own bar count. Cross instrument alignment uses the trade date (New York
+   time + 7h), the empire data convention. The S7 release test sizes the range against ATR14 of the bar before
+   the release bar. Group shrinkage uses the statistic computed on the group's pooled observations. The v1.0
+   scoring keeps a 400 bar Daily window while the layer reads 1,300 (decision record of October 8, 2026).
 
 ## Open items before treating output as validated (Addendum §10)
 

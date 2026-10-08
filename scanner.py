@@ -22,7 +22,8 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
          market        major / mid level spacing      zone half-width
          FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
          JPY pairs     5.00 / 2.50                    0.15      (15 pips)
-         Gold          $100 / $50                     $20       (3,300 -> 3,280 to 3,320)
+         Gold          $100 / $50                     $10 major (3,300 -> 3,290 to 3,310; cfg-0.12.0),
+                                                      $8 mid    (3,350 -> 3,342 to 3,358; cfg-0.11.0)
          S&P           100 / 50 points                20 points (follows gold for now)
          Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
        Why: institutions' orders sit spread around a round number, so price reacts across an area.
@@ -51,11 +52,23 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
        FX crosses = only an A setup with a closed C4 counts.
        S&P, oil   = only an A setup counts.
        Gold       = C1 is Weekly + Daily (no 4H); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
+       Gold, S&P, oil: Weekly = bias, Daily = confirmation (weekly_daily_read); C6 uses Daily structure;
+       open positions: Daily violated = get out, 4H broke with Daily intact = stay in (exit_check).
        Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0).
        C6 = 4H market structure holding (higher low / lower high not closed through).  structure_holding
        A and B rows carry section "qualified" plus grade "A" or "B". Ranking: A, B, developing, then total;
        equal totals rank Daily confirmations above 4H, and 4H above 2H.
        C1-C6 and the setup rules are defined in words in CONFLUENCES and SETUP_RULES.
+
+Dynamic layer (cfg-0.13.0, logged only)                        dynamics.py
+    "Dynamic Structure and Personality Layer v0.1" (October 8, 2026): volatility scaled swings and a
+    structure score on 4H, Daily and Weekly, a timeframe ladder, pullback location, break significance,
+    maturity and coil flags, weekly personality traits per instrument (shared per underlying), scaled
+    parameters T1 to T6, four zone widths, and a cross market context score. Every field starts with dyn_
+    and is written beside the v1.0 result (JSON "dynamics" object, CSV columns, a dashboard block, the weekly
+    trait file data/personality/personality_<date>.json and logs/dynamics_compare.csv). Nothing in it changes
+    a check, a grade, a rank or a total. The Daily pull is 1,300 bars for the layer; the v1.0 scoring keeps
+    its 400 bar window (bars.n_bars_daily_scoring) because the Daily bias walk is path dependent.
 
 What it does NOT do
     It places no orders or sizes no positions. The qualification rule is a screening change, not a
@@ -105,6 +118,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+import dynamics as dyn
 import news as newsmod
 
 try:
@@ -112,7 +126,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.9.0"
+SCANNER_CODE_VERSION = "0.13.0"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -145,6 +159,8 @@ class Instrument:
     short_test: bool = False      # gold and S&P: carry v1.0 short experiment flag
     roll: Optional[str] = None
     psych_zone_hw: Optional[float] = None  # fixed zone half-width around grid levels; None = not set
+    psych_zone_hw_mid: Optional[float] = None  # cfg-0.11.0: narrower half-width for mid levels; None = same as major
+    pattern_hw: Optional[float] = None     # cfg-0.12.0: chart pattern sizing basis; None = psych_zone_hw
 
     @property
     def calendar_currencies(self) -> list[str]:
@@ -175,13 +191,13 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
-def _grid_zone_hw(g: dict) -> Optional[float]:
-    v = g.get("zone_half_width")
+def _grid_zone_hw(g: dict, key: str = "zone_half_width") -> Optional[float]:
+    v = g.get(key)
     if v is None:
         return None
     v = float(v)
     if v <= 0:
-        raise ValueError(f"grid zone_half_width must be positive, got {v}")
+        raise ValueError(f"grid {key} must be positive, got {v}")
     return v
 
 
@@ -195,13 +211,15 @@ def build_universe(cfg: dict) -> list[Instrument]:
             g = grids["jpy" if jpy else "fx"]
             out.append(Instrument(symbol=sym, group=grp, asset="fx", tick=0.001 if jpy else 0.00001,
                                   grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                                  psych_zone_hw=_grid_zone_hw(g), tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
+                                  psych_zone_hw=_grid_zone_hw(g), psych_zone_hw_mid=_grid_zone_hw(g, "mid_zone_half_width"),
+                                  pattern_hw=_grid_zone_hw(g, "pattern_half_width"), tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
                                   base=base, quote=quote))
     for it in cfg.get("other_instruments", []):
         g = grids[it["grid"]]
         out.append(Instrument(symbol=it["symbol"], group=it["group"], asset=it["asset"], tick=float(it["tick"]),
                               grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                              psych_zone_hw=_grid_zone_hw(g), tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
+                              psych_zone_hw=_grid_zone_hw(g), psych_zone_hw_mid=_grid_zone_hw(g, "mid_zone_half_width"),
+                              pattern_hw=_grid_zone_hw(g, "pattern_half_width"), tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
                               fut_contract=it.get("fut_contract"), underlying=it.get("underlying"),
                               cot=it.get("cot"), short_test=bool(it.get("short_test", False)),
                               roll=it.get("roll"), base=it.get("base"), quote=it.get("quote")))
@@ -337,20 +355,21 @@ class DemoSource(BarSource):
     """Synthetic random walk with trending regimes. For offline testing only, never for decisions."""
     name = "demo"
 
-    def __init__(self, asof: pd.Timestamp, seed: int = 7):
+    def __init__(self, asof: pd.Timestamp, seed: int = 7, days: int = 420):
         self.asof = asof
         self.seed = seed
+        self.days = days          # calendar days of 1H bars; demo_days() sizes it from bars.n_bars_daily
         self._cache: dict[str, pd.DataFrame] = {}
 
     def _base_1h(self, inst: Instrument) -> pd.DataFrame:
         if inst.symbol in self._cache:
             return self._cache[inst.symbol]
         rng = np.random.default_rng(zlib.crc32(f"{inst.symbol}:{self.seed}".encode()))
-        start_px = {"fx": 1.0 + rng.random(), "gold": 4000.0, "spx": 6500.0, "oil": 70.0}[inst.asset]
+        start_px = {"fx": 1.0 + rng.random(), "gold": 4000.0, "spx": 6500.0, "oil": 70.0, "dxy": 100.0}[inst.asset]
         if inst.asset == "fx" and "JPY" in (inst.base, inst.quote):
             start_px = 100 + 80 * rng.random()
         end = self.asof.floor("h")
-        idx = pd.date_range(end=end, periods=24 * 420, freq="h", tz=UTC)
+        idx = pd.date_range(end=end, periods=24 * self.days, freq="h", tz=UTC)
         idx = idx[idx.dayofweek < 5]  # no weekend bars
         n = len(idx)
         vol = 0.0012 if inst.asset == "fx" else 0.0025
@@ -377,6 +396,11 @@ class DemoSource(BarSource):
 
     def provider(self, inst: Instrument) -> str:
         return f"demo:{inst.symbol}"
+
+
+def demo_days(cfg: dict) -> int:
+    """Calendar days of synthetic 1H bars so the demo Daily series is as long as the live pull (5 trading days a week)."""
+    return int(int(cfg["bars"].get("n_bars_daily", 400)) * 7 / 5) + 30
 
 
 # =============================================================================
@@ -581,24 +605,53 @@ class RoutedSource(BarSource):
         return self.fx.provider(inst)
 
 
-def load_dxy(cfg: dict, src: BarSource, daily_cutoff: pd.Timestamp, demo: bool, source: str) -> tuple[Optional[str], str]:
-    """[OWNER cfg-0.8.0] US Dollar Index Daily bias for gold ('long', 'short' or None). Context only: a failure
-    never stops the scan, and DXY never qualifies or blocks a setup."""
+def dxy_instrument(cfg: dict) -> Instrument:
     d = cfg.get("dxy", {})
-    if demo or source == "csv" or not d.get("enabled", True):
-        return None, "not loaded (demo, CSV or disabled)"
-    inst = Instrument("DXY", "Index", "dxy", 0.001, 10.0, 5.0, d.get("tv_symbol", "DXY"), d.get("tv_exchange", "TVC"))
+    return Instrument("DXY", "Index", "dxy", 0.001, 10.0, 5.0, d.get("tv_symbol", "DXY"), d.get("tv_exchange", "TVC"))
+
+
+def load_dxy_bars(cfg: dict, src: BarSource, daily_cutoff: pd.Timestamp, demo: bool, source: str) -> tuple[Optional[pd.DataFrame], str]:
+    """Completed DXY Daily bars (TVC:DXY, the full bars.n_bars_daily pull). Demo: the synthetic series, so the
+    dynamics layer's DXY cross check runs offline [Dyn 1.6]. CSV or disabled: None. A failure never stops the scan."""
+    inst = dxy_instrument(cfg)
+    if demo:
+        try:
+            return completed(src.get(inst, TF_D), TF_D, daily_cutoff), "demo"
+        except Exception as exc:  # noqa: BLE001
+            return None, f"demo failed: {exc}"
+    if source == "csv" or not cfg.get("dxy", {}).get("enabled", True):
+        return None, "not loaded (CSV or disabled)"
     try:
         tv = src if isinstance(src, TradingViewSource) else getattr(src, "other", None)
         tv = tv if isinstance(tv, TradingViewSource) else TradingViewSource(cfg)
         dfd = completed(tv.get(inst, TF_D), TF_D, daily_cutoff)
-        if len(dfd) < 60:
-            return None, f"only {len(dfd)} Daily bars"
-        b = daily_bias(dfd, find_pivots(dfd, int(cfg["features"]["pivot_width"])))
-        return b.bias, f"Daily bias {b.bias or 'neutral'}, close {dfd['close'].iloc[-1]:.2f} on {fmt_ts(dfd.index[-1])}"
+        return dfd, f"{len(dfd)} Daily bars"
     except Exception as exc:  # noqa: BLE001
         LOG.warning("DXY load failed: %s", exc)
         return None, f"failed: {exc}"
+
+
+def dxy_bias_from(cfg: dict, dfd: Optional[pd.DataFrame], status: str, demo: bool, source: str) -> tuple[Optional[str], str]:
+    """[OWNER cfg-0.8.0] US Dollar Index Daily bias for gold ('long', 'short' or None). Context only: DXY never
+    qualifies or blocks a setup. Read on the v1.0 scoring window (bars.n_bars_daily_scoring), so the longer
+    pull for the dynamics layer does not move it."""
+    if demo or source == "csv" or not cfg.get("dxy", {}).get("enabled", True):
+        return None, "not loaded (demo, CSV or disabled)"
+    if dfd is None:
+        return None, status
+    n_sc = int(cfg["bars"].get("n_bars_daily_scoring", 0) or 0)
+    if n_sc > 0 and len(dfd) > n_sc:
+        dfd = dfd.iloc[-n_sc:]
+    if len(dfd) < 60:
+        return None, f"only {len(dfd)} Daily bars"
+    b = daily_bias(dfd, find_pivots(dfd, int(cfg["features"]["pivot_width"])))
+    return b.bias, f"Daily bias {b.bias or 'neutral'}, close {dfd['close'].iloc[-1]:.2f} on {fmt_ts(dfd.index[-1])}"
+
+
+def load_dxy(cfg: dict, src: BarSource, daily_cutoff: pd.Timestamp, demo: bool, source: str) -> tuple[Optional[str], str]:
+    """DXY Daily bias for gold in one call (load_dxy_bars, then dxy_bias_from)."""
+    dfd, status = load_dxy_bars(cfg, src, daily_cutoff, demo, source)
+    return dxy_bias_from(cfg, dfd, status, demo, source)
 
 
 def load_instrument_bars(src: BarSource, inst: Instrument, cfg: dict, asof: pd.Timestamp,
@@ -618,6 +671,12 @@ def load_instrument_bars(src: BarSource, inst: Instrument, cfg: dict, asof: pd.T
             bars[tf] = completed(src.get(inst, tf), tf, asof)
     # [Add 4] pre NY: Daily bias stays frozen from the evening run -> cut Daily at the evening run time
     bars[TF_D] = completed(src.get(inst, TF_D), TF_D, daily_cutoff)
+    # [Dyn 1.1] cfg-0.13.0: the full pull (1,300 bars) feeds the dynamics layer; the v1.0 scoring keeps its
+    # 400 bar window because the Daily bias walk is path dependent (see the decision record)
+    bars[dyn.TF_D_FULL] = bars[TF_D]
+    n_sc = int(cfg["bars"].get("n_bars_daily_scoring", 0) or 0)
+    if n_sc > 0 and len(bars[TF_D]) > n_sc:
+        bars[TF_D] = bars[TF_D].iloc[-n_sc:]
     mb = int(cfg["bars"]["min_completed_bars"])
     for tf in (TF_D, TF_4H, TF_2H):
         e = check_bars(bars[tf], mb)
@@ -847,7 +906,7 @@ def zone_half_width(inst: Instrument, atr4_value: float, fcfg: dict) -> float:
 
 def psych_zone_half_width(inst: Instrument, atr_hw: float) -> tuple[float, str]:
     """[OWNER cfg-0.2.0] Key levels are zones, not lines. Half-width around every major and mid grid
-    level: the fixed width from config (FX +/-15 pips, gold +/-$20), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
+    level: the fixed width from config (FX +/-15 pips, gold +/-$10 major), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
     if inst.psych_zone_hw is not None:
         return inst.psych_zone_hw, "fixed"
     return atr_hw, "atr"
@@ -880,9 +939,17 @@ def nearest_level(inst: Instrument, price: float) -> tuple[float, str]:
     return lvl, kind
 
 
+def level_half_width(inst: Instrument, kind: str, hw: float) -> float:
+    """[OWNER cfg-0.11.0] Half-width of one level's zone: the grid's mid width for a mid level when set
+    (gold +/-$8 at every $50 mid), otherwise hw. Mids are weaker levels, so they get a tighter box."""
+    if kind == "mid" and inst.psych_zone_hw_mid is not None:
+        return inst.psych_zone_hw_mid
+    return hw
+
+
 def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, float, str]:
     lvl, kind = nearest_level(inst, price)
-    return abs(price - lvl) <= hw + 1e-12, lvl, kind
+    return abs(price - lvl) <= level_half_width(inst, kind, hw) + 1e-12, lvl, kind
 
 
 # =============================================================================
@@ -893,10 +960,12 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 # trade gate, so every logged trade names the checks it had. Edit with the code that tests them.
 CONFLUENCES = {
     "c1": ("Trend alignment", "Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade "
-                              "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
+                              "direction; if they conflict, no trade. Gold, S&P and oil: Weekly = bias, Daily = "
+                              "confirmation, no 4H (see Weekly and Daily)."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
                              "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
-                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-20; "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold every 100 +/-10 and every 50 "
+                             "mid +/-8; S&P every 100 and 50, +/-20; "
                              "oil every 5.00 and 2.50, +/-1.00."),
     "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
                                     "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "
@@ -908,7 +977,7 @@ CONFLUENCES = {
     "c5": ("2H EMA momentum", "On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short."),
     "c6": ("Market structure", "4H structure holds at entry: the latest 4H swing low is a higher low (a lower high "
                                "for a short) and no 2H close has broken it since. A close through it means structure "
-                               "is compromised: skip."),
+                               "is compromised: skip. Gold, S&P and oil use the Daily swing and Daily closes."),
 }
 CONF_KEYS = tuple(CONFLUENCES)
 
@@ -928,6 +997,14 @@ SETUP_RULES = (
     ("Stop and targets", "Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. "
                          "TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to "
                          "breakeven."),
+    ("Weekly and Daily", "Gold, S&P and oil: Weekly = bias, Daily = confirmation, and the Weekly overrides. Both "
+                         "bullish: buys only; both bearish: sells only (high confidence). Weekly bullish, Daily "
+                         "bearish: a retracement, wait for a Daily higher low and reversal, then buy (mirror for "
+                         "sells). Against the Weekly: avoid. Weekly consolidating: no bias, don't force it."),
+    ("Structure break", "Gold, S&P and oil positions, checked every run: Daily intact but 4H broke = normal "
+                        "retracement, stay in and watch. Daily violated (a Daily close through the last higher low, "
+                        "or lower high for a short, or the Daily bias turning against the trade) = trade is done, "
+                        "get out; a Windows notification is sent."),
     ("Developing", "Any 2 or more of C1-C6 that do not make a B setup. Watch only."),
 )
 GOLDEN_FIBS = (0.5, 0.618)
@@ -1062,14 +1139,16 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
     """[OWNER cfg-0.4.0, C4] Double bottom/top and (inverse) head and shoulders on Daily or 4H, confirmed by a
     candle CLOSE beyond the neckline (a wick does not count) within the last break_max_age_bars bars,
     with the latest close still beyond it. The reversal extreme (a bottom, or the head) must sit in a key
-    level zone. Tolerances scale with the instrument's zone half-width. Returns '' if none."""
+    level zone. Tolerances scale with the instrument's zone half-width, or with the grid's
+    pattern_half_width when set (cfg-0.12.0: gold keeps its $20 pattern sizes after its zones narrowed). Returns '' if none."""
     t = len(df) - 1
     c = df["close"].values
     seq = alternating_upto(pivots, t)
     ext = "L" if direction == LONG else "H"
     idx = [i for i, q in enumerate(seq) if q.kind == ext]
-    tol = float(cp["match_tol_zone_mult"][tf]) * zone_hw
-    margin = float(cp["head_margin_zone_mult"][tf]) * zone_hw
+    scale_hw = inst.pattern_hw if inst.pattern_hw is not None else zone_hw
+    tol = float(cp["match_tol_zone_mult"][tf]) * scale_hw
+    margin = float(cp["head_margin_zone_mult"][tf]) * scale_hw
     min_gap = int(cp["min_gap_bars"])
     max_age = int(cp["break_max_age_bars"])
     beyond = (lambda x, lvl: x > lvl) if direction == LONG else (lambda x, lvl: x < lvl)
@@ -1118,21 +1197,72 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
     return ""
 
 
-def structure_holding(df4: pd.DataFrame, pivots4: list[Pivot], df2: pd.DataFrame, direction: str) -> tuple[bool, str]:
-    """[OWNER cfg-0.8.0, C6] Latest confirmed 4H swing low above the one before (long; for a short the latest swing
-    high below the one before), and no completed 2H close beyond it since that swing. Wicks never break it."""
-    seq = alternating_upto(pivots4, len(df4) - 1)
+def structure_check(df_s: pd.DataFrame, pivots: list[Pivot], df_c: pd.DataFrame, direction: str,
+                    tf: str = "4H", close_tf: str = "2H") -> tuple[str, str]:
+    """Swing structure on df_s for a direction: ('intact' | 'broken' | 'none', text).
+    intact: the latest confirmed swing low is above the one before (long; for a short the latest swing high is
+    below the one before) and no df_c close has gone through it since that swing. Wicks never break it.
+    broken: a close went through it (structure compromised). none: no higher low (lower high) to hold."""
+    seq = alternating_upto(pivots, len(df_s) - 1)
     kind, name = ("L", "higher low") if direction == LONG else ("H", "lower high")
     pts = [p for p in seq if p.kind == kind][-2:]
     if len(pts) < 2:
-        return False, "fewer than two 4H swings"
+        return "none", f"fewer than two {tf} swings"
     p0, p1 = pts
-    if (p1.price <= p0.price) if direction == LONG else (p1.price >= p0.price):
-        return False, f"no 4H {name}: {_fmt(p1.price, 6)} vs prior {_fmt(p0.price, 6)}"
-    closes = df2.loc[df2.index >= df4.index[p1.k], "close"].values
+    closes = df_c.loc[df_c.index >= df_s.index[p1.k], "close"].values
     if len(closes) and ((closes.min() < p1.price) if direction == LONG else (closes.max() > p1.price)):
-        return False, f"2H closed through the 4H {name} {_fmt(p1.price, 6)}: structure compromised"
-    return True, f"4H {name} {_fmt(p1.price, 6)} holding (prior {_fmt(p0.price, 6)})"
+        return "broken", f"{close_tf} closed through the {tf} swing {_fmt(p1.price, 6)}: structure compromised"
+    if (p1.price <= p0.price) if direction == LONG else (p1.price >= p0.price):
+        return "none", f"no {tf} {name}: {_fmt(p1.price, 6)} vs prior {_fmt(p0.price, 6)}"
+    return "intact", f"{tf} {name} {_fmt(p1.price, 6)} holding (prior {_fmt(p0.price, 6)})"
+
+
+def structure_holding(df4: pd.DataFrame, pivots4: list[Pivot], df2: pd.DataFrame, direction: str) -> tuple[bool, str]:
+    """[OWNER cfg-0.8.0, C6] 4H structure holding at entry (see structure_check), 2H closes."""
+    status, text = structure_check(df4, pivots4, df2, direction)
+    return status == "intact", text
+
+
+# [OWNER cfg-0.10.0] Gold, S&P and oil read structure as Weekly bias + Daily confirmation
+WEEKLY_ASSETS = ("gold", "spx", "oil")
+
+
+def uses_weekly(inst: Instrument) -> bool:
+    return inst.asset in WEEKLY_ASSETS
+
+
+def weekly_daily_read(weekly: Optional[str], daily: Optional[str], direction: str) -> tuple[bool, str]:
+    """[OWNER cfg-0.10.0] (C1 passes, note). Weekly = bias, Daily = confirmation; the Weekly overrides.
+    Aligned: trade with it. Daily against the Weekly: a retracement, wait for the Daily to reverse.
+    Against the Weekly: avoid. Weekly consolidating: no bias, don't force it."""
+    w = {LONG: "bullish", SHORT: "bearish"}
+    act = {LONG: "buy", SHORT: "sell"}
+    if weekly not in (LONG, SHORT):
+        return False, "Weekly consolidating: no bias yet, don't force it"
+    if direction != weekly:
+        return False, (f"Against the Weekly ({w[weekly]}): "
+                       + ("small bounce possible but risky, usually avoid" if daily == direction else "avoid"))
+    if daily == weekly:
+        return True, f"Weekly and Daily {w[weekly]}: look for {act[weekly]}s, high confidence"
+    if daily in (LONG, SHORT):
+        swing = "higher low" if weekly == LONG else "lower high"
+        return False, (f"Weekly {w[weekly]}, Daily retracing: patience, wait for a Daily {swing} and reversal, "
+                       f"then {act[weekly]}")
+    return False, f"Weekly {w[weekly]}, Daily neutral: wait for the Daily to confirm"
+
+
+def exit_check(daily_struct: str, daily_bias: str, h4_struct: str, direction: str) -> tuple[str, str]:
+    """[OWNER cfg-0.10.0] Open position health: ('exit' | 'watch' | 'hold' | 'ok', text).
+    Daily structure violated: the trade is done. 4H broke with the Daily intact: normal retracement, stay in."""
+    against = daily_bias in (LONG, SHORT) and daily_bias != direction
+    if daily_struct == "broken" or against:
+        return "exit", "Daily structure violated: trade is done, get out"
+    if daily_struct != "intact":
+        swing = "higher low" if direction == LONG else "lower high"
+        return "watch", f"No Daily {swing} to hold yet: watch"
+    if h4_struct != "intact":
+        return "hold", "4H broke, Daily intact: normal retracement, stay in and watch"
+    return "ok", "Daily and 4H structure intact"
 
 
 def weekly_from_daily(dfd: pd.DataFrame) -> pd.DataFrame:
@@ -1778,7 +1908,10 @@ class Row:
     c3_levels: str = ""            # retracements hit, e.g. "50.0 61.8"
     c3_golden: bool = False        # 50% or 61.8% hit
     stacked: bool = False          # a hit 50%/61.8% level sits inside the C2 zone
-    weekly: str = ""               # Weekly structure (gold C1)
+    weekly: str = ""               # Weekly structure (gold, S&P, oil C1)
+    htf_note: str = ""             # Weekly/Daily read for gold, S&P and oil (cfg-0.10.0)
+    daily_struct: str = ""         # Daily structure for this direction: intact | broken | none
+    h4_struct: str = ""            # 4H structure for this direction: intact | broken | none
     dxy: str = ""                  # gold: DXY Daily bias and what it means for this direction
     plan: dict = field(default_factory=dict)   # stop 78.6/89 %, TP1 -27 %, TP2 -61.8 % from the impulse
     cot_points: int = 0
@@ -1811,6 +1944,7 @@ class Row:
     roll: str = ""
     flags: list = field(default_factory=list)
     reason: str = ""
+    dynamics: dict = field(default_factory=dict)   # cfg-0.13.0: dyn_ fields, logged only (dynamics.py)
 
 
 @dataclass
@@ -1903,7 +2037,8 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
     piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)
     skind = setup_kind(inst)
     s_wk = None
-    if skind == "gold":   # [OWNER cfg-0.8.0] gold needs the Weekly to agree too
+    weekly_read = uses_weekly(inst)
+    if weekly_read:   # [OWNER cfg-0.10.0] gold, S&P and oil: Weekly = bias, Daily = confirmation
         wk = weekly_from_daily(dfd)
         s_wk = structure(alternating_upto(find_pivots(wk, w), len(wk) - 1)) if len(wk) else None
     atr4 = atr(df4, int(f["atr_period"]))
@@ -1926,9 +2061,10 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
             r.flags.append("Daily bias invalidated on latest Daily bar")
         # C1 [v1.0 D01 + D02]
         r.c1 = bias.bias == direction and s4 == direction
+        if weekly_read:
+            r.weekly = s_wk or "consolidating"
+            r.c1, r.htf_note = weekly_daily_read(s_wk, bias.bias, direction)   # no 4H in C1
         if skind == "gold":
-            r.weekly = s_wk or "mixed"
-            r.c1 = bias.bias == direction and s_wk == direction   # [OWNER cfg-0.8.0] Weekly + Daily, no 4H
             r.dxy = ("unavailable" if dxy is None else
                      f"DXY {'falling' if dxy == SHORT else 'rising'}: "
                      + ("extra conviction" if (dxy == SHORT) == (direction == LONG) else "against this trade")
@@ -1946,7 +2082,9 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         # C2 [v1.0 Z01 / C2] at the latest completed 2H close  [Add 6.1]
         ok, lvl, kind = in_psych_zone(inst, P, zhw)
         r.c2, r.zone_level, r.zone_kind = ok, lvl, kind
-        r.zone_low, r.zone_high = lvl - zhw, lvl + zhw
+        lhw = level_half_width(inst, kind, zhw)   # [OWNER cfg-0.11.0] mid levels may be narrower
+        r.zone_half_width = lhw
+        r.zone_low, r.zone_high = lvl - lhw, lvl + lhw
         # [OWNER cfg-0.2.0] Wick principle: wicks testing the zone are an early alert, never a scored check
         wcfg = f.get("zone_wicks", {})
         r.zone_wicks = zone_wick_tests(df2, direction, r.zone_low, r.zone_high, int(wcfg.get("lookback_2h_bars", 6)))
@@ -1983,7 +2121,10 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
             # bool(): numpy bools were saved to the scan JSON as the text "True"/"False"
             r.c5 = bool(e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1])
         # [OWNER cfg-0.8.0] C6 = 4H market structure holding; the trend line is kept as information only
-        r.c6, r.trendline = structure_holding(df4, piv_4, df2, direction)
+        r.h4_struct, h4_txt = structure_check(df4, piv_4, df2, direction)
+        r.daily_struct, d_txt = structure_check(dfd, piv_d, dfd, direction, "Daily", "Daily")
+        # [OWNER cfg-0.10.0] gold, S&P and oil: C6 = Daily structure (a 4H break inside it is a retracement)
+        r.c6, r.trendline = ((r.daily_struct == "intact", d_txt) if weekly_read else (r.h4_struct == "intact", h4_txt))
         tl_ok, tl_txt = trendline_signal(df4, piv_4, df2, direction, hw)
         if tl_ok:
             r.flags.append(f"trend line: {tl_txt}")
@@ -2026,15 +2167,17 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
 
 
 def rejection_reason(rows: list[Row]) -> str:
-    bias = rows[0].daily_bias
-    if bias == "neutral":
-        return "Daily bias neutral"
-    r = next(x for x in rows if x.direction == bias)
-    if r.weekly:   # gold: Weekly + Daily, no 4H
-        if r.weekly != bias:
-            return "Weekly disagrees (gold)"
-    elif r.structure_4h != bias:
-        return "4H disagrees"
+    if rows[0].weekly:   # gold, S&P, oil: the Weekly sets the bias, the Daily confirms (no 4H)
+        r = next((x for x in rows if x.direction == rows[0].weekly), rows[0])
+        if not r.c1:
+            return r.htf_note
+    else:
+        bias = rows[0].daily_bias
+        if bias == "neutral":
+            return "Daily bias neutral"
+        r = next(x for x in rows if x.direction == bias)
+        if r.structure_4h != bias:
+            return "4H disagrees"
     if not r.c2 and not r.c3:
         return "not at a key level zone or Fib level"
     return r.grade_note or f"technical score {r.technical}"
@@ -2115,6 +2258,14 @@ def _plan_html(r: "Row") -> str:
     return out
 
 
+def _structure_html(p: dict) -> str:
+    st = p.get("structure")
+    if not st:
+        return "<span class='muted'>–</span>"
+    cls = {"exit": "short", "hold": "warn", "watch": "warn", "ok": "long"}.get(st, "muted")
+    return f"<span class='{cls}'><b>{html.escape(p.get('structure_note', ''))}</b></span>"
+
+
 def render_broker(broker: Optional[dict]) -> str:
     """[OWNER cfg-0.5.0] Dashboard sections: MT5 broker prices for the currency pairs and open positions."""
     e = html.escape
@@ -2129,13 +2280,14 @@ def render_broker(broker: Optional[dict]) -> str:
     else:
         out += ("<div class='wrap'><table><tr><th>Ticket</th><th>Instrument</th><th>Dir</th><th class='num'>Lots</th>"
                 "<th>Opened (UTC)</th><th class='num'>Entry</th><th class='num'>Now</th><th class='num'>SL</th>"
-                "<th class='num'>TP</th><th class='num'>Swap</th><th class='num'>P/L</th><th>Comment</th></tr>")
+                "<th class='num'>TP</th><th class='num'>Swap</th><th class='num'>P/L</th><th>Structure</th><th>Comment</th></tr>")
         for p in pos:
             pl_cls = "long" if p["profit"] >= 0 else "short"
             out += (f"<tr><td>{p['ticket']}</td><td><b>{e(p['symbol'])}</b></td><td class='{p['direction']}'>{p['direction']}</td>"
                     f"<td class='num'>{p['volume']}</td><td>{e(p['open_utc'])}</td><td class='num'>{_fmt(p['open_price'], 6)}</td>"
                     f"<td class='num'>{_fmt(p['price'], 6)}</td><td class='num'>{_fmt(p['sl'], 6)}</td><td class='num'>{_fmt(p['tp'], 6)}</td>"
-                    f"<td class='num'>{p['swap']:.2f}</td><td class='num {pl_cls}'>{p['profit']:.2f}</td><td>{e(p['comment'])}</td></tr>")
+                    f"<td class='num'>{p['swap']:.2f}</td><td class='num {pl_cls}'>{p['profit']:.2f}</td>"
+                    f"<td class='wrapc'>{_structure_html(p)}</td><td>{e(p['comment'])}</td></tr>")
         out += "</table></div>"
     prices = broker.get("prices", [])
     live = [p for p in prices if p["bid"] is not None]
@@ -2269,6 +2421,7 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
              "reference levels from the impulse, not orders. Overlays rank setups; they never grade them. Scores are "
              "research outputs, not a validated edge.</div>")
     n = len(top)
+    dyn_on = any(r.dynamics for r in top)   # [Dyn 7.3] four short lines per top setup, nothing else
     body = f"<h2>Top {n} setups</h2>"
     if n < 5:
         body += f"<p class='muted'>{n} setup(s) met the A, B or developing definition; the list is not padded.</p>"
@@ -2277,7 +2430,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                 f"{_conf_th()}<th class='num'>Tech</th>" \
                 "<th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th><th>Fib, plan and execution</th>" \
                 "<th>Zone</th><th>Ladder in zone</th>" \
-                "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th></tr>"
+                "<th>COT detail</th><th>News</th><th>Calendar</th><th>Flags</th>" \
+                + ("<th>Dynamic layer</th>" if dyn_on else "") + "</tr>"
         for r in top:
             lad = " ".join(f"{k}{'✓' if v else '·'}" for k, v in r.ladder_in_zone.items()) or "no impulse"
             zone_txt = (f"{_fmt(r.zone_level, 6)} {e(r.zone_kind)}<br><span class='muted'>{_fmt(r.zone_low, 6)} to "
@@ -2307,7 +2461,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                      + f"<td class='num'>{r.technical}</td><td class='num'>{r.cot_points:+d}</td><td class='num'>{r.sentiment_points:+d}</td>"
                      f"<td class='num'><b>{r.total}</b></td><td class='wrapc'>{_plan_html(r)}</td>"
                      f"<td>{zone_txt}</td><td>{e(lad)}</td><td>{cot_txt}</td><td class='wrapc'>{news}</td>"
-                     f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td></tr>")
+                     f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td>"
+                     + (f"<td class='wrapc'>{dyn.html_block(r.dynamics, e)}</td>" if dyn_on else "") + "</tr>")
         body += "</table></div>"
     body += render_broker(broker)
     if news_view:
@@ -2364,33 +2519,52 @@ def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row]
                  "setup", "grade", "grade_note", "c3_levels", "c3_golden", "stacked", "weekly", "dxy", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
                  "zone_half_width", "zone_low", "zone_high", "zone_width_source", "zone_wicks", "daily_bias", "bias_invalidation", "structure_4h", "candle", "c4_tf", "trendline",
                  "impulse_note", "short_test", "same_underlying", "roll"]
+    dyn_on = any(r.dynamics for r in all_rows)   # [Dyn 7.3] dyn_ columns go after the existing ones, never between
     with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
         wr.writerow(["run_utc", "run_type", "config_version"] + flat_keys + ["cot_index", "cot_status", "sentiment_S",
-                                                                         "thin_news", "next_event", "event_risk", "flags"])
+                                                                         "thin_news", "next_event", "event_risk", "flags"]
+                    + (dyn.DYN_CSV_KEYS if dyn_on else []))
         for r in all_rows:
             d = asdict(r)
             wr.writerow([meta["asof_utc"], meta["run_type"], meta["config_version"]] + [d[k] for k in flat_keys]
                         + [r.cot.get("index"), r.cot.get("status"), r.sentiment.get("S"), r.sentiment.get("thin"),
-                           r.calendar.get("event"), r.calendar.get("event_risk"), "; ".join(r.flags)])
+                           r.calendar.get("event"), r.calendar.get("event_risk"), "; ".join(r.flags)]
+                        + (dyn.csv_values(r.dynamics) if dyn_on else []))
     return paths
 
 
+C2_LOG_COLUMNS = ["run_utc", "run_type", "config_version", "symbol", "c2", "ref_price", "zone_level", "zone_half_width", "distance"]
+
+
 def append_c2_log(log_dir: Path, meta: dict, results: list[InstrumentResult]) -> None:
-    """[Add 5] Log C2 rejection counts per instrument so a tighter grid can be tested on evidence."""
+    """[Add 5] Log C2 rejection counts per instrument so a tighter grid can be tested on evidence.
+    [Dyn T4] cfg-0.13.0 appends the four zone widths with their C2 result and expected pass rate. A log written
+    with the old header is renamed c2_rejections_pre_dynamics.csv (kept, never deleted) and a new file starts."""
     log_dir.mkdir(parents=True, exist_ok=True)
     p = log_dir / "c2_rejections.csv"
+    header = C2_LOG_COLUMNS + dyn.C2_EXTRA_COLUMNS
+    if p.exists():
+        with open(p, "r", encoding="utf-8") as fh:
+            first = fh.readline().strip()
+        if first and first != ",".join(header):
+            old = log_dir / "c2_rejections_pre_dynamics.csv"
+            if old.exists():
+                old = log_dir / f"c2_rejections_pre_dynamics_{meta['stamp']}.csv"
+            p.rename(old)
+            LOG.info("c2_rejections.csv had the pre dynamics header; kept as %s", old.name)
     new = not p.exists()
     with open(p, "a", newline="", encoding="utf-8") as fh:
         wr = csv.writer(fh)
         if new:
-            wr.writerow(["run_utc", "run_type", "config_version", "symbol", "c2", "ref_price", "zone_level", "zone_half_width", "distance"])
+            wr.writerow(header)
         for res in results:
             if not res.rows:
                 continue
             r = res.rows[0]
             wr.writerow([meta["asof_utc"], meta["run_type"], meta["config_version"], r.symbol, int(r.c2), r.ref_price,
-                         r.zone_level, r.zone_half_width, None if r.zone_level is None else abs(r.ref_price - r.zone_level)])
+                         r.zone_level, r.zone_half_width, None if r.zone_level is None else abs(r.ref_price - r.zone_level)]
+                        + dyn.c2_extra_values(r.dynamics))
 
 
 # =============================================================================
@@ -2773,6 +2947,21 @@ def next_scheduled(now: pd.Timestamp, cfg: dict) -> tuple[pd.Timestamp, str]:
     return min(cands)
 
 
+def _dynamics_hooks() -> "dyn.Hooks":
+    """[Dyn 7] The v1.0 helpers the dynamics layer borrows; it never redefines them."""
+    return dyn.Hooks(find_pivots=find_pivots, alternating_upto=alternating_upto, weekly_from_daily=weekly_from_daily,
+                     in_roll_window=in_roll_window, nearest_level=nearest_level)
+
+
+def _dynamics_v10_structure(bars: dict[str, pd.DataFrame], w: int) -> dict[str, str]:
+    """The v1.0 structure on each timeframe as the scanner reads it (two bar pivots on the scoring window), for
+    the dyn_structure_agrees comparison [Dyn S2]."""
+    out = {}
+    for tf, df in ((TF_4H, bars[TF_4H]), (TF_D, bars[TF_D]), (dyn.TF_W, weekly_from_daily(bars[TF_D]))):
+        out[tf] = (structure(alternating_upto(find_pivots(df, w), len(df) - 1)) or "mixed") if len(df) else "mixed"
+    return out
+
+
 def run_scan(cfg: dict, base: Path, run: str, asof: pd.Timestamp, source: str, demo: bool,
              out_dir: Optional[Path] = None) -> dict[str, Path]:
     run_type, daily_cutoff = resolve_run(run, asof)
@@ -2797,7 +2986,7 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
               by_sym: dict[str, Instrument], asof: pd.Timestamp, source: str, demo: bool, out_dir: Optional[Path],
               client: Optional[Mt5Client]) -> dict[str, Path]:
     if demo:
-        src: BarSource = DemoSource(asof)
+        src: BarSource = DemoSource(asof, days=demo_days(cfg))
     elif source == "csv":
         src = CsvSource(cfg, base)
     elif client and client.mt5 and cfg["bars"].get("fx_source") == "mt5":
@@ -2828,7 +3017,10 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         h.tone = s
         h.theme = engine.tag_theme(h.title)
 
-    dxy_bias, dxy_status = load_dxy(cfg, src, daily_cutoff, demo, source)
+    dxy_bars, dxy_bars_status = load_dxy_bars(cfg, src, daily_cutoff, demo, source)
+    dxy_bias, dxy_status = dxy_bias_from(cfg, dxy_bars, dxy_bars_status, demo, source)
+    dyn_on = dyn.enabled(cfg)
+    scan_data: list = []   # [Dyn 7.1] bars and rows per instrument for the dynamics layer (errored ones with no rows)
     results: list[InstrumentResult] = []
     all_rows: list[Row] = []
     latest = {TF_D: None, TF_4H: None, TF_2H: None}
@@ -2838,15 +3030,18 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         except Exception as exc:  # noqa: BLE001
             LOG.warning("%s: data load failed: %s", inst.symbol, exc)
             results.append(InstrumentResult(inst, [], [f"data load failed: {exc}"], src.provider(inst), {}))
+            scan_data.append(dyn.InstrumentData(inst, {}, []))
             continue
-        last = {tf: (str(b.index[-1] + TF_DELTA[tf]) if len(b) else "") for tf, b in bars.items()}
-        for tf, b in bars.items():
+        last = {tf: (str(bars[tf].index[-1] + TF_DELTA[tf]) if len(bars[tf]) else "") for tf in (TF_D, TF_4H, TF_2H)}
+        for tf in (TF_D, TF_4H, TF_2H):
+            b = bars[tf]
             if len(b):
                 t = b.index[-1] + TF_DELTA[tf]
                 latest[tf] = t if latest[tf] is None or t > latest[tf] else latest[tf]
         if errs:
             LOG.warning("%s: data checks failed: %s", inst.symbol, "; ".join(errs))
             results.append(InstrumentResult(inst, [], errs, src.provider(inst), last))
+            scan_data.append(dyn.InstrumentData(inst, {}, []))
             continue
         reading = cot_for_instrument(inst, cot, asof, cfg["cot"])
         sent = engine.score(inst, recent, asof) if tone.kind != "off" else {"S": None, "weight_sum": 0, "thin": True, "drivers": []}
@@ -2854,6 +3049,8 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         rows = score_instrument(inst, bars, cfg, reading, sent, cal, engine, dxy_bias)
         results.append(InstrumentResult(inst, rows, [], src.provider(inst), last))
         all_rows += rows
+        scan_data.append(dyn.InstrumentData(inst, bars, rows,
+                                            _dynamics_v10_structure(bars, int(cfg["features"]["pivot_width"])) if dyn_on else {}))
 
     top = rank(all_rows, 5)
     mark_same_underlying(top, by_sym)
@@ -2908,12 +3105,22 @@ def _run_scan(cfg: dict, base: Path, run_type: str, daily_cutoff: pd.Timestamp, 
         else:
             meta["freshness"]["MT5"] = f"unavailable: {client.status}"
     od = out_dir or (base / cfg["paths"]["output_dir"])
+    if dyn_on:   # [Dyn 7.1] after scoring, ranking and the footer: logged beside the v1.0 results, never deciding
+        try:
+            dyn.apply_layer(cfg, base, od, asof, run_type, scan_data, dxy_bars, demo, _dynamics_hooks(), meta)
+        except Exception as exc:  # noqa: BLE001
+            LOG.exception("dynamics layer failed; the scan continues without it")
+            meta["freshness"]["Dynamics"] = f"failed: {exc}"
     news_view = build_news_view(cfg, base, asof, events, universe, client, demo)
     news_view["tz"] = cfg.get("display_timezone", "America/Chicago")
     prev_file, prev = previous_grades(od)
+    prev_exits = previous_exits(od)
+    if broker and broker.get("positions"):
+        annotate_structure(broker["positions"], all_rows, by_sym)
     paths = write_outputs(od, meta, top, all_rows, footer, broker, news_view)
     if not demo:
         alert_new_setups(cfg, new_graded(prev, all_rows), prev_file, paths["html"])
+        alert_exits(cfg, (broker or {}).get("positions", []), prev_exits, paths["html"])
         prune_outputs(od, asof, int(cfg.get("output", {}).get("keep_intraday_html_days", 14)))
     append_c2_log(base / cfg["paths"]["log_dir"], meta, results)
     if client:
@@ -2952,6 +3159,39 @@ def new_graded(prev: dict, rows: list[Row]) -> list[Row]:
                   key=lambda r: (-GRADE_RANK[r.grade], -r.total, r.symbol))
 
 
+def previous_exits(out_dir: Path) -> dict:
+    """{ticket: structure status} for open positions in the newest live scan on disk."""
+    for p in sorted(out_dir.glob("scan_*.json"), reverse=True) if out_dir.exists() else []:
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if d.get("meta", {}).get("demo"):
+            continue
+        return {x["ticket"]: x.get("structure") for x in (d.get("broker") or {}).get("positions", []) if "ticket" in x}
+    return {}
+
+
+def annotate_structure(positions: list[dict], rows: list[Row], by_sym: dict[str, Instrument]) -> None:
+    """[OWNER cfg-0.10.0] Gold, S&P and oil positions: Daily violated = get out; 4H broke, Daily intact = stay in."""
+    idx = {(r.symbol, r.direction): r for r in rows}
+    for p in positions:
+        inst, r = by_sym.get(p["symbol"]), idx.get((p["symbol"], p["direction"]))
+        if inst and r and uses_weekly(inst):
+            p["structure"], p["structure_note"] = exit_check(r.daily_struct, r.daily_bias, r.h4_struct, p["direction"])
+
+
+def alert_exits(cfg: dict, positions: list[dict], prev: dict, html_path: Path) -> None:
+    """Notify once when a position's Daily structure becomes violated (not again while it stays violated)."""
+    hits = [p for p in positions if p.get("structure") == "exit" and prev.get(p["ticket"]) != "exit"]
+    if not hits:
+        return
+    lines = [f"{p['symbol']} {p['direction']} #{p['ticket']}: Daily structure violated, get out" for p in hits]
+    LOG.warning("exit signals: %s", "; ".join(lines))
+    if cfg.get("alerts", {}).get("windows_toast", True):
+        windows_toast(f"Scanner: EXIT {len(hits)} position{'s' if len(hits) > 1 else ''}", "\n".join(lines[:4]), html_path)
+
+
 def windows_toast(title: str, body: str, link: Optional[Path] = None) -> bool:
     """Show a Windows notification through PowerShell's built-in notifier. False when not shown."""
     if sys.platform != "win32":
@@ -2972,7 +3212,7 @@ def windows_toast(title: str, body: str, link: Optional[Path] = None) -> bool:
           ".Show([Windows.UI.Notifications.ToastNotification]::new($x))")
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                           capture_output=True, text=True, timeout=30,
+                           capture_output=True, text=True, timeout=90,   # slow when the screen is locked
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))   # no console flash under pythonw
     except (OSError, subprocess.TimeoutExpired) as exc:
         LOG.warning("notification failed: %s", exc)
@@ -3047,9 +3287,10 @@ def daemon(cfg: dict, base: Path, source: str) -> None:
     while True:
         t, k = next_scheduled(pd.Timestamp.now(tz=UTC), cfg)
         LOG.info("next run %s at %s UTC", k, t)
-        time.sleep(max(1.0, (t - pd.Timestamp.now(tz=UTC)).total_seconds()))
+        while (wait := (t - pd.Timestamp.now(tz=UTC)).total_seconds()) > 0:   # timers can wake early
+            time.sleep(max(0.5, wait))
         try:
-            run_scan(cfg, base, k, parse_asof(None), source, demo=False)
+            run_scan(cfg, base, k, t, source, demo=False)   # stamped with the scheduled minute
         except Exception:  # noqa: BLE001
             LOG.exception("scan failed")
 
