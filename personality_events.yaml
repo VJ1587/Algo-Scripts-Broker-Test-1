@@ -1,0 +1,52 @@
+# Events you log for the event engine
+# ====================================
+# Red-folder releases come in automatically from the scanner's Forex Factory archive. Log here what the
+# calendar cannot see: wars, sanctions, tariffs, policy shifts, confirmed headlines.
+#
+# Fields
+#   id, date (trade date, or ISO time with zone), published, seen
+#   headline, source, tier (1 primary | 2 wire/press | 3 aggregator/commentary)
+#   confirmed: true once a tier 1 source confirms it (tier 1 is confirmed by definition)
+#   evidence: confirmed fact | derived intelligence | working assumption | unverified | unknown
+#   type: central_bank | data | war_supply | growth_scare | inflation_scare | sovereign_credibility |
+#         dollar_funding | trade | sanctions | election | other
+#   player, lever (MON ACC RES TRD RUL CAP SEC TEC INF), currency
+#   plan_effects: {goal_id: +1 advances | -1 sets back}
+#   exposures: optional {instrument: -1..+1}; otherwise measured from the event study
+#   half_life_days: optional; otherwise from the event library
+#   qualifying: {verdict: aligned | noise | bait | unanswered, answers: {1: "...", ...}}
+# Only confirmed events with a verdict other than noise or bait, passing the needle test, add pressure.
+
+events:
+  - id: EV-2025-06-IL-IR-WAR
+    date: "2025-06-13"
+    headline: "12 day war between Israel and Iran begins"
+    source: "US State Department 2026 Investment Climate Statement (Israel), as read in the framework doc. Start date is my best recollection: verify."
+    tier: 1
+    confirmed: true
+    evidence: confirmed fact
+    type: war_supply
+    player: IL
+    lever: SEC
+    qualifying: {verdict: unanswered}
+  - id: EV-2026-02-IL-IR-WAR
+    date: "2026-02-28"
+    headline: "38 day war between Israel and Iran begins"
+    source: "US State Department 2026 Investment Climate Statement (Israel), as read in the framework doc"
+    tier: 1
+    confirmed: true
+    evidence: confirmed fact
+    type: war_supply
+    player: IL
+    lever: SEC
+    qualifying: {verdict: unanswered}
+  - id: EV-2026-10-06-GULF-SHIPPING
+    date: "2026-10-06"
+    headline: "Sailors reportedly offered $25K per trip to move oil out of the Persian Gulf (NY Post)"
+    source: "Forex Factory news page, 6 Oct 2026 (alert only). Confirm with maritime advisories and insurance rates."
+    tier: 2
+    confirmed: false
+    evidence: unverified
+    type: war_supply
+    lever: RES
+    qualifying: {verdict: unanswered}
