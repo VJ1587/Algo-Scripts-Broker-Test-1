@@ -24,6 +24,9 @@ th{font-weight:600;color:var(--mut);font-size:12px;background:var(--hl)}
 .banner{background:#b3392f;color:#fff;padding:8px 12px;border-radius:6px;margin:8px 0;font-weight:600}
 .pill{display:inline-block;border:1px solid var(--line);border-radius:10px;padding:0 7px;margin:1px;font-size:12px}
 details>summary{cursor:pointer;color:var(--mut)}
+.ph{display:inline-block;min-width:20px;text-align:center;border-radius:3px;font-weight:700;font-size:12px;padding:0 3px}
+.phS{color:var(--mut)}.phK{background:var(--b);color:#fff}.phN{background:var(--c);color:#fff}.phC{background:var(--bad);color:#fff}.phW{color:var(--mut);opacity:.5}
+td.ev b{color:var(--bad)}
 @media (max-width:700px){.kv{grid-template-columns:1fr}main{padding:12px}}
 """
 
@@ -321,6 +324,9 @@ def render_review(rv: dict) -> str:
            f'<p class="mut small">{e(m["start"])} to {e(m["end"])} · run {e(m["date"])} · config {e(m["config_version"])} · ledger {e(m["ledger_version"])}</p>']
     if m.get("demo"):
         out.append('<div class="banner">DEMO DATA: synthetic prices. Plumbing check only.</div>')
+    if rv.get("evolution"):
+        out.append(f'<p><a href="evolution_{e(m["period"])}.html"><b>Personality evolution page</b></a>: phases year by year and '
+                   f'quarter by quarter next to elections, changes of control, policy regimes and market regimes.</p>')
     out.append("<h2>1. Outcomes: forecasts scored</h2><h3>This period</h3>" + _score_html(rv["scorecard_period"]) +
                "<h3>To date</h3>" + _score_html(rv["scorecard_to_date"]))
     hy = rv["hypotheses"]
@@ -387,12 +393,13 @@ def render_review(rv: dict) -> str:
                    f'history, from the previous {unit}; it is flagged as a personality change when it is at or above that '
                    f'instrument\'s own 90th percentile of shifts. '
                    f'High and low mean the top or bottom fifth of its own history.</p>')
-        out.append(table(["Instrument", unit.title(), "Shift", "Shift pct", "Change", "High (top fifth)", "Low (bottom fifth)",
-                          f"Moved 2+ sd since last {unit}"],
+        out.append(table(["Instrument", unit.title(), "Shift", "Shift pct", "Change", "Phase", "Closest earlier", "Behavior flips",
+                          "High (top fifth)", "Low (bottom fifth)", f"Moved 2+ sd since last {unit}"],
                          [[f"<b>{e(r['symbol'])}</b>", e(r["period"]), f(r["shift"], 1), f(r["shift_pct"], 0),
                            '<span class="bad">yes</span>' if r["changed"] else '<span class="mut">no</span>',
+                           phase_cell(r.get("phase"), with_text=True), e(r.get("nearest_period")), e(", ".join(r.get("flips") or [])),
                            e(", ".join(r["high"])), e(", ".join(r["low"])), e(", ".join(r["moved"]))]
-                          for r in ph.get("latest") or []], {5, 6, 7}))
+                          for r in ph.get("latest") or []], {7, 8, 9, 10}))
         if ph.get("biggest"):
             out.append(f"<h3>Largest personality shifts on record (match these {unit}s to events)</h3>" + table(
                 ["Instrument"] + [f"#{i}" for i in (1, 2, 3)],
@@ -431,6 +438,115 @@ def render_review(rv: dict) -> str:
             ["Player", "Weight", "Evidence"], [[e(x["player"]), f(x["weight"]), e(x["evidence"])] for x in rv["ledger_review"]]))
         out.append(f'<p class="mut">{e(rv.get("independence_note"))}</p>')
     return page(f"{kind} review {m['period']}", "".join(out))
+
+
+PHASE_CODE = {"stable": ("S", "·"), "known phase": ("K", "K"), "new phase": ("N", "N"), "complete change": ("C", "C"),
+              "warm-up": ("W", "w")}
+
+
+def phase_cell(phase: Optional[str], tip: str = "", with_text: bool = False, flip: bool = False) -> str:
+    if not phase:
+        return '<span class="mut">-</span>'
+    cls, letter = PHASE_CODE.get(phase, ("S", "?"))
+    t = f' title="{e(tip)}"' if tip else ""
+    return f'<span class="ph ph{cls}"{t}>{letter}{"*" if flip else ""}</span>' + (f" {e(phase)}" if with_text else "")
+
+
+def _ev_line(x: dict) -> str:
+    txt = e(x["text"]) + (' <span class="warn">(check)</span>' if x.get("check") else "")
+    return f"<b>{e(x['country'])} {txt}</b>" if x.get("control_shift") else f"{e(x['country'])} {txt}"
+
+
+def render_evolution(rv: dict) -> str:
+    """Second page of a quarterly or annual review: how each personality evolved, next to politics and regimes."""
+    m, ev = rv["meta"], rv["evolution"]
+    ann, qtr = ev.get("annual") or {}, ev.get("quarterly") or {}
+    syms = sorted(set(ann) | set(qtr))
+    out = [f"<h1>Personality evolution · through {e(ev['end'])}</h1>",
+           f'<p class="mut small">Second page of the {e(m["kind"])} review {e(m["period"])} · run {e(m["date"])} · '
+           f'politics {e(ev.get("politics_version"))} · <a href="{e(m["kind"])}_{e(m["period"])}.html">back to the review</a></p>']
+    if m.get("demo"):
+        out.append('<div class="banner">DEMO DATA: synthetic prices. Plumbing check only.</div>')
+    out.append("<h2>How to read this page</h2><p>Each trait is measured as its median over a whole year (or quarter) and compared "
+               "with the same instrument's own history, so each instrument is judged against itself. Every period gets one phase:</p>"
+               f"<p>{phase_cell('stable')} stable: inside its normal step size · {phase_cell('known phase')} known phase: moved a lot, "
+               f"but into a state it has been in before (the closest earlier period is named) · {phase_cell('new phase')} new phase: "
+               f"unlike any earlier period, a critical phase where old behavior may not hold · {phase_cell('complete change')} complete "
+               f"change: a new phase that held for two periods running, a different personality · {phase_cell('warm-up')} too little "
+               "history to judge · * a behavior flip: a sensitivity changed sign (for example it used to rise in fear and now falls).</p>"
+               '<p class="mut">Hover a cell for detail. In the timeline, <b>bold</b> marks a change of control (a different party or '
+               "bloc took government or a chamber). A year still in progress is measured on the days so far.</p>")
+    years = sorted({r["period"] for rows in ann.values() for r in rows})
+    if years:
+        rows = []
+        for sm in syms:
+            by = {r["period"]: r for r in ann.get(sm, [])}
+            cells = []
+            for y in years:
+                r = by.get(y)
+                if not r:
+                    cells.append('<span class="mut">-</span>')
+                    continue
+                tip = (f"{y}: {r['phase']}; shift {r['shift']}; like {r.get('nearest_period') or '-'}"
+                       + (f"; moved {', '.join(r['moved'])}" if r["moved"] else "")
+                       + (f"; flips {', '.join(r['flips'])}" if r["flips"] else ""))
+                cells.append(phase_cell(r["phase"], tip, flip=bool(r["flips"])))
+            rows.append([f"<b>{e(sm)}</b>", e(", ".join(ev["countries"].get(sm, [])))] + cells)
+        out.append("<h2>1. Phase map, year by year</h2>" + table(["Instrument", "Countries"] + years, rows))
+    qs = sorted({r["period"] for rows in qtr.values() for r in rows})
+    if qs:
+        rows = []
+        for sm in syms:
+            by = {r["period"]: r for r in qtr.get(sm, [])}
+            rows.append([f"<b>{e(sm)}</b>"] + [
+                phase_cell(by[q]["phase"], f"{q}: {by[q]['phase']}; like {by[q].get('nearest_period') or '-'}", flip=bool(by[q]["flips"]))
+                if q in by else '<span class="mut">-</span>' for q in qs])
+        out.append("<h2>2. Last 12 quarters</h2>" + table(["Instrument"] + qs, rows))
+    now_rows = []
+    for sm in syms:
+        a = (ann.get(sm) or [{}])[-1]
+        q = (qtr.get(sm) or [{}])[-1]
+        now_rows.append([f"<b>{e(sm)}</b>", f"{e(a.get('period'))} {phase_cell(a.get('phase'), with_text=True)}",
+                         e(a.get("nearest_period")), f"{e(q.get('period'))} {phase_cell(q.get('phase'), with_text=True)}",
+                         e(q.get("nearest_period")), e(", ".join((a.get("flips") or []) + (q.get("flips") or [])))])
+    out.append("<h2>3. Where each instrument stands now</h2>" + table(
+        ["Instrument", "Latest year", "Year looks like", "Latest quarter", "Quarter looks like", "Behavior flips"], now_rows, {5}))
+    reg, evs = ev.get("regimes_annual") or {}, ev.get("events_annual") or {}
+    trows = []
+    for y in sorted(set(years) | set(evs)):
+        rg = reg.get(y) or {}
+        items = evs.get(y) or []
+        lead = [x for x in items if x["kind"] in ("leader", "election", "control", "referendum")]
+        rest = [x for x in items if x not in lead]
+        trows.append([f"<b>{e(y)}</b>",
+                      f"{e(rg.get('main'))} ({pct(rg.get('share'))}), {e(rg.get('switches'))} switches" if rg else '<span class="mut">-</span>',
+                      "<br>".join(_ev_line(x) for x in lead), "<br>".join(_ev_line(x) for x in rest)])
+    out.append("<h2>4. What was happening, year by year</h2>"
+               '<p class="mut">Market regime: the regime with the most days that year (dollar liquidity x risk appetite) and how many '
+               "times it switched. Leadership and control: office changes, elections, referendums. Policy and crises: rate regimes, "
+               "QE, pegs, tariffs, bailouts, wars.</p>"
+               + table(["Year", "Market regime", "Leadership and control", "Policy and crises"], trows, {2, 3}))
+    out.append("<h2>5. Instrument by instrument</h2>")
+    for sm in syms:
+        cs = set(ev["countries"].get(sm, []))
+        rows = []
+        for r in ann.get(sm, []):
+            items = [x for x in (evs.get(r["period"]) or [])
+                     if x["country"] in cs and (x.get("control_shift") or x["kind"] in ("policy", "crisis", "referendum"))]
+            rows.append([e(r["period"]), phase_cell(r["phase"], with_text=True), f(r["shift"], 1), f(r["novelty"], 1),
+                         e(r.get("nearest_period")), e(", ".join(r["moved"])), e(", ".join(r["flips"])),
+                         "<br>".join(_ev_line(x) for x in items), e((reg.get(r["period"]) or {}).get("main"))])
+        names = ", ".join(ev.get("country_names", {}).get(c, c) for c in ev["countries"].get(sm, []))
+        out.append(f"<details><summary><b>{e(sm)}</b> · {e(names)}</summary>" + table(
+            ["Year", "Phase", "Shift", "Novelty", "Looks like", "Traits moved 2+ sd", "Behavior flips",
+             "Control shifts, policy, crises", "Market regime"], rows, {5, 7}) + "</details>")
+    chk = ev.get("to_check") or []
+    out.append(f"<h2>6. Timeline entries to verify</h2><p>{e(ev.get('unverified'))} timeline entries are seeded from memory and "
+               "labelled unverified; confirm them at the official record in <code>ledger/politics.yaml</code>. Least certain:</p>"
+               + (table(["Date", "Country", "Entry", "Check"],
+                        [[e(str(x["date"])[:10]), e(x["country"]), e(x["text"]), e(x["check"])] for x in chk], {2, 3})
+                  if chk else '<p class="mut">None flagged.</p>'))
+    return page(f"Personality evolution {m['period']}", "".join(out))
 
 
 def write_json(path: Path, obj: dict) -> None:

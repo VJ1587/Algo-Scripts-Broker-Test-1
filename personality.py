@@ -38,7 +38,7 @@ Usage
 
 Outputs
     output/personality/daily_<date>.html|json, monthly_<YYYY-MM>.html|json, quarterly_<YYYY-Qn>.html|json,
-               annual_<YYYY>.html|json
+               annual_<YYYY>.html|json, evolution_<period>.html (second page of each quarterly and annual review)
     data/personality/   the journal: forecasts, traits, changes, flips, hypotheses, parameters, ledger snapshots
 
 Nothing here places orders. It is an analytical framework, not investment advice.
@@ -56,7 +56,7 @@ import pandas as pd
 
 from empire import ENGINE_VERSION
 from empire.monitor import build_context, run_daily
-from empire.report import render_daily, render_review, write_json
+from empire.report import render_daily, render_evolution, render_review, write_json
 from empire.review import period_bounds, run_review
 
 LOG = logging.getLogger("empire")
@@ -100,6 +100,10 @@ def run_once(cfg_path: Path, asof: Optional[pd.Timestamp], run: str, demo: bool)
         (od / f"{stem}.html").write_text(render_review(rv), encoding="utf-8")
         paths.append(od / f"{stem}.html")
         LOG.info("%s review written: %s", k, paths[-1])
+        if rv.get("evolution"):
+            (od / f"evolution_{rv['meta']['period']}.html").write_text(render_evolution(rv), encoding="utf-8")
+            paths.append(od / f"evolution_{rv['meta']['period']}.html")
+            LOG.info("evolution page written: %s", paths[-1])
     return paths
 
 

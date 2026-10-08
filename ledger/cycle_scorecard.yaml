@@ -1,0 +1,191 @@
+# Empire Game cycle scorecard: the long cycle inputs behind each player
+# =====================================================================
+# Feeds personality_ledger.yaml: on every run the engine merges `values` below into each player's
+# cycle_scorecard, so the ledger snapshot and its change log cover edits made here too.
+#
+# 9 players x 7 indicators = 63 inputs. One is not applicable (IL reserve share: the shekel is not reported
+# separately in IMF COFER), so 62 are to fill.
+#
+# Filling rules (same as the ledger):
+#   value     the number in the unit given under `indicators` (shares as 0 to 1, not percent)
+#   as_of     the date the number refers to (period end), not the date you typed it
+#   source    the exact table or series you read it from
+#   evidence  confirmed fact | derived intelligence | working assumption | unverified | unknown
+#   A missing number stays null. Never estimate a value just to complete the card.
+# An input is stale when today minus as_of exceeds its max_age_days (frequency plus publication lag).
+#
+# Source codes marked FRED or IMF are series identifiers; everything else names the publication to read.
+
+scorecard_version: "cycle-1.0.0"
+changelog:
+  - {version: "cycle-1.0.0", date: "2026-10-08", change: "Definitions, sources and refresh windows for the 63 inputs; values blank", reason: "Owner: the scorecard is critical to the build; keep it in its own file feeding the ledger"}
+
+indicators:
+  interest_cost_share_of_revenue:
+    measures: How much of the government's income goes to paying interest. Rising share = less room to fight a downturn, more pressure to inflate or repress rates.
+    formula: general government net interest paid / general government total revenue, last 4 quarters or fiscal year
+    unit: share 0 to 1
+    frequency: quarterly (US) / annual (others)
+    max_age_days: 460
+    late_cycle_when: above 0.10 and rising
+    sources:
+      default: "OECD Economic Outlook (general government net interest payments, total receipts) or IMF Fiscal Monitor; national budget outturn"
+      US: "FRED A091RC1Q027SBEA (federal interest payments) / FRED FGRECPT (federal current receipts)"
+      CN: "IMF Article IV for China (augmented fiscal data); Ministry of Finance budget report"
+      EU: "Eurostat gov_10a_main (interest D41 payable, total revenue) for the euro area aggregate"
+      JP: "Ministry of Finance 'Japanese Public Finance Fact Sheet' (interest payments, tax revenue)"
+      UK: "ONS Public sector finances (central government debt interest / current receipts)"
+      CA: "Finance Canada Fiscal Reference Tables (public debt charges / budgetary revenues)"
+      AU: "Budget Paper No. 1 (interest expense / total receipts), Australian Government"
+      CH: "Federal Finance Administration (FFA) financial statistics, general government"
+      IL: "Bank of Israel annual report fiscal tables; Ministry of Finance budget execution"
+
+  deficit_share_of_output:
+    measures: Government borrowing each year relative to the size of the economy. Large deficits outside recessions = late cycle.
+    formula: general government net lending (+) / borrowing (-) over GDP, latest year; record the deficit as a negative number
+    unit: share of GDP, signed (deficit negative)
+    frequency: annual (quarterly where published)
+    max_age_days: 460
+    late_cycle_when: below -0.05 outside a recession
+    sources:
+      default: "IMF World Economic Outlook series GGXCNL_NGDP (net lending/borrowing, % of GDP), divide by 100"
+      US: "FRED FYFSGDA188S (federal surplus or deficit, % of GDP) or IMF GGXCNL_NGDP for general government"
+
+  central_bank_share_of_new_debt:
+    measures: How much of the government's new borrowing the central bank absorbed. High share = debt monetization, the late stage of a debt cycle.
+    formula: 12 month change in central bank holdings of government debt / 12 month change in government debt outstanding
+    unit: share 0 to 1 (can be negative under quantitative tightening, or above 1)
+    frequency: monthly or quarterly
+    max_age_days: 120
+    late_cycle_when: above 0.3 for more than a year
+    sources:
+      US: "FRED TREAST (Treasuries held by the Fed) / FRED GFDEBTN (total public debt); 12 month changes"
+      CN: "PBoC Balance Sheet of Monetary Authority (claims on government) / Ministry of Finance government debt"
+      EU: "ECB PSPP and PEPP public sector holdings / Eurostat euro area general government debt"
+      JP: "Bank of Japan Accounts (JGB holdings) / Ministry of Finance 'Japan's Government Debt'"
+      UK: "Bank of England Asset Purchase Facility gilt holdings / DMO gilts in issue"
+      CA: "Bank of Canada weekly balance sheet (Government of Canada bonds) / Finance Canada debt"
+      AU: "RBA Statistical Table A1 (government securities held) / AOFM Commonwealth securities on issue"
+      CH: "SNB balance sheet (CHF bonds, Confederation share) / Federal Finance Administration debt; expect near 0"
+      IL: "Bank of Israel balance sheet (government bonds held) / Ministry of Finance debt report"
+
+  foreign_currency_debt_share:
+    measures: How much government debt is owed in someone else's currency. High share = the country cannot print its way out and is exposed to a currency fall.
+    formula: central government debt in foreign currency / total central government debt
+    unit: share 0 to 1
+    frequency: annual
+    max_age_days: 460
+    late_cycle_when: above 0.2 with a weakening currency
+    sources:
+      default: "IMF and World Bank Public Sector Debt Statistics (PSDS), debt by currency; BIS debt securities statistics by currency"
+      US: "US Treasury Monthly Statement of the Public Debt (all marketable debt is in dollars)"
+      IL: "Ministry of Finance Accountant General debt report (foreign currency debt share)"
+
+  current_account_share_of_output:
+    measures: Whether the country earns or borrows from the rest of the world. Persistent deficits = dependence on foreign capital.
+    formula: current account balance / GDP, last 4 quarters; deficit negative
+    unit: share of GDP, signed (deficit negative)
+    frequency: quarterly
+    max_age_days: 200
+    late_cycle_when: below -0.03 for several years
+    sources:
+      default: "IMF World Economic Outlook series BCA_NGDPD (current account, % of GDP), divide by 100; national balance of payments for quarterly"
+      US: "FRED IEABC (current account balance) / FRED GDP, 4 quarter sums"
+
+  internal_conflict_wealth_gap:
+    measures: How unequal wealth is, the base of internal political conflict. Wide and widening gaps = populism, policy swings, weaker institutions.
+    formula: share of net personal wealth held by the top 10 percent
+    unit: share 0 to 1
+    frequency: annual (published with 1 to 2 years lag)
+    max_age_days: 1100
+    late_cycle_when: above 0.6 and rising
+    sources:
+      default: "World Inequality Database (WID.world), top 10% net personal wealth share (shweal, p90p100)"
+      EU: "WID.world for Germany and France (record both in source; value = simple average) or ECB Distributional Wealth Accounts"
+
+  reserve_and_invoicing_share:
+    measures: How much the world uses the currency to store value and settle trade. Falling share = fading reserve status, the end stage of an empire cycle.
+    formula: currency share of allocated global FX reserves (IMF COFER); note trade invoicing share in source when available
+    unit: share 0 to 1
+    frequency: quarterly
+    max_age_days: 200
+    late_cycle_when: falling for 3+ years
+    sources:
+      default: "IMF COFER (Currency Composition of Official Foreign Exchange Reserves), share of allocated reserves"
+      CN: "IMF COFER (renminbi share); SWIFT RMB Tracker for payments share"
+      EU: "IMF COFER (euro share); ECB 'The international role of the euro' for invoicing"
+
+# ------------------------------------------------------------------- values (fill here)
+values:
+  US:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  CN:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  EU:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  JP:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  UK:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  CA:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  AU:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  CH:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  IL:
+    interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+    deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+    foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+    current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+    internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+    reserve_and_invoicing_share: {applicable: false, value: null, as_of: null, source: "Shekel not reported separately in IMF COFER", evidence: unknown}

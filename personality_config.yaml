@@ -5,14 +5,17 @@
 # Values the engine recalibrates itself (T, lambda, grade thresholds, half lives, round-level switch) live in
 # data/personality/params_state.json with their own change log; the numbers here are the starting values.
 
-config_version: "pcfg-1.1.0"
+config_version: "pcfg-1.2.0"
 changelog:
   - {version: "pcfg-1.0.0", date: "2026-10-07", change: "Initial config from the framework doc", reason: "Owner: daily runs with monthly and quarterly personality updates; MT5 + TradingView, FRED for gaps; versioned YAML ledger; HTML + JSON/CSV; compare against multiple scanners; all recalibration automatic"}
   - {version: "pcfg-1.1.0", date: "2026-10-08", change: "Add crosses AUDCAD and CADJPY", reason: "Owner: profile the pairs in the 2026-10-07 tick exports (AUDCAD, CADJPY were the only ones missing)"}
+  - {version: "pcfg-1.2.0", date: "2026-10-08", change: "paths.politics and paths.cycle_scorecard (ledger/ subfolder)", reason: "Owner: track elections, leaders, control shifts and policy regimes against personality; keep the 63 cycle inputs in their own file feeding the ledger"}
 
 paths:
   ledger: personality_ledger.yaml
   events: personality_events.yaml
+  politics: ledger/politics.yaml            # leaders, elections, control shifts, policy regimes (evolution page)
+  cycle_scorecard: ledger/cycle_scorecard.yaml  # the 63 cycle inputs; merged into the ledger players on load
   scanner_config: scanner_config.yaml      # reused for MT5 settings, COT markets and the calendar archive
   state_dir: data/personality              # the journal (git-ignored, back it up)
   output_dir: output/personality
