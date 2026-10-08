@@ -82,7 +82,7 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 
 | Step | What the indicator does |
 | --- | --- |
-| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; ±$10 for gold ($1 = 10 pips, so ±100 pips). |
+| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; ±$10 for gold ($1 = 10 pips, so ±100 pips). On FX a fib level up to 10 pips outside a box is labelled NEAR BOX (developing), but does not count as the key level confluence. |
 | 2 Range | Finds a consolidation whose top and bottom each have ≥2 separate touches (by default both must sit at key levels). Draws the range box; on a **close** beyond the box ± half-width it clones the box in the breakout direction as the target. Signals are suppressed while price is inside an unbroken range. |
 | 3–4 Bias | Daily and 4H structure from swing pivots: HH+HL = bullish, LH+LL = bearish, otherwise ranging. Fib setups are only taken when both agree. Uses the last closed HTF bar (no repainting). |
 | 5 Impulse | Swing low → swing high (or high → low) on the chart, at least 2.5 × ATR in ≤40 bars, in the bias direction. |
@@ -92,7 +92,7 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 
 Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped (plus one `alert()` message with entry, SL and targets).
 
-Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. Gold is ±$10 and S&P ±10 points in both the indicator and the scanner (cfg-0.10.0 / 0.11.0); on S&P "pips" in the table are index points. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
+Zones match the scanner: FX ±10 pips (cfg-0.12.0), gold ±$10 and S&P ±10 points (cfg-0.10.0 / 0.11.0); on S&P "pips" in the table are index points. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
 
 # Daily Instrument Scanner (Addendum v0.1)
 
@@ -116,7 +116,7 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 | Check | Name | Passes when |
 |---|---|---|
 | C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±10 pips; JPY pairs every 5.00 and 2.50, ±0.10; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
@@ -135,7 +135,7 @@ These live in `SETUP_RULES` and `grade_setup` in `scanner.py`. A and B setups ca
 | S&P and oil | SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing. |
 | Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
 | Stop and targets | Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to breakeven. |
-| Developing | Any 2 or more of C1-C6 that do not make a B setup. Watch only. |
+| Developing | Any 2 or more of C1-C6 that do not make a B setup, or an FX close up to 10 pips outside a key level zone plus one other check ("near zone", cfg-0.12.0). Watch only. |
 
 Owner decisions (October 7, 2026): majors are the 7 USD majors in the config (EURUSD, GBPUSD, USDJPY,
 USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 is Weekly + Daily without the
@@ -272,12 +272,16 @@ config). Nothing in the scanner sends, changes or closes orders.
 4. **Impulse void.** An impulse is dropped once a 4H close passes its origin A (config switch).
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
 5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
-   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 (XAUUSD
+   half-width `grids.<grid>.zone_half_width`: FX 0.0010 (10 pips; was 15 before cfg-0.12.0), JPY pairs 0.10, gold $10 (XAUUSD
    and GC; $1 = 10 pips, so +/-100 pips; was $20 before cfg-0.10.0), S&P 10 points (was 20 before cfg-0.11.0), oil $1.00
    (placeholder; a $10-20 box would overlap the $2.50 oil grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
    to the ATR width and is flagged "zone width not set". Chart-pattern (C4) tolerances scale from
-   `pattern_zone_half_width` when set: gold and S&P keep 20 so narrowing their zones (cfg-0.10.0 / 0.11.0)
-   did not change pattern detection. C3 tolerance still uses the ATR width.
+   `pattern_zone_half_width` when set: FX keeps 15 pips (JPY 0.15), gold and S&P keep 20, so narrowing
+   the zones (cfg-0.10.0 to 0.12.0) did not change pattern detection.
+5c. **Near zone (cfg-0.12.0, FX only).** A 2H close outside the zone but within `near_zone_width`
+   (10 pips) of its edge does not score C2. With at least one other check the setup is listed as
+   developing, with a note such as "Near key level: 4.0 pips outside the 1.3 major zone; becomes B on a
+   2H close inside the zone". It is never graded A or B. C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the
    opposite wick, close not through the zone). Two or more adds a "zone tested: N wicks" flag. It never

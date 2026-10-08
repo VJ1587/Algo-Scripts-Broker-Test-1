@@ -24,6 +24,7 @@ preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX",
 fxMajorPips = input.float(500, "FX major step (pips)", minval = 1, group = grpLv)
 fxMidPips   = input.float(250, "FX mid step (pips)", minval = 1, group = grpLv)
 fxHalfPips  = input.float(10, "FX box half-width (pips)", minval = 0, group = grpLv, tooltip = "10 pips: 1.3000 becomes a 1.2990-1.3010 box.")
+fxNearPips  = input.float(10, "FX near-box band (pips)", minval = 0, group = grpLv, tooltip = "A fib level up to this far outside a box is flagged NEAR (developing). It does not count as the key level confluence. Matches the scanner (cfg-0.12.0).")
 goldMajor   = input.float(100, "Gold major step ($)", minval = 1, group = grpLv)
 goldMid     = input.float(50, "Gold mid step ($)", minval = 1, group = grpLv)
 goldHalf    = input.float(10, "Gold box half-width ($)", minval = 0, group = grpLv, tooltip = "$1 = 10 pips on XAUUSD, so $10 is a +/-100 pip box: 3300 becomes 3290-3310.")
@@ -97,6 +98,7 @@ pip       = mode == "FX" ? fxPip : mode == "Gold" ? goldPip : mode == "S&P" ? 1.
 majorStep = mode == "FX" ? fxMajorPips * fxPip : mode == "Gold" ? goldMajor : mode == "S&P" ? spxMajor : cMajor
 midStep   = mode == "FX" ? fxMidPips * fxPip : mode == "Gold" ? goldMid : mode == "S&P" ? spxMid : cMid
 half      = mode == "FX" ? fxHalfPips * fxPip : mode == "Gold" ? goldHalf : mode == "S&P" ? spxHalf : cHalf
+nearW     = mode == "FX" ? fxNearPips * fxPip : 0.0
 ctSize    = contract > 0 ? contract : mode == "FX" ? 100000.0 : mode == "Gold" ? 100.0 : 1.0
 
 f_nearest(float p) =>
@@ -104,6 +106,9 @@ f_nearest(float p) =>
 
 f_inKeyBox(float p) =>
     not na(p) and math.abs(p - f_nearest(p)) <= half
+
+f_nearKeyBox(float p) =>
+    not na(p) and nearW > 0 and not f_inKeyBox(p) and math.abs(p - f_nearest(p)) <= half + nearW
 
 f_isMajor(float lvl) =>
     math.abs(lvl / majorStep - math.round(lvl / majorStep)) < 0.001
@@ -320,6 +325,9 @@ tol  = fibTolPips * pip
 key382 = f_inKeyBox(L382)
 key50  = f_inKeyBox(L50)
 key618 = f_inKeyBox(L618)
+near382 = f_nearKeyBox(L382)
+near50  = f_nearKeyBox(L50)
+near618 = f_nearKeyBox(L618)
 
 // ─────────────────────────────────────────────────────────── 7 · Confirmation candles
 body = math.abs(close - open)
@@ -469,11 +477,11 @@ if barstate.islast
             else if r == 1.0
                 txt := "A  " + f_px(p)
             else if r == 0.382
-                txt := "38.2  " + f_px(p) + "  " + side + " · small " + str.tostring(f_size(p, w382), "#.##") + " lots" + (key382 ? "  [KEY BOX]" : "")
+                txt := "38.2  " + f_px(p) + "  " + side + " · small " + str.tostring(f_size(p, w382), "#.##") + " lots" + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "")
             else if r == 0.5
-                txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots" + (key50 ? "  [KEY BOX]" : "")
+                txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots" + (key50 ? "  [KEY BOX]" : near50 ? "  [NEAR BOX]" : "")
             else if r == 0.618
-                txt := "61.8  " + f_px(p) + "  " + side + " · large " + str.tostring(f_size(p, w618), "#.##") + " lots" + (key618 ? "  [KEY BOX]" : "")
+                txt := "61.8  " + f_px(p) + "  " + side + " · large " + str.tostring(f_size(p, w618), "#.##") + " lots" + (key618 ? "  [KEY BOX]" : near618 ? "  [NEAR BOX]" : "")
             else if r == 0.786
                 txt := "78.6  " + f_px(p) + "  close beyond = invalid"
             else if r == -0.27
@@ -508,7 +516,9 @@ if barstate.islast and showTable
     isLong = fDir == 1
     rangeTxt = rState == 1 ? "Inside range " + f_pips(rTop - rBot) + " pips, wait for break" :
          rState == 2 ? "Broke UP, target " + f_px(rTarget) : rState == -2 ? "Broke DOWN, target " + f_px(rTarget) : "No range on this timeframe"
-    keyTxt = not hasFib ? "-" : (key382 ? "38.2 " : "") + (key50 ? "50 " : "") + (key618 ? "61.8" : "") + (key382 or key50 or key618 ? " in box" : "none in a box")
+    nearTxt = (near382 ? "38.2 " : "") + (near50 ? "50 " : "") + (near618 ? "61.8 " : "")
+    keyTxt = not hasFib ? "-" : ((key382 ? "38.2 " : "") + (key50 ? "50 " : "") + (key618 ? "61.8" : "") + (key382 or key50 or key618 ? " in box" : "none in a box")) +
+         (nearTxt != "" ? " · near (developing): " + nearTxt : "")
     liveC  = isLong ? bullName : bearName
     candTxt = fState >= 2 ? fCandle : (c4 ? candleNow : liveC != "" ? liveC + " (not at zone)" : "waiting")
     confNow = fState >= 2 ? fConf : cnt

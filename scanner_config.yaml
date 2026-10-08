@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.11.0"
+config_version: "cfg-0.12.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -23,6 +23,7 @@ changelog:
   - {version: "cfg-0.9.0", date: "2026-10-07", change: "Daemon runs every 2 hours at :05 UTC (intraday runs keep the Daily bias from the last evening run); Windows notification for new or upgraded A/B setups; calendar snapshot reused for 4 hours and used when a fetch fails; intraday HTML/CSV pruned after 14 days; chart patterns name their key level", reason: "Owner: update the scanner through the day so a setup that fully develops is caught; 2-hourly matches the 2H bar close"}
   - {version: "cfg-0.10.0", date: "2026-10-08", change: "Gold zone half-width $20 -> $10 (XAUUSD and GC); S&P stays at 20 points", reason: "Owner: gold box is +/-$10 ($1 = 10 pips on XAUUSD, so $20 was a 200 pip box each side)"}
   - {version: "cfg-0.11.0", date: "2026-10-08", change: "S&P zone half-width 20 -> 10 points; new grids.*.pattern_zone_half_width keeps gold and S&P chart-pattern tolerances on the old 20 basis (Daily match $133 / head margin $67)", reason: "Owner: S&P +/-10 points; keep gold chart pattern detection unchanged until the data shows it needs to move"}
+  - {version: "cfg-0.12.0", date: "2026-10-08", change: "FX zone half-width 15 -> 10 pips (JPY 0.15 -> 0.10); near_zone_width 10 pips: a 2H close up to 10 pips outside the zone lists the setup as developing (never graded, C2 stays false); FX chart-pattern tolerances keep the 15 pip basis", reason: "Owner: FX boxes +/-10 pips to match the setup document; flag setups within 10 pips of the box as developing; pattern detection unchanged until the data says otherwise"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -98,8 +99,8 @@ features:
     stop_fibs: [0.786, 0.89]
     tp_extensions: [-0.27, -0.618]
   # Chart patterns for C4 (Daily and 4H). Distances are multiples of the instrument's zone half-width,
-  # so FX (15 pip zone) gets the owner's pip rules and gold, S&P and oil scale with their zones
-  # (gold and S&P from pattern_zone_half_width: 20, cfg-0.11.0).
+  # so FX (15 pip pattern basis) gets the owner's pip rules and gold, S&P and oil scale with their zones
+  # (pattern_zone_half_width: FX 0.0015, gold and S&P 20; cfg-0.11.0 / 0.12.0).
   chart_patterns:
     timeframes: [D, 4H]
     match_tol_zone_mult: {D: 6.67, 4H: 2.67}    # two bottoms/tops or two shoulders: FX 100 pips Daily, 40 pips 4H
@@ -126,13 +127,15 @@ features:
 
 # ---------------------------------------------------------------- psychological grid (Addendum Section 5)
 # zone_half_width: fixed half-width in price units for the zone drawn around every major and mid level
-# (FX 15 pips = 0.0015; JPY pairs 15 pips = 0.15). null = not set by owner yet: that instrument keeps
+# (FX 10 pips = 0.0010; JPY pairs 10 pips = 0.10). null = not set by owner yet: that instrument keeps
 # the ATR width (max(2 ticks, 0.10 x 4H ATR)) and every row carries a "zone width not set" flag.
 # pattern_zone_half_width (optional): width that chart_patterns multiples scale from; defaults to
-# zone_half_width. Gold and S&P keep 20 so narrowing their zones did not change pattern detection.
+# zone_half_width. Gold and S&P keep 20, FX 15 pips, so narrowing the zones did not change pattern detection.
+# near_zone_width (optional, cfg-0.12.0): band beyond the zone edge; a close in it lists the setup as
+# developing ("near zone"), never graded. Not set = off.
 grids:
-  fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0015}
-  jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.15}
+  fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0010, pattern_zone_half_width: 0.0015, near_zone_width: 0.0010}
+  jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.10,   pattern_zone_half_width: 0.15,   near_zone_width: 0.10}
   gold: {major: 100,    mid: 50,     zone_half_width: 10, pattern_zone_half_width: 20}  # +/-$10 = +/-100 pips; patterns unchanged
   spx:  {major: 100,    mid: 50,     zone_half_width: 10, pattern_zone_half_width: 20}  # +/-10 points (cfg-0.11.0); patterns unchanged
   oil:  {major: 5.00,   mid: 2.50,   zone_half_width: 1.00}   # gold ratio (20% of major); grid untested

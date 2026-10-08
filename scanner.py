@@ -20,14 +20,15 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
     1. Key levels are zones, not lines.                       psych_zone_half_width, in_psych_zone
        Every major and mid grid level gets a box of fixed half-width (grids.*.zone_half_width):
          market        major / mid level spacing      zone half-width
-         FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
-         JPY pairs     5.00 / 2.50                    0.15      (15 pips)
+         FX            500 / 250 pips                 10 pips   (1.3000 -> 1.2990 to 1.3010)
+         JPY pairs     5.00 / 2.50                    0.10      (10 pips)
          Gold          $100 / $50                     $10       (3,300 -> 3,290 to 3,310; $1 = 10 pips)
          S&P           100 / 50 points                10 points (3,300 -> 3,290 to 3,310)
          Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
        Why: institutions' orders sit spread around a round number, so price reacts across an area.
        Gold is +/-$10 (100 pips each side) per the owner, cfg-0.10.0 (was $20).
-       C2 = latest completed 2H close inside the zone. Fib (C3) and trend line (C6) tolerance still
+       C2 = latest completed 2H close inside the zone. FX (cfg-0.12.0): a close up to 10 pips outside
+       the zone is "near zone" and the setup is listed as developing, never graded (grids.*.near_zone_width). Fib (C3) and trend line (C6) tolerance still
        use the v1.0 ATR width (zone_half_width).
 
     2. Wick principle (early alert, never scored).           zone_wick_tests
@@ -51,7 +52,8 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
        FX crosses = only an A setup with a closed C4 counts.
        S&P, oil   = only an A setup counts.
        Gold       = C1 is Weekly + Daily (no 4H); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
-       Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0).
+       Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0), or an FX close up to 10 pips
+       outside a key level zone plus one other check (near zone, cfg-0.12.0).
        C6 = 4H market structure holding (higher low / lower high not closed through).  structure_holding
        A and B rows carry section "qualified" plus grade "A" or "B". Ranking: A, B, developing, then total;
        equal totals rank Daily confirmations above 4H, and 4H above 2H.
@@ -96,7 +98,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 import zlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -146,6 +148,7 @@ class Instrument:
     roll: Optional[str] = None
     psych_zone_hw: Optional[float] = None  # fixed zone half-width around grid levels; None = not set
     pattern_zone_hw: Optional[float] = None  # width that scales chart-pattern tolerances; None = psych_zone_hw
+    near_zone_w: Optional[float] = None    # band just outside the zone that marks a setup developing; None = off
 
     @property
     def calendar_currencies(self) -> list[str]:
@@ -197,6 +200,7 @@ def build_universe(cfg: dict) -> list[Instrument]:
             out.append(Instrument(symbol=sym, group=grp, asset="fx", tick=0.001 if jpy else 0.00001,
                                   grid_major=float(g["major"]), grid_mid=float(g["mid"]),
                                   psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                                  near_zone_w=_grid_zone_hw(g, "near_zone_width"),
                                   tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
                                   base=base, quote=quote))
     for it in cfg.get("other_instruments", []):
@@ -204,6 +208,7 @@ def build_universe(cfg: dict) -> list[Instrument]:
         out.append(Instrument(symbol=it["symbol"], group=it["group"], asset=it["asset"], tick=float(it["tick"]),
                               grid_major=float(g["major"]), grid_mid=float(g["mid"]),
                               psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                              near_zone_w=_grid_zone_hw(g, "near_zone_width"),
                               tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
                               fut_contract=it.get("fut_contract"), underlying=it.get("underlying"),
                               cot=it.get("cot"), short_test=bool(it.get("short_test", False)),
@@ -850,7 +855,7 @@ def zone_half_width(inst: Instrument, atr4_value: float, fcfg: dict) -> float:
 
 def psych_zone_half_width(inst: Instrument, atr_hw: float) -> tuple[float, str]:
     """[OWNER cfg-0.2.0] Key levels are zones, not lines. Half-width around every major and mid grid
-    level: the fixed width from config (FX +/-15 pips, gold +/-$10), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
+    level: the fixed width from config (FX +/-10 pips, gold +/-$10), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
     if inst.psych_zone_hw is not None:
         return inst.psych_zone_hw, "fixed"
     return atr_hw, "atr"
@@ -898,8 +903,8 @@ CONFLUENCES = {
     "c1": ("Trend alignment", "Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade "
                               "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
-                             "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
-                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-10; "
+                             "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-10 "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.10; gold and S&P every 100 and 50, +/-10; "
                              "oil every 5.00 and 2.50, +/-1.00."),
     "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
                                     "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "
@@ -931,7 +936,8 @@ SETUP_RULES = (
     ("Stop and targets", "Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. "
                          "TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to "
                          "breakeven."),
-    ("Developing", "Any 2 or more of C1-C6 that do not make a B setup. Watch only."),
+    ("Developing", "Any 2 or more of C1-C6 that do not make a B setup, or an FX close up to 10 pips outside a key "
+                    "level zone plus one other check (near zone). Watch only."),
 )
 GOLDEN_FIBS = (0.5, 0.618)
 
@@ -1798,6 +1804,8 @@ class Row:
     zone_high: Optional[float] = None
     zone_width_source: str = ""
     zone_wicks: int = 0
+    c2_near: bool = False          # [OWNER cfg-0.12.0] close is outside the zone but within near_zone_width of it
+    c2_near_note: str = ""
     daily_bias: str = ""
     bias_invalidation: Optional[float] = None
     structure_4h: str = ""
@@ -1829,6 +1837,17 @@ class InstrumentResult:
 
 
 def grade_setup(r: "Row", kind: str = "major") -> tuple[str, str, str]:
+    """[OWNER cfg-0.12.0] Near zone: a setup whose close sits just outside the key level zone (and has at least
+    one other check) is listed as developing, with the grade it would get on a close inside the zone."""
+    section, grade, note = _grade_core(r, kind)
+    if section == "qualified" or not r.c2_near or r.technical < 1:
+        return section, grade, note
+    if_in = _grade_core(replace(r, c2=True, c2_near=False, technical=r.technical + 1), kind)
+    hint = f"; becomes {if_in[1]} on a 2H close inside the zone" if if_in[0] == "qualified" else ""
+    return "developing", "", r.c2_near_note + hint + (". " + note if note else "")
+
+
+def _grade_core(r: "Row", kind: str = "major") -> tuple[str, str, str]:
     """[OWNER cfg-0.8.0] Position Trading Confluence System. Returns (section, grade, note).
     kind: 'major' (FX majors), 'minor' (FX crosses), 'a_only' (S&P, oil) or 'gold' (XAUUSD, GC).
     A: C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6.  B: C1 + (C2 or golden C3) + one of C4/C5/C6.
@@ -1952,6 +1971,13 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         ok, lvl, kind = in_psych_zone(inst, P, zhw)
         r.c2, r.zone_level, r.zone_kind = ok, lvl, kind
         r.zone_low, r.zone_high = lvl - zhw, lvl + zhw
+        # [OWNER cfg-0.12.0] Near zone: close just outside the box. Listed as developing, never scores C2.
+        if not ok and inst.near_zone_w is not None and abs(P - lvl) <= zhw + inst.near_zone_w + 1e-12:
+            out = abs(P - lvl) - zhw
+            dist = f"{out / (inst.tick * 10):.1f} pips" if inst.asset == "fx" else f"{out:g}"
+            r.c2_near = True
+            r.c2_near_note = f"Near key level: {dist} outside the {lvl:g} {kind} zone"
+            r.flags.append(f"near zone: {dist} outside {lvl:g}")
         # [OWNER cfg-0.2.0] Wick principle: wicks testing the zone are an early alert, never a scored check
         wcfg = f.get("zone_wicks", {})
         r.zone_wicks = zone_wick_tests(df2, direction, r.zone_low, r.zone_high, int(wcfg.get("lookback_2h_bars", 6)))
@@ -2041,7 +2067,7 @@ def rejection_reason(rows: list[Row]) -> str:
     elif r.structure_4h != bias:
         return "4H disagrees"
     if not r.c2 and not r.c3:
-        return "not at a key level zone or Fib level"
+        return r.c2_near_note or "not at a key level zone or Fib level"
     return r.grade_note or f"technical score {r.technical}"
 
 
@@ -2321,7 +2347,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     dev = sorted([r for r in all_rows if r.section == "developing"],
                  key=lambda r: (-r.total, -r.technical, -r.c4_tf_rank, r.symbol, r.direction))
     body += (f"<h2>Developing setups ({len(dev)})</h2><p class='muted'>Two or more of C1-C6 but not a B setup "
-             "(B needs C1 + C2 or a 50%/61.8% Fib + one of C4, C5, C6). Watch these; they are not a trade yet.</p>")
+             "(B needs C1 + C2 or a 50%/61.8% Fib + one of C4, C5, C6), or an FX close up to 10 pips outside a key level "
+             "zone (near zone). Watch these; they are not a trade yet.</p>")
     if dev:
         body += ("<div class='wrap'><table><tr><th>Instrument</th><th>Dir</th><th>Setup</th>" + _conf_th()
                  + "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th>"
@@ -2347,7 +2374,7 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     body += "</table></div>"
     body += ("<p class='muted' style='margin-top:18px'>Rules: Position Trading Confluence System (cfg-0.8.0) on "
              "Scanner Addendum v0.1 and Trading Algorithm Specification v1.0. "
-             "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-15 pips around every major "
+             "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-10 pips around every major "
              "and mid level); wicks counts recent 2H wick rejections inside the zone, an early alert only. "
              "C4 counts a candlestick reversal pattern only when it forms inside the key level zone. TradingView and Forex Factory access are unofficial and may stop "
              "without notice. FinBERT tone on FX and commodity headlines is untested.</p>")
