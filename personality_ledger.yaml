@@ -1,0 +1,401 @@
+# Empire Game player ledger
+# =========================
+# Owner-maintained judgment plus primary sources. The engine snapshots this file on every run and logs
+# every edit (data/personality/ledger_changes.csv), so changes are visible in the monthly review.
+#
+# Evidence labels (fixed list): confirmed fact | derived intelligence | working assumption | unverified | unknown
+# Entries labelled unverified or unknown are shown on the cards but EXCLUDED from likelihoods.
+# A missing number is written as null (unknown). Never estimate an input just to complete a card.
+#
+# SEED NOTICE: everything below was seeded from the framework doc (Oct 6, 2026). Incentive scores are
+# starting judgments, not measurements. Review each one, add your sources, and bump ledger_version.
+
+ledger_version: "ledger-1.0.0"
+changelog:
+  - {version: "ledger-1.0.0", date: "2026-10-07", change: "Seeded from the framework doc: nine weighted players, starting incentive entries, pain zones, plan library, hypotheses"}
+
+# ---------------------------------------------------------------- players
+# weight multiplies incentive and alignment scores. Starting weights are judgment (doc), revisit quarterly.
+players:
+  US:
+    name: United States (Treasury and Fed)
+    weight: 0.30
+    weight_evidence: working assumption
+    wants: Cheap funding for its debt, reserve currency status
+    protects: Dollar dominance in trade and reserves
+    levers: [MON, ACC, TRD, SEC]
+    pushes_when: Inflation or funding stress threatens credibility
+    sits_when: Dollar strength is doing the tightening for it
+    note: "Fed chair Kevin Warsh since Senate confirmation in May 2026 (doc; verify). Track his framework as its own goal once set out."
+    cycle_scorecard: &blank_scorecard
+      interest_cost_share_of_revenue: {value: null, as_of: null, source: null, evidence: unknown}
+      deficit_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+      central_bank_share_of_new_debt: {value: null, as_of: null, source: null, evidence: unknown}
+      foreign_currency_debt_share: {value: null, as_of: null, source: null, evidence: unknown}
+      current_account_share_of_output: {value: null, as_of: null, source: null, evidence: unknown}
+      internal_conflict_wealth_gap: {value: null, as_of: null, source: null, evidence: unknown}
+      reserve_and_invoicing_share: {value: null, as_of: null, source: null, evidence: unknown}
+  CN:
+    name: China (PBoC and state banks)
+    weight: 0.22
+    weight_evidence: working assumption
+    wants: Export share, resource security, less dollar dependence
+    protects: A managed yuan and domestic stability
+    levers: [MON, RES, TRD, ACC, CAP]
+    pushes_when: Yuan nears a line it has defended, or supply chains are threatened
+    sits_when: The drift serves exporters
+    cycle_scorecard: *blank_scorecard
+  EU:
+    name: Euro area (ECB) and European Union
+    weight: 0.18
+    weight_evidence: working assumption
+    wants: Price stability and cohesion of the bloc
+    protects: Sovereign spreads between members
+    levers: [MON, CAP, RES, RUL]
+    pushes_when: Spreads widen or energy shocks hit
+    sits_when: Growth is weak and the euro is doing the easing
+    cycle_scorecard: *blank_scorecard
+  JP:
+    name: Japan (MoF and BoJ)
+    weight: 0.08
+    weight_evidence: working assumption
+    wants: Stable yen, orderly bond market
+    protects: Import costs and the value of huge foreign holdings
+    levers: [MON, INF]
+    pushes_when: Yen moves are fast and one way near prior intervention zones
+    sits_when: Moves are slow, or the US objects
+    cycle_scorecard: *blank_scorecard
+  UK:
+    name: United Kingdom (BoE and Treasury)
+    weight: 0.06
+    weight_evidence: working assumption
+    wants: Foreign capital to fund deficits
+    protects: Gilt market confidence
+    levers: [MON, INF]
+    pushes_when: Gilts and sterling fall together
+    sits_when: Inflation is sticky and rates hold on their own
+    cycle_scorecard: *blank_scorecard
+  CA:
+    name: Canada
+    weight: 0.04
+    weight_evidence: working assumption
+    wants: Oil price above project breakeven, US market access
+    protects: Trade terms with the US (USMCA)
+    levers: [TRD, MON, RES]
+    pushes_when: US tariffs or the USMCA review threaten access
+    sits_when: Oil and US growth carry CAD
+    cycle_scorecard: *blank_scorecard
+  AU:
+    name: Australia
+    weight: 0.04
+    weight_evidence: working assumption
+    wants: Price above project breakeven, critical minerals market share
+    protects: China demand and the US alliance
+    levers: [MON, RES]
+    pushes_when: Price falls below project breakeven
+    sits_when: Price is high enough to invite rivals
+    cycle_scorecard: *blank_scorecard
+  CH:
+    name: Switzerland (SNB)
+    weight: 0.04
+    weight_evidence: working assumption
+    wants: A franc that is not too strong
+    protects: Exporters and price stability
+    levers: [MON]
+    pushes_when: Fear flows push the franc sharply
+    sits_when: Inflation makes a strong franc useful
+    cycle_scorecard: *blank_scorecard
+  IL:
+    name: Israel
+    weight: 0.04
+    weight_evidence: working assumption
+    wants: Security against Iran, weapons independence
+    protects: Munitions stockpiles, high tech exports
+    levers: [SEC, RES]
+    pushes_when: Escalation with Iran or threats to shipping
+    sits_when: Funding of the defense path is disputed
+    cycle_scorecard: *blank_scorecard
+
+# ---------------------------------------------------------------- incentive scores
+# I = B x K x U / C, each 1 to 5 from evidence, not opinion. gains_from: up | down | range for that
+# instrument. goal: the plan goal this incentive serves (makes it an alignment trade if credible).
+incentives:
+  - id: JP-USDJPY-DOWN
+    player: JP
+    instrument: USDJPY
+    gains_from: down
+    move: "Stronger yen: lower import costs; intervention near prior zones"
+    B: 4
+    K: 4
+    U: 3
+    C: 3
+    evidence: derived intelligence
+    source: "Doc player map. Intervention in 2022 and 2024 is a confirmed fact; defending a level next time is derived. Verify at MoF intervention data."
+    as_of: "2026-10-06"
+  - id: US-US10Y-DOWN
+    player: US
+    instrument: US10Y
+    gains_from: down
+    move: "Cheap funding for its debt"
+    B: 5
+    K: 4
+    U: 3
+    C: 3
+    evidence: derived intelligence
+    source: "Doc player map: what the US wants. Lever size and urgency are judgment."
+    as_of: "2026-10-06"
+  - id: US-DXY-UP-RESERVE
+    player: US
+    instrument: DXY
+    gains_from: up
+    move: "Bind other currencies more closely to the dollar; protect reserve role"
+    B: 3
+    K: 4
+    U: 2
+    C: 3
+    evidence: working assumption
+    goal: US-NSS-RESERVE
+    source: "National Security Strategy (4 Dec 2025) as summarized in the doc. A stronger dollar also hurts reshoring, so B is held at 3."
+    as_of: "2026-10-06"
+  - id: US-XAUUSD-DOWN
+    player: US
+    instrument: XAUUSD
+    gains_from: down
+    move: "Gold read as a vote against reserve status"
+    B: 3
+    K: 2
+    U: 2
+    C: 2
+    evidence: working assumption
+    source: "Doc: gold and the dollar are read as votes on reserve status."
+    as_of: "2026-10-06"
+  - id: CN-XAUUSD-UP
+    player: CN
+    instrument: XAUUSD
+    gains_from: up
+    move: "Reserve diversification away from the dollar"
+    B: 3
+    K: 3
+    U: 2
+    C: 1
+    evidence: derived intelligence
+    goal: CN-15FYP-YUAN
+    source: "Doc collision map (payment systems) and reserve allocation influence point. Official gold purchase data to be added."
+    as_of: "2026-10-06"
+  - id: EU-WTI-DOWN
+    player: EU
+    instrument: WTI
+    gains_from: down
+    move: "Lower energy costs: Europe's structural weak point"
+    B: 4
+    K: 2
+    U: 3
+    C: 2
+    evidence: derived intelligence
+    source: "Doc: Investment Climate Statement themes (energy cost is Europe's structural weak point)."
+    as_of: "2026-10-06"
+  - id: CA-WTI-UP
+    player: CA
+    instrument: WTI
+    gains_from: up
+    move: "Oil above project breakeven"
+    B: 3
+    K: 1
+    U: 2
+    C: 2
+    evidence: working assumption
+    source: "Doc player map (commodity producers). Breakevens: add from the Dallas Fed survey."
+    as_of: "2026-10-06"
+  - id: AU-COPPER-UP
+    player: AU
+    instrument: COPPER
+    gains_from: up
+    move: "Minerals price above breakeven; AUD 8.3bn committed to the sector"
+    B: 4
+    K: 1
+    U: 2
+    C: 1
+    evidence: working assumption
+    goal: AU-MINERALS
+    source: "Doc country conditions (US-Australia Critical Minerals Framework, Oct 2025)."
+    as_of: "2026-10-06"
+  - id: CH-USDCHF-UP
+    player: CH
+    instrument: USDCHF
+    gains_from: up
+    move: "A franc that is not too strong"
+    B: 3
+    K: 3
+    U: 2
+    C: 3
+    evidence: working assumption
+    source: "Doc player map (SNB). The 1.20 EUR/CHF floor 2011-2015 is a confirmed fact; a new floor is not."
+    as_of: "2026-10-06"
+  - id: EU-EURUSD-UP-REARM
+    player: EU
+    instrument: EURUSD
+    gains_from: up
+    move: "German fiscal expansion lifts growth"
+    B: 3
+    K: 3
+    U: 2
+    C: 3
+    evidence: unverified
+    goal: EU-REARM-2030
+    source: "Doc collision map says EUR benefits only IF fiscal expansion lifts growth. Unverified until growth data confirm."
+    as_of: "2026-10-06"
+
+# ---------------------------------------------------------------- lever catalog
+# L = D x H x tau x C (dependence, holder's supply share, years to substitute capped at 5, credibility 0-1).
+# Unknown inputs stay null and the score is not computed. Family defaults are scaled 0-1 starting values.
+levers:
+  - {id: MON-FED-RATE, family: MON, holder: US, target: "all dollar borrowers", dependence: null, supply_share: null, substitution_years: null, credibility: 1.0, evidence: unknown, source: "to fill"}
+  - {id: RES-CN-RAREEARTH, family: RES, holder: CN, target: "US and EU manufacturers", dependence: null, supply_share: null, substitution_years: null, credibility: null, evidence: unknown, source: "Doc: export controls on rare earths keep widening (2026 Investment Climate Statement). Fill shares from USGS."}
+lever_defaults:
+  MON: {value: 0.80, evidence: working assumption}
+  ACC: {value: 0.70, evidence: working assumption}
+  RES: {value: 0.65, evidence: working assumption}
+  SEC: {value: 0.60, evidence: working assumption}
+  TRD: {value: 0.55, evidence: working assumption}
+  TEC: {value: 0.50, evidence: working assumption}
+  CAP: {value: 0.45, evidence: working assumption}
+  RUL: {value: 0.40, evidence: working assumption}
+  INF: {value: 0.30, evidence: working assumption}
+
+# ---------------------------------------------------------------- pain zones
+# Prices where a player's incentive flips from sitting to pushing. The doc gives these from memory and asks
+# that each be verified at the source, so they start as unverified.
+pain_zones:
+  - {instrument: USDJPY, level: 146.0, player: JP, label: "MoF intervention area 2022 (approx.)", evidence: unverified, source: "Verify: Japan MoF foreign exchange intervention data"}
+  - {instrument: USDJPY, level: 152.0, player: JP, label: "MoF intervention area 2022 (approx.)", evidence: unverified, source: "Verify: Japan MoF"}
+  - {instrument: USDJPY, level: 160.0, player: JP, label: "MoF intervention area 2024 (approx.)", evidence: unverified, source: "Verify: Japan MoF"}
+
+# Forced windows: elections, debt ceiling dates, budget deadlines, fiscal year ends.
+forced_windows:
+  - {label: "Japan fiscal year end", date: "2027-03-31", currencies: [JPY]}
+
+# ---------------------------------------------------------------- plan library
+# credibility = funding_ratio x delivery_ratio (each 0-1). Unknown -> null -> goal cannot anchor an alignment trade.
+# markets: direction the goal pushes each instrument (+1 up, -1 down): derived intelligence, to verify.
+plans:
+  - id: US-NSS-2025
+    player: US
+    document: "National Security Strategy (4 Dec 2025); National Defense Strategy (23 Jan 2026)"
+    published: "2025-12-04"
+    horizon: "4 to 10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: confirmed fact
+    note: "No spending figures in the unclassified strategy. Track appropriations."
+    goals:
+      - {id: US-NSS-RESERVE, goal: "Bind other currencies more closely to the dollar to secure its reserve role", markets: {DXY: 1, XAUUSD: -1}}
+      - {id: US-NSS-REINDUSTRIALIZE, goal: "Reindustrialize and reshore production; tariffs as tools to cut deficits", levers: [TRD]}
+      - {id: US-NSS-ENERGY, goal: "Energy dominance in oil, gas, coal and nuclear", levers: [RES]}
+  - id: CN-15FYP
+    player: CN
+    document: "15th Five Year Plan 2026-2030 (outline submitted 5 Mar 2026)"
+    published: "2026-03-05"
+    horizon: "5 to 10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: confirmed fact
+    goals:
+      - {id: CN-15FYP-YUAN, goal: "Advance yuan internationalization; homegrown cross border yuan payment system", markets: {XAUUSD: 1, DXY: -1}}
+      - {id: CN-15FYP-TECH, goal: "Decisive breakthroughs in chips, machine tools, basic software, advanced materials", levers: [TEC]}
+  - id: EU-REARM
+    player: EU
+    document: "Defence White Paper and ReArm Europe / Readiness 2030 (2025); Critical Raw Materials Act"
+    published: "2025-03-01"
+    horizon: "5 to 10 years"
+    funding_ratio: 0.19
+    delivery_ratio: null
+    evidence: derived intelligence
+    note: "funding_ratio = 150bn SAFE loans / 800bn stated (doc: most of the 800bn is fiscal room). Delivery unknown."
+    goals:
+      - {id: EU-REARM-2030, goal: "Full defense readiness by 2030; mobilize 800bn euros", markets: {EURUSD: 1, XAUUSD: 1}}
+      - {id: EU-CRMA-2030, goal: "Extract 10%, process 40%, recycle 25% of critical raw materials; <=65% from one country", markets: {COPPER: 1}}
+  - id: NATO-HAGUE
+    player: US
+    document: "NATO Hague Summit commitment (June 2025)"
+    published: "2025-06-25"
+    horizon: "10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: confirmed fact
+    goals:
+      - {id: NATO-5PCT-2035, goal: "5% of GDP by 2035 (3.5% core + 1.5% related)", markets: {US10Y: 1, XAUUSD: 1}}
+  - id: JP-SECURITY
+    player: JP
+    document: "Defense of Japan 2026 white paper; three security documents to be revised in 2026"
+    published: "2026-07-01"
+    horizon: "5 to 10 years"
+    funding_ratio: 1.0
+    delivery_ratio: 1.0
+    evidence: derived intelligence
+    note: "Doc: 2% of GDP reached ahead of the fiscal 2027 schedule and funded. Any new target comes with the 2026 revision."
+    goals:
+      - {id: JP-DEF-2PCT, goal: "Defense at 2% of GDP"}
+  - id: UK-SDR-2025
+    player: UK
+    document: "Strategic Defence Review (2 Jun 2025)"
+    published: "2025-06-02"
+    horizon: "10 years"
+    funding_ratio: 1.0
+    delivery_ratio: null
+    evidence: confirmed fact
+    goals:
+      - {id: UK-DEF-2P5, goal: "Defense at 2.5% of GDP by 2027", markets: {}}
+  - id: CA-DIS-2026
+    player: CA
+    document: "Defence Industrial Strategy (17 Feb 2026); Budget 2025"
+    published: "2026-02-17"
+    horizon: "10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: confirmed fact
+    goals:
+      - {id: CA-DEF-5PCT, goal: "2% of GDP in 2025-26 rising to 5% by 2035", funding_ratio: 0.4, delivery_ratio: 1.0}
+  - id: AU-NDS-2026
+    player: AU
+    document: "National Defence Strategy (16 Apr 2026); US-Australia Critical Minerals Framework (Oct 2025)"
+    published: "2026-04-16"
+    horizon: "10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: confirmed fact
+    goals:
+      - {id: AU-MINERALS, goal: "Sovereign critical minerals industry with US backing (AUD 8.3bn committed)", markets: {COPPER: 1, AUDUSD: 1}}
+  - id: IL-NAGEL
+    player: IL
+    document: "Nagel Commission report (2025); 2026 state budget"
+    published: "2025-01-06"
+    horizon: "10 years"
+    funding_ratio: null
+    delivery_ratio: null
+    evidence: derived intelligence
+    note: "Analysts doubt funding; Treasury and defense establishment dispute the path."
+    goals:
+      - {id: IL-DEF-5P5, goal: "Defense near 5.5% of GDP; munitions stockpiles; weapons independence"}
+
+# ---------------------------------------------------------------- hypotheses (written behaviors)
+# Each monthly review re-tests these on the latest data and logs validated / regime-dependent /
+# invalidated / inconclusive. metric: a trait name, or corr:<SYMBOL> for the 60 day return correlation.
+# Subjects ending in _IDX are solo currency indices (a currency against the other seven majors).
+hypotheses:
+  - {id: H-USD-FEAR,      subject: USD_IDX, metric: fear_beta,     expect: ">0",   text: "USD rises in global fear (the Sovereign)", source: "Doc USD profile"}
+  - {id: H-JPY-HAVEN,     subject: JPY_IDX, metric: fear_beta,     expect: ">0",   text: "JPY strengthens when fear rises (the Creditor)", source: "Doc JPY profile; failed 2022-2024 per doc"}
+  - {id: H-CHF-HAVEN,     subject: CHF_IDX, metric: fear_beta,     expect: ">0",   text: "CHF rises in stress (the Vault)", source: "Doc CHF profile"}
+  - {id: H-AUD-RISK,      subject: AUD_IDX, metric: fear_beta,     expect: "<0",   text: "AUD falls when fear rises (the Merchant to China)", source: "Doc AUD profile"}
+  - {id: H-AUD-COPPER,    subject: AUD_IDX, metric: resource_beta, expect: ">0",   text: "AUD rises with copper", source: "Doc AUD profile"}
+  - {id: H-CAD-OIL,       subject: CAD_IDX, metric: resource_beta, expect: ">0",   text: "CAD strengthens with oil (the Oil Clerk)", source: "Doc CAD profile"}
+  - {id: H-EUR-RATE,      subject: EURUSD,  metric: rate_beta,     expect: ">0",   text: "EUR/USD follows the EUR-US 2y yield gap", source: "Doc EUR/USD profile"}
+  - {id: H-GBP-RATE,      subject: GBPUSD,  metric: rate_beta,     expect: ">0",   text: "GBP/USD follows the UK-US 2y yield gap", source: "Doc GBP profile"}
+  - {id: H-USDJPY-CARRY,  subject: USDJPY,  metric: asymmetry,     expect: ">1",   text: "USD/JPY climbs slowly and collapses fast (down days larger than up days)", source: "Doc carry engine"}
+  - {id: H-AUDJPY-ASYM,   subject: AUDJPY,  metric: asymmetry,     expect: ">1",   text: "AUD/JPY: slow climbs, fast collapses", source: "Doc chemistry types"}
+  - {id: H-AUDNZD-RANGE,  subject: AUDNZD,  metric: conviction,    expect: "<1",   text: "AUD/NZD siblings: range bound", source: "Doc chemistry types"}
+  - {id: H-NZD-SHADOW,    subject: NZDUSD,  metric: "corr:AUDUSD", expect: ">0.7", text: "NZD shadows AUD", source: "Doc NZD profile"}
+  - {id: H-GOLD-DOLLAR,   subject: XAUUSD,  metric: "corr:DXY",    expect: "<0",   text: "Gold moves against the dollar", source: "Doc relationship flips (failed for long stretches per doc)"}
+  - {id: H-USDJPY-YIELD,  subject: USDJPY,  metric: "corr:US10Y",  expect: ">0",   text: "USD/JPY trends with US yields", source: "Doc USD/JPY profile"}
+  - {id: H-AUD-STOCKS,    subject: AUDUSD,  metric: "corr:SPX",    expect: ">0",   text: "AUD/USD rises with stocks", source: "Doc AUD profile"}
+  - {id: H-USDCAD-OIL,    subject: USDCAD,  metric: "corr:WTI",    expect: "<0",   text: "USD/CAD falls when oil rises (the Oil Mirror)", source: "Doc USD/CAD profile"}
+  - {id: H-DOLLAR-STOCKS, subject: DXY,     metric: "corr:SPX",    expect: "<0",   text: "The dollar falls when stocks rise (haven role)", source: "Working assumption from the doc's USD profile"}

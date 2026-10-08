@@ -1,12 +1,69 @@
 # Algo-Scripts-Broker-Test-1
 
-Three scripts with separate jobs:
+Four scripts with separate jobs:
 
 | Script | Job | Touches the market? |
 | --- | --- | --- |
+| `personality.py` | **The game.** Empire Game Market Personality engine: who gains, how each instrument normally behaves, where the fight should happen. Daily cards, monthly and quarterly reviews that validate or invalidate earlier calls. | Reads MT5, TradingView, FRED and CFTC. Places no orders. |
 | `broker_v11_algo.py` | **Research.** Backtests the BROKER-v1.1 rules on historical or synthetic quotes. | No. Simulated orders only. |
 | `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
 | `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
+
+## Empire Game Market Personality engine (`personality.py`)
+
+Implements the *Empire Game Market Personality Framework* (October 6, 2026). Package `empire/`, one module per
+layer of the framework's data model (data, traits, regimes, pairs, levels, push, players, events, stories,
+journal, review, report, monitor). Analytical only: it never places orders.
+
+**Cadence.** `python personality.py` runs the daily loop. On the first run of a new month it also writes the
+monthly review for the month just ended, and on the first run of a new quarter the quarterly review. Each
+report reads the journal the earlier ones wrote, so calls are checked against what happened.
+
+| Run | What it does |
+| --- | --- |
+| Daily | Regime (dollar liquidity x risk appetite) and scoreboard (dollar index vs equal-weight dollar). Calendar windows. Events: event study, cross-market fingerprint, needle test, event weight, pressure. Character: eight traits, bands from each trait's own 20-year history, one distance-from-normal number, drift, relationship flips. Incentive gaps for pairs. The 20-year level map scored against random levels. One story card per instrument: likelihoods (base rates tilted by the ledger and pressure), reach, hold, EV at entry, four gates, grade, setup type, invalidation, long-term goal vs short-term behavior, alignment against **every configured scanner**. Exposure check. Every forecast is logged before the outcome and resolved after it. |
+| Monthly | Forecast scorecard (Brier, skill vs base rates, calibration buckets, hit rates by setup, grade, gates and alignment cell per scanner). Every written behavior in the ledger re-tested: validated, regime-dependent, invalidated or inconclusive, with status changes since last month. Measured profile vs last month. Plan alignment scores and pivot triggers. Event library; pressure half lives refit. |
+| Quarterly | Everything monthly plus the validation tests: round and market-made levels vs random levels, trait rankings out of sample (first 14 years vs last 6), pair math identity, incentive gap closure. Recalibrates T and lambda on the forecast log (after 30 resolved), nudges grade thresholds (after 30 per grade), retires setups below a coin flip, fires the pivot triggers (for example dropping the round-number grid if it shows no edge). |
+
+All recalibration applies automatically (owner decision) and is logged with its reason and evidence in
+`data/personality/params_changelog.csv`. Ledger edits are snapshotted and diffed on every run.
+
+**Inputs**
+
+| File | You maintain | Notes |
+| --- | --- | --- |
+| `personality_config.yaml` | Universe, sources, windows, thresholds, scanners to compare against | Versioned like `scanner_config.yaml`. Source order per instrument: MT5, TradingView, then FRED for gaps. |
+| `personality_ledger.yaml` | Players and weights, incentive scores (B, K, U, C), levers, pain zones, plans and goals, hypotheses | Every entry carries an evidence label. `unverified` and `unknown` entries show on cards but are excluded from likelihoods. Seeded from the doc: **review every seed before trusting a grade.** |
+| `personality_events.yaml` | Wars, sanctions, policy shifts, confirmed headlines | Red-folder releases come in automatically from the scanner's calendar archive. |
+
+**Scanners.** Add one entry per scanner under `scanners:` in the config. `scanner_json` reads `scanner.py`
+output; `generic_csv` and `generic_json` read any scanner that writes `symbol, direction, status`. Each card
+shows its alignment cell (aligned, watch, tactical, conflict, no trade) per scanner, and the reviews track
+results per cell, which is the framework's decisive test of whether the story layer adds value.
+
+**Outputs.** `output/personality/daily_<date>.html|json`, `monthly_<YYYY-MM>.*`, `quarterly_<YYYY-Qn>.*`.
+The journal lives in `data/personality/` (git-ignored, so back it up: it is the system's memory).
+
+```powershell
+python personality.py --demo                  # synthetic data, no network: check the install
+python personality.py                         # live: daily, plus monthly/quarterly when due
+python personality.py --run quarterly         # force a review now
+python personality.py --asof 2026-10-06       # point in time
+python personality.py --daemon                # stays running; daily at schedule.daily_utc on weekdays
+python -m pytest tests/test_personality.py -q
+```
+
+Windows Task Scheduler alternative to `--daemon`: a daily trigger Monday to Friday after the New York close
+running `python personality.py` in this folder (with MT5 open and logged in).
+
+**Before relying on it**
+
+- Check the data table at the bottom of the first live daily report: it shows which source each series came
+  from and any splice or quality issues. TradingView and FRED codes in the config are best knowledge, not verified.
+- Work through the ledger seeds. Weights are judgment; pain zone levels came from memory and start as `unverified`.
+- Expect most cards to grade C or none. Without confirmed events touching an instrument, pressure is zero and
+  nothing can grade A. That is the discipline working.
+- T starts high (2.0), keeping likelihoods close to the base rates until 30 forecasts resolve.
 
 ## Trade gate (the hold)
 

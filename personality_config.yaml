@@ -1,0 +1,215 @@
+# Empire Game Market Personality engine: configuration
+# Implements: Empire Game Market Personality Framework (Oct 6, 2026)
+# Governance: any change to a threshold, weight, window or source needs a new config_version and a one
+# line reason in the changelog. Every forecast logs the config_version it ran with.
+# Values the engine recalibrates itself (T, lambda, grade thresholds, half lives, round-level switch) live in
+# data/personality/params_state.json with their own change log; the numbers here are the starting values.
+
+config_version: "pcfg-1.0.0"
+changelog:
+  - {version: "pcfg-1.0.0", date: "2026-10-07", change: "Initial config from the framework doc", reason: "Owner: daily runs with monthly and quarterly personality updates; MT5 + TradingView, FRED for gaps; versioned YAML ledger; HTML + JSON/CSV; compare against multiple scanners; all recalibration automatic"}
+
+paths:
+  ledger: personality_ledger.yaml
+  events: personality_events.yaml
+  scanner_config: scanner_config.yaml      # reused for MT5 settings, COT markets and the calendar archive
+  state_dir: data/personality              # the journal (git-ignored, back it up)
+  output_dir: output/personality
+
+schedule:
+  daily_utc: "22:30"     # after the New York close (17:00 New York is 21:00 or 22:00 UTC)
+
+data:
+  history_years: 20
+  n_daily_bars: 5400            # request size per source
+  request_pause_sec: 1.0
+  retries: 3
+  splice_tolerance_log: 0.004   # older history from a later source is spliced in only if the overlap agrees
+  splice_tolerance_points: 0.05 # same, for yields and VIX (points)
+
+# ---------------------------------------------------------------- universe
+# Source order per instrument (owner rule): MT5, then TradingView, then FRED for anything still missing.
+# MT5 names pass through scanner_config.yaml mt5.symbol_map. TradingView and FRED codes are my best
+# knowledge and must be verified: the daily report shows which source each series actually came from.
+# FRED series are closes only (no high or low), so ATR-based measures fall back to the daily change.
+instruments:
+  EURUSD: {kind: fx, grid: fx,  cot: EUR, sources: [{mt5: EURUSD}, {tv: EURUSD, exchange: OANDA}, {fred: DEXUSEU}, {demo: EURUSD}]}
+  GBPUSD: {kind: fx, grid: fx,  cot: GBP, sources: [{mt5: GBPUSD}, {tv: GBPUSD, exchange: OANDA}, {fred: DEXUSUK}, {demo: GBPUSD}]}
+  USDJPY: {kind: fx, grid: jpy, cot: JPY, sources: [{mt5: USDJPY}, {tv: USDJPY, exchange: OANDA}, {fred: DEXJPUS}, {demo: USDJPY}]}
+  AUDUSD: {kind: fx, grid: fx,  cot: AUD, sources: [{mt5: AUDUSD}, {tv: AUDUSD, exchange: OANDA}, {fred: DEXUSAL}, {demo: AUDUSD}]}
+  NZDUSD: {kind: fx, grid: fx,  cot: NZD, sources: [{mt5: NZDUSD}, {tv: NZDUSD, exchange: OANDA}, {fred: DEXUSNZ}, {demo: NZDUSD}]}
+  USDCAD: {kind: fx, grid: fx,  cot: CAD, sources: [{mt5: USDCAD}, {tv: USDCAD, exchange: OANDA}, {fred: DEXCAUS}, {demo: USDCAD}]}
+  USDCHF: {kind: fx, grid: fx,  cot: CHF, sources: [{mt5: USDCHF}, {tv: USDCHF, exchange: OANDA}, {fred: DEXSZUS}, {demo: USDCHF}]}
+  # crosses (chemistry examples). If every feed fails they are rebuilt from the dollar legs (closes only).
+  EURJPY: {kind: fx, grid: jpy, sources: [{mt5: EURJPY}, {tv: EURJPY, exchange: OANDA}, {demo: EURJPY}]}
+  AUDJPY: {kind: fx, grid: jpy, sources: [{mt5: AUDJPY}, {tv: AUDJPY, exchange: OANDA}, {demo: AUDJPY}]}
+  AUDNZD: {kind: fx, grid: fx,  sources: [{mt5: AUDNZD}, {tv: AUDNZD, exchange: OANDA}, {demo: AUDNZD}]}
+  EURGBP: {kind: fx, grid: fx,  sources: [{mt5: EURGBP}, {tv: EURGBP, exchange: OANDA}, {demo: EURGBP}]}
+  # the scoreboard, metals, energy, equities, the price of money. Spot or unadjusted prices for the map.
+  DXY:    {kind: index,     grid: dxy,    label: "Dollar index", sources: [{tv: DXY, exchange: TVC}, {demo: DXY}]}
+  XAUUSD: {kind: commodity, grid: gold,   cot: GOLD, label: "Gold spot", sources: [{mt5: XAUUSD}, {tv: XAUUSD, exchange: OANDA}, {demo: XAUUSD}]}
+  WTI:    {kind: commodity, grid: oil,    cot: WTI,  label: "WTI crude", sources: [{tv: WTICOUSD, exchange: OANDA}, {fred: DCOILWTICO}, {demo: WTI}]}
+  COPPER: {kind: commodity, grid: copper, label: "Copper (USD/lb)", sources: [{tv: XCUUSD, exchange: OANDA}, {tv: HG, exchange: COMEX, fut_contract: 1}, {demo: COPPER}]}
+  SPX:    {kind: index,     grid: spx,    cot: SPX,  label: "S&P 500", sources: [{tv: SPX, exchange: SP}, {fred: SP500}, {demo: SPX}]}
+  NDX:    {kind: index,     grid: ndx,    label: "Nasdaq 100", sources: [{tv: NDX, exchange: NASDAQ}, {fred: NASDAQ100}, {demo: NDX}]}
+  US02Y:  {kind: yield,     grid: yield,  label: "US 2 year yield", sources: [{tv: US02Y, exchange: TVC}, {fred: DGS2}, {demo: US02Y}]}
+  US10Y:  {kind: yield,     grid: yield,  label: "US 10 year yield", sources: [{tv: US10Y, exchange: TVC}, {fred: DGS10}, {demo: US10Y}]}
+
+# drivers: measured, not profiled
+drivers:
+  VIX:   {kind: vol,    sources: [{tv: VIX, exchange: TVC}, {fred: VIXCLS}, {demo: VIX}]}
+  HYOAS: {kind: spread, label: "US high yield option-adjusted spread", sources: [{fred: BAMLH0A0HYM2}, {demo: HYOAS}]}
+  # 2 year government yields per currency, used for rate betas, carry appeal and the incentive gap.
+  # TVC codes believed correct; verify. There is no daily FRED fallback for most of these.
+  R_EUR: {kind: yield, sources: [{tv: DE02Y, exchange: TVC}, {demo: EUR02Y}]}
+  R_GBP: {kind: yield, sources: [{tv: GB02Y, exchange: TVC}, {demo: GBP02Y}]}
+  R_JPY: {kind: yield, sources: [{tv: JP02Y, exchange: TVC}, {demo: JPY02Y}]}
+  R_CHF: {kind: yield, sources: [{tv: CH02Y, exchange: TVC}, {demo: CHF02Y}]}
+  R_AUD: {kind: yield, sources: [{tv: AU02Y, exchange: TVC}, {demo: AUD02Y}]}
+  R_NZD: {kind: yield, sources: [{tv: NZ02Y, exchange: TVC}, {demo: NZD02Y}]}
+  R_CAD: {kind: yield, sources: [{tv: CA02Y, exchange: TVC}, {demo: CAD02Y}]}
+
+rates: {USD: US02Y, EUR: R_EUR, GBP: R_GBP, JPY: R_JPY, CHF: R_CHF, AUD: R_AUD, NZD: R_NZD, CAD: R_CAD}
+currency_commodity: {AUD: COPPER, NZD: COPPER, CAD: WTI}   # resource beta and terms of trade proxy
+drivers_map: {fear: VIX}
+
+# ---------------------------------------------------------------- level engine
+# Grid steps from the doc. w_min is the floor of the zone half width; the live half width is
+# max(w_min, 0.25 x ATR20). NDX, copper and DXY steps are my starting assumptions, not from the doc.
+grids:
+  fx:     {major: 0.0500, mid: 0.0250, w_min: 0.0010}
+  jpy:    {major: 5.00,   mid: 2.50,   w_min: 0.10}
+  gold:   {major: 100,    mid: 50,     w_min: 10}
+  oil:    {major: 10,     mid: 5,      w_min: 0.50}
+  spx:    {major: 500,    mid: 250,    w_min: 15}
+  ndx:    {major: 1000,   mid: 500,    w_min: 40}
+  copper: {major: 0.50,   mid: 0.25,   w_min: 0.02}
+  dxy:    {major: 5.0,    mid: 2.5,    w_min: 0.15}
+  yield:  {major: 0.50,   mid: 0.25,   w_min: 0.03}
+
+levels:
+  atr_multiplier: 0.25         # lambda in w = max(w_min, lambda ATR20)
+  touch_outside_bars: 5
+  reaction_bars: 10
+  reaction_atr: 1.0
+  break_closes: 2
+  random_levels: 200
+  pivot_width: 20              # swing points for market-made levels
+  edge_z: 2.0
+  strength_half_life_years: 4.0
+  regime_min_touches: 10       # use the regime's own respect rate once a zone has this many touches in it
+  stop_buffer_atr: 0.25
+  cost_r_default: 0.05         # cost in risk units when no broker spread is available
+  break_lookback: 5
+
+# ---------------------------------------------------------------- personality math
+traits:
+  short_window: 20
+  long_window: 250
+  anchor_days: 200
+  bands: {core: [25, 75], stretched: [10, 90]}
+  distance_flag_pct: 95
+  drift_half_life: 60
+  drift_threshold: 2.0
+  drift_days: 60
+  nfp_first_friday_rule: true  # approximate USD event days until the calendar archive has history
+
+regimes:
+  dollar: DXY
+  rate: US02Y
+  fear: VIX
+  liquidity_lookback_days: 126
+  vix_median_days: 1260
+
+flips:
+  window: 60
+  median_days: 1260
+  hold_days: 20
+  relationships:
+    - [XAUUSD, DXY]
+    - [USDJPY, US10Y]
+    - [AUDUSD, SPX]
+    - [USDCAD, WTI]
+    - [DXY, SPX]
+    - [AUDUSD, COPPER]
+    - [EURUSD, DXY]
+
+pairs:
+  gap_window: 630              # about 2.5 years
+
+positioning:
+  index_weeks: 156             # 3 year positioning index
+
+push:
+  lookback_bars: 10
+  displacement_atr: 2.0
+  clv_min: 0.6
+  reclaim_bars: 3
+
+windows:
+  scheduled_days: 5
+  stop_hours: 24
+  forced_days: 10
+
+# ---------------------------------------------------------------- events
+events:
+  auto_confirm_scheduled: true # [IMPL] red-folder releases count as tier 1 facts; importance comes from the measured shock
+  lookback_days: 730
+  estimation_start: -250
+  estimation_end: -20
+  factors: [SPX, US02Y, VIX]   # market model for abnormal returns
+  exposure_min_shock: 1.0
+  half_life_default: 10
+  half_life_defaults: {}       # by event type; refit monthly from measured persistence
+  min_events_for_half_life: 10
+  pressure_history_days: 756
+  lever_top_quartile_default: 0.75
+  needle: {plan_credibility_min: 0.5, shock_min: 2.0, fingerprint_min: 0.7}
+  basket: [DXY, JPY_IDX, CHF_IDX, AUD_IDX, XAUUSD, WTI, VIX, US02Y, US10Y, SPX, HYOAS]
+  # Starting hypotheses from the doc. Calibrate on past events before trusting them.
+  templates:
+    war_supply:            {WTI: 1, XAUUSD: 1, JPY_IDX: 1, CHF_IDX: 1, SPX: -1, VIX: 1}
+    growth_scare:          {US02Y: -1, US10Y: -1, SPX: -1, WTI: -1, AUD_IDX: -1, VIX: 1}
+    inflation_scare:       {US02Y: 1, US10Y: 1, SPX: -1, DXY: 1}
+    sovereign_credibility: {DXY: -1, US10Y: 1, SPX: -1}
+    dollar_funding:        {DXY: 1, XAUUSD: -1, HYOAS: 1, JPY_IDX: -1, CHF_IDX: -1, AUD_IDX: -1, VIX: 1}
+
+# ---------------------------------------------------------------- likelihood and grading
+likelihood:
+  horizon_days: 20
+  outcome_min_atr: 1.0         # outcome zones sit at least this many ATR20 from price
+  story_tilt_min: 0.02         # incentives must move P(up)/pi(up) - P(down)/pi(down) by this much to count as a story
+  T_initial: 2.0               # high: stay close to base rates until about 30 forecasts are logged
+  lambda_initial: 1.0
+  min_forecasts_for_fit: 30
+  T_grid: [0.1, 0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0]
+  lambda_grid: [0, 0.5, 1, 2, 4]
+
+grading:
+  p_dir_a: 0.60
+  p_dir_b: 0.55
+  ev_min: 0.5
+  reward_min: 2.0
+  pressure_pct_min: 90
+  min_cases_for_recalibration: 30
+
+risk:
+  net_usd_cap: 2.0             # risk units of net dollar exposure across A/B cards
+  single_player_cap: 2.0
+
+# ---------------------------------------------------------------- scanners to compare against
+# Add one entry per scanner. Adapters: scanner_json (scanner.py output), generic_csv or generic_json with
+# fields symbol, direction (long/short), status. symbol_map translates the scanner's names to these.
+scanners:
+  - name: daily-scanner
+    path: output/scan_*.json
+    adapter: scanner_json
+    statuses: [qualified]
+    max_age_hours: 36
+    symbol_map: {SPX500: SPX}
+  - name: daily-scanner-developing
+    path: output/scan_*.json
+    adapter: scanner_json
+    statuses: [developing]
+    max_age_hours: 36
+    symbol_map: {SPX500: SPX}
