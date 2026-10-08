@@ -90,6 +90,8 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 | 7 Confluence | Fib zone reached, fib level inside a key box, higher low / lower high forming in the zone, confirmation candle (engulfing, hammer / shooting star, morning / evening star) at the zone. A signal needs fib + key box + candle (3); with structure it is graded A (4/4). |
 | 8 Manage | TP1 at -0.27 (move SL to breakeven), TP2 at -0.618. |
 
+The checklist table sits bottom left by default. Settings › Display can hide it, move it, change its text size, or drop the detail column for a narrow version.
+
 Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped (plus one `alert()` message with entry, SL and targets).
 
 Zones match the scanner: FX ±10 pips (cfg-0.12.0), gold ±$10 and S&P ±10 points (cfg-0.10.0 / 0.11.0); on S&P "pips" in the table are index points. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).

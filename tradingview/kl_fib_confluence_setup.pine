@@ -83,8 +83,10 @@ contract = input.float(0, "Contract size (0 = auto: FX 100k, gold 100 oz, custom
 
 // ─────────────────────────────────────────────────────────── Display
 grpD = "Display"
-showTable = input.bool(true, "Show checklist table", display = display.none, group = grpD)
-tablePos  = input.string("Top right", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], display = display.none, group = grpD)
+showTable = input.bool(true, "Show checklist table", display = display.none, group = grpD, tooltip = "Untick to hide the checklist box completely.")
+tablePos  = input.string("Bottom left", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], display = display.none, group = grpD)
+tableSize = input.string("Small", "Table text size", options = ["Tiny", "Small", "Normal"], display = display.none, group = grpD)
+tableDetail = input.bool(true, "Show detail column", display = display.none, group = grpD, tooltip = "Untick for a narrow table with only the checklist and ticks.")
 colBull   = input.color(color.teal, "Bull", display = display.none, group = grpD, inline = "dc")
 colBear   = input.color(color.red, "Bear", display = display.none, group = grpD, inline = "dc")
 
@@ -99,6 +101,7 @@ majorStep = mode == "FX" ? fxMajorPips * fxPip : mode == "Gold" ? goldMajor : mo
 midStep   = mode == "FX" ? fxMidPips * fxPip : mode == "Gold" ? goldMid : mode == "S&P" ? spxMid : cMid
 half      = mode == "FX" ? fxHalfPips * fxPip : mode == "Gold" ? goldHalf : mode == "S&P" ? spxHalf : cHalf
 nearW     = mode == "FX" ? fxNearPips * fxPip : 0.0
+unitTxt   = mode == "S&P" ? "pts" : "pips"
 ctSize    = contract > 0 ? contract : mode == "FX" ? 100000.0 : mode == "Gold" ? 100.0 : 1.0
 
 f_nearest(float p) =>
@@ -171,7 +174,7 @@ if showRange
             rangeBrokeUp := true
             box.set_border_color(rBox, colBull)
             box.new(bar_index, rTop + h, bar_index + math.min(rR - rL, 450), rTop, border_color = colBull, border_style = line.style_dashed,
-                 bgcolor = color.new(colBull, 90), text = "Target +" + f_pips(h) + " pips  " + f_px(rTop + h), text_color = colBull,
+                 bgcolor = color.new(colBull, 90), text = "Target +" + f_pips(h) + " " + unitTxt + "  " + f_px(rTop + h), text_color = colBull,
                  text_size = size.small, text_valign = text.align_top)
         else if close < rBot - half
             rState       := -2
@@ -180,7 +183,7 @@ if showRange
             rangeBrokeDn := true
             box.set_border_color(rBox, colBear)
             box.new(bar_index, rBot, bar_index + math.min(rR - rL, 450), rBot - h, border_color = colBear, border_style = line.style_dashed,
-                 bgcolor = color.new(colBear, 90), text = "Target -" + f_pips(h) + " pips  " + f_px(rBot - h), text_color = colBear,
+                 bgcolor = color.new(colBear, 90), text = "Target -" + f_pips(h) + " " + unitTxt + "  " + f_px(rBot - h), text_color = colBear,
                  text_size = size.small, text_valign = text.align_bottom)
         else
             rR := bar_index
@@ -212,7 +215,7 @@ if showRange
             rR      := bar_index
             rTarget := na
             rBox    := box.new(rL, rTop, rR, rBot, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 92),
-                 text = "Range " + f_pips(rTop - rBot) + " pips", text_color = color.blue, text_size = size.small, text_valign = text.align_top)
+                 text = "Range " + f_pips(rTop - rBot) + " " + unitTxt + "", text_color = color.blue, text_size = size.small, text_valign = text.align_top)
 
 inRange = rState == 1
 
@@ -428,8 +431,8 @@ if fDir != 0 and barstate.isconfirmed
                      style = isLong ? label.style_label_up : label.style_label_down,
                      color = isLong ? colBull : colBear, textcolor = color.white, size = size.small)
 
-plotshape(longSig, "Long signal", shape.triangleup, location.belowbar, colBull, size = size.small)
-plotshape(shortSig, "Short signal", shape.triangledown, location.abovebar, colBear, size = size.small)
+plotshape(longSig, "Long signal", shape.triangleup, location.belowbar, colBull, size = size.small, display = display.pane)
+plotshape(shortSig, "Short signal", shape.triangledown, location.abovebar, colBear, size = size.small, display = display.pane)
 
 // ─────────────────────────────────────────────────────────── 6 · Draw the fib + entry ladder
 var array<line>  fibLines  = array.new<line>()
@@ -494,7 +497,7 @@ if barstate.islast
             array.push(fibLabels, label.new(right, p, txt, style = label.style_label_left, color = color.new(lc, 85),
                  textcolor = lc, size = size.small))
         array.push(fibLines, line.new(fBb, SL, right, SL, color = color.red, width = 2))
-        array.push(fibLabels, label.new(right, SL, "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " pips beyond 61.8)",
+        array.push(fibLabels, label.new(right, SL, "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 61.8)",
              style = label.style_label_left, color = color.new(color.red, 85), textcolor = color.red, size = size.small))
 
 // ─────────────────────────────────────────────────────────── Checklist table
@@ -502,19 +505,21 @@ f_biasTxt(int b) =>
     b == 1 ? "Bullish (HH/HL)" : b == -1 ? "Bearish (LH/LL)" : "Ranging, wait"
 
 var table tbl = table.new(tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right :
-     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 13, bgcolor = color.new(color.black, 15),
+     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 13, bgcolor = color.new(color.black, 5),
      border_width = 1, border_color = color.new(color.gray, 60))
 
+tSize = tableSize == "Tiny" ? size.tiny : tableSize == "Normal" ? size.normal : size.small
+
 f_row(int row, string item, bool ok, string detail) =>
-    table.cell(tbl, 0, row, item, text_color = color.white, text_size = size.small, text_halign = text.align_left)
-    table.cell(tbl, 1, row, f_mark(ok), text_size = size.small)
-    table.cell(tbl, 2, row, detail, text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, row, item, text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, row, f_mark(ok), text_size = tSize)
+    table.cell(tbl, 2, row, tableDetail ? detail : "", text_color = color.silver, text_size = tSize, text_halign = text.align_left)
 
 if barstate.islast and showTable
     tfWarn = timeframe.period == "120" ? "" : "  (chart " + timeframe.period + ", spec: 2H)"
     hasFib = fDir != 0
     isLong = fDir == 1
-    rangeTxt = rState == 1 ? "Inside range " + f_pips(rTop - rBot) + " pips, wait for break" :
+    rangeTxt = rState == 1 ? "Inside range " + f_pips(rTop - rBot) + " " + unitTxt + ", wait for break" :
          rState == 2 ? "Broke UP, target " + f_px(rTarget) : rState == -2 ? "Broke DOWN, target " + f_px(rTarget) : "No range on this timeframe"
     nearTxt = (near382 ? "38.2 " : "") + (near50 ? "50 " : "") + (near618 ? "61.8 " : "")
     keyTxt = not hasFib ? "-" : ((key382 ? "38.2 " : "") + (key50 ? "50 " : "") + (key618 ? "61.8" : "") + (key382 or key50 or key618 ? " in box" : "none in a box")) +
@@ -522,31 +527,31 @@ if barstate.islast and showTable
     liveC  = isLong ? bullName : bearName
     candTxt = fState >= 2 ? fCandle : (c4 ? candleNow : liveC != "" ? liveC + " (not at zone)" : "waiting")
     confNow = fState >= 2 ? fConf : cnt
-    table.cell(tbl, 0, 0, "KL-Fib checklist", text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+    table.cell(tbl, 0, 0, "KL-Fib checklist", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 0, "")
-    table.cell(tbl, 2, 0, mode + " · box ±" + f_pips(half) + " pips", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 2, 0, not tableDetail ? "" : mode + " · box ±" + f_pips(half) + " " + unitTxt + "", text_color = color.silver, text_size = tSize, text_halign = text.align_left)
     f_row(1, "1 Key level boxes", showLevels, "major " + f_px(majorStep) + " / mid " + f_px(midStep))
     f_row(2, "2 Range", rState != 1, rangeTxt)
     f_row(3, "3 Daily bias", dBias != 0, f_biasTxt(dBias))
     f_row(4, "4 4H aligns", biasDir != 0, f_biasTxt(cBias))
-    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (isLong ? "Up " : "Down ") + f_pips(math.abs(fB - fA)) + " pips" : "none in bias direction") + tfWarn)
+    f_row(5, "5 Impulse (2H)", hasFib, (hasFib ? (isLong ? "Up " : "Down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt + "" : "none in bias direction") + tfWarn)
     f_row(6, "6 Fib placed", hasFib, hasFib ? "A " + f_px(fA) + " → B " + f_px(fB) : "-")
     f_row(7, "7 Fib in key box", key382 or key50 or key618, keyTxt)
     f_row(8, "8 Confirmation candle", fState >= 2 or c4, candTxt)
     f_row(9, "9 Confluences ≥ " + str.tostring(minConf), confNow >= minConf,
          str.tostring(confNow) + "/4  fib " + f_mark(fState >= 2 or c1) + " key " + f_mark(fState >= 2 or c2) + " struct " + f_mark(fHL) + " candle " + f_mark(fState >= 2 or c4))
-    table.cell(tbl, 0, 10, "Status", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 0, 10, "Status", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 10, "")
     table.cell(tbl, 2, 10, hasFib ? f_stateText(fState) : "No setup", text_color = fState == 2 or fState == 3 ? color.lime : fState < 0 ? color.orange : color.white,
-         text_size = size.small, text_halign = text.align_left)
-    table.cell(tbl, 0, 11, "Limits filled", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+         text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 0, 11, "Limits filled", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 11, "")
-    table.cell(tbl, 2, 11, not hasFib ? "-" : fDeep >= 0.618 ? "38.2 + 50 + 61.8" : fDeep >= 0.5 ? "38.2 + 50" : fDeep >= 0.382 ? "38.2" : "none yet",
-         text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tbl, 0, 12, "Plan", text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 2, 11, not tableDetail ? "" : not hasFib ? "-" : fDeep >= 0.618 ? "38.2 + 50 + 61.8" : fDeep >= 0.5 ? "38.2 + 50" : fDeep >= 0.382 ? "38.2" : "none yet",
+         text_color = color.silver, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 0, 12, "Plan", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 12, "")
-    table.cell(tbl, 2, 12, hasFib ? "SL " + f_px(SL) + " · TP1 " + f_px(TP1) + " · TP2 " + f_px(TP2) : "-",
-         text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 2, 12, not tableDetail ? "" : hasFib ? "SL " + f_px(SL) + " · TP1 " + f_px(TP1) + " · TP2 " + f_px(TP2) : "-",
+         text_color = color.silver, text_size = tSize, text_halign = text.align_left)
 
 // ─────────────────────────────────────────────────────────── Alerts
 alertcondition(longSig, "Long setup", "KL-Fib: LONG setup on {{ticker}} {{interval}} at {{close}}")
