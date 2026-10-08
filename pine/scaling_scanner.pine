@@ -1,5 +1,5 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.2.1 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.3.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
@@ -82,6 +82,7 @@ pbAtr    = input.float(1.0, "Correction: min pullback from impulse extreme (x AT
 stretchK = input.float(2.0, "Bonus 'stretched': max distance from EMA since last touch (x ATR)", step = 0.1, group = grpS, display = display.none)
 retestN  = input.int(30, "Breakout retest / limit window (setup bars)", minval = 1, group = grpS, display = display.none)
 coolN    = input.int(1, "Min setup bars between entries on the same setup", minval = 1, group = grpS, tooltip = "1 = a new entry can fire on every 15m close (Setup B) or 2H close (Setup A).", display = display.none)
+perImp   = input.int(2, "Max entries per impulse (per setup)", minval = 1, maxval = 10, group = grpS, tooltip = "Entries allowed on one impulse leg. After that, the next entry needs a new break of structure (new low for sells, new high for buys).", display = display.none)
 maxOpen  = input.int(5, "Max open trades per setup (scaling in)", minval = 1, maxval = 20, group = grpS, display = display.none)
 tpCount  = input.int(5, "Number of take profits", minval = 1, maxval = 10, group = grpS, display = display.none)
 minTpR   = input.float(0.5, "Skip TPs closer than x stop distance", step = 0.1, group = grpS, display = display.none)
@@ -376,7 +377,9 @@ f_scan(emaLen, pivLen, retN) =>
     swStopS = lastH + stopPad
     limitL = bkL + bkLBuf
     limitS = bkS - bkSBuf
-    [trend, sigL, sigS, outTxtL, outTxtS, swStopL, swStopS, limitL, limitS, bullBOS, bearBOS, emaV]
+    impL = nz(bullBar, -1)
+    impS = nz(bearBar, -1)
+    [trend, sigL, sigS, outTxtL, outTxtS, swStopL, swStopS, limitL, limitS, bullBOS, bearBOS, emaV, impL, impS]
 
 // ───────────────────────────── Data ─────────────────────────────
 // Higher-timeframe bias (rule 1): Daily, or Weekly when the Daily has no trend yet.
@@ -386,8 +389,8 @@ autoBias = dTrend != 0 ? dTrend : wTrend
 bias = biasMode == "Sells only" ? -1 : biasMode == "Buys only" ? 1 : autoBias
 
 // Each setup on its own timeframe. A setup is acted on only on the chart bar that closes its bar.
-[aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aEma] = request.security(syminfo.tickerid, tfA, f_scan(emaALen, cPivot, retestN), lookahead = barmerge.lookahead_off)
-[bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bEma] = request.security(syminfo.tickerid, tfB, f_scan(emaBLen, cPivot, retestN), lookahead = barmerge.lookahead_off)
+[aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aEma, aImpL, aImpS] = request.security(syminfo.tickerid, tfA, f_scan(emaALen, cPivot, retestN), lookahead = barmerge.lookahead_off)
+[bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bEma, bImpL, bImpS] = request.security(syminfo.tickerid, tfB, f_scan(emaBLen, cPivot, retestN), lookahead = barmerge.lookahead_off)
 aCloseT = request.security(syminfo.tickerid, tfA, time_close, lookahead = barmerge.lookahead_on)
 bCloseT = request.security(syminfo.tickerid, tfB, time_close, lookahead = barmerge.lookahead_on)
 aIsClose = time_close == aCloseT
@@ -420,6 +423,8 @@ type Setup
     array<Trade> trades
     int lastBar = -1000000
     int rearm = 0
+    int impId = -2        // impulse (break of structure) the last entries belong to
+    int impCount = 0      // entries taken on that impulse
 
 type Book
     int week = 0
@@ -485,7 +490,7 @@ f_openTxt(Setup su) =>
     t == "" ? "Flat" : t
 
 // Manage one setup's open trades and look for its next entry. Returns the alert text ("" = none).
-f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, int trend, int sigL, int sigS, string txtL, string txtS, float stopL, float stopS, float limL, float limS, bool bullBOS, bool bearBOS) =>
+f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, int trend, int sigL, int sigS, string txtL, string txtS, float stopL, float stopS, float limL, float limS, bool bullBOS, bool bearBOS, int impL, int impS) =>
     string out = ""
 
     // 1. Manage every open trade; drop the finished ones.
@@ -501,6 +506,11 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
     if isClose
         dir = bias == 1 and sigL > 0 ? 1 : bias == -1 and sigS > 0 ? -1 : 0
         if dir != 0 and (bar_index - su.lastBar < coolN * ratio or array.size(su.trades) >= maxOpen)
+            dir := 0
+        // Rein in scaling: at most perImp entries per impulse; the next one needs a new break of structure.
+        impNow = dir == 1 ? impL : -impS - 2
+        sameImp = dir != 0 and impNow == su.impId
+        if dir != 0 and sameImp and su.impCount >= perImp
             dir := 0
         if dir != 0
             sig = dir == 1 ? sigL : sigS
@@ -557,10 +567,13 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
                 m += "\n🧭 Daily " + f_trendTxt(dTrend) + " / Weekly " + f_trendTxt(wTrend) + " | " + sname + " structure " + f_trendTxt(trend)
                 if openBefore != "Flat"
                     m += "\n➕ Scaling in. Already open on this setup: " + openBefore
+                m += "\n🔁 Entry " + str.tostring(sameImp ? su.impCount + 1 : 1) + " of " + str.tostring(perImp) + " on this impulse"
             out := f_add(out, m)
             label.new(bar_index, buy ? low : high, "#" + str.tostring(n) + " " + (isRe ? "RE " : "") + (buy ? "BUY " : "SELL ") + kind + "\n" + (swing ? "A" : "B"), color = buy ? color.green : color.red, textcolor = color.white, style = buy ? label.style_label_up : label.style_label_down, size = size.small)
 
             array.push(su.trades, Trade.new(dir = dir, num = n, pending = isLimit, entry = entry, stop = stopPx, be = false, lots = math.max(lots, 0), kind = kind, tps = tps, tpHit = 0, bar = bar_index))
+            su.impCount := sameImp ? su.impCount + 1 : 1
+            su.impId := impNow
             su.lastBar := bar_index
             su.rearm := 0
     out
@@ -568,8 +581,8 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
 // ───────────────────────────── Per closed chart bar ─────────────────────────────
 // Setup B is checked on every 15m close and Setup A on every 2H close, independently.
 if barstate.isconfirmed
-    oA = f_run(suA, bk, nameA, true, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear)
-    oB = f_run(suB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear)
+    oA = f_run(suA, bk, nameA, true, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aImpL, aImpS)
+    oB = f_run(suB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bImpL, bImpS)
     allMsg = f_add(oA, oB)
     if allMsg != ""
         alert(allMsg, alert.freq_once_per_bar_close)
