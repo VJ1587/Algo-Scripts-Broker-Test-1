@@ -7,6 +7,7 @@ Four scripts with separate jobs:
 | `personality.py` | **The game.** Empire Game Market Personality engine: who gains, how each instrument normally behaves, where the fight should happen. Daily cards, monthly and quarterly reviews that validate or invalidate earlier calls. | Reads MT5, TradingView, FRED and CFTC. Places no orders. |
 | `broker_v11_algo.py` | **Research.** Backtests the BROKER-v1.1 rules on historical or synthetic quotes. | No. Simulated orders only. |
 | `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
+| `futures_scalp_scanner.py` | **Scalping.** Scans ES, NQ, CL and GC on 5m and 1m bars for the seven WSGTA Futures Rule Book setups and prints entry, stop, targets and dollar risk. | Reads TradingView. Places no orders. |
 | `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
 
 ## Empire Game Market Personality engine (`personality.py`)
@@ -68,6 +69,34 @@ running `python personality.py` in this folder (with MT5 open and logged in).
 - Expect most cards to grade C or none. Without confirmed events touching an instrument, pressure is zero and
   nothing can grade A. That is the discipline working.
 - T starts high (2.0), keeping likelihoods close to the base rates until 30 forecasts resolve.
+## Futures scalp scanner
+
+Rules: WSGTA Futures Rule Book (updated October 2026). Settings: `scalp_config.yaml`; every value the
+rulebook leaves open is marked `[IMPL]` there so it can be tuned.
+
+| Setup | Timeframe | Order | What the scanner looks for |
+| --- | --- | --- | --- |
+| MOMO / Base | 5m | Stop market | 3+ bar base no taller than 1 ATR; entry ES 2 / NQ 4 / CL 2 / GC 2 ticks beyond it |
+| Trend | 5m | Limit at 9 EMA, then 15 EMA | 9 and 15 EMA rising (falling) and within ES 10 / NQ 40 / CL 10 / GC 10 ticks |
+| RMA | 5m | Limit at the level | Run of ES 40 / NQ 160 / CL 25 / GC 20 ticks or 2 ATR away from the 30/65/200 EMA, pivot or VWAP |
+| FFMA | 5m then 1m | Market | 5m RSI > 80 / < 20 and that far from the 9 EMA; triggers on the first 1m bar closing back toward it |
+| DB / DT | 5m | Limit at the second test | First bottom/top after ES 10 / NQ 30 points, CL 20 / GC 30 ticks; bounced 1 ATR; not broken |
+| ORB MOMO / Trend | 5m ORB until 09:45 ET, then 15m | Stop market / limit | Break of the ORB; after the break runs far enough, limit back at the ORB edge |
+| 1-Min Range Break | 5m + 1m | Stop limit 1 tick out | 5m and 1m trend vs 9/15 EMA with RSI; 3+ 1m bars with a flat top (bottom) within 2 ticks |
+
+Statuses: `TRIGGERED` (entry happened on the latest closed bar), `AT LEVEL` (price is on the limit),
+`ARMED` (stage the order), `WATCH` (FFMA waiting for the 1m turn).
+
+```powershell
+python futures_scalp_scanner.py --demo                      # offline, synthetic bars
+python futures_scalp_scanner.py                             # one live scan
+python futures_scalp_scanner.py --loop                      # rescan every minute; Windows alert on new signals
+python futures_scalp_scanner.py --symbols ES NQ --setups orb momo range_break
+```
+
+Output: a table in the console, `output/scalp/scalp_<time>.csv` and `output/scalp/latest.json`.
+TradingView without `TV_USERNAME` / `TV_PASSWORD` may serve delayed bars; the scanner warns when the
+last bar is more than 15 minutes old.
 
 ## Trade gate (the hold)
 

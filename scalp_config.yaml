@@ -1,0 +1,95 @@
+# Futures scalp scanner config (futures_scalp_scanner.py)
+# Source document: WSGTA Futures Rule Book, updated October 2026 ("subject to change per WSGTA.com").
+# Values marked [IMPL] are not in the rulebook; they are defaults chosen to make the rules mechanical.
+# Tune them before trading, and re-check the rulebook for newer versions.
+version: scalp-cfg-0.1.0
+changelog:
+  - {version: "scalp-cfg-0.1.0", date: "2026-10-08", change: "First version: MOMO/Base, Trend, RMA, FFMA, DB/DT, ORB (MOMO + Trend), 1-Min Range Break"}
+
+timezone: America/New_York
+rth: {open: "09:30", close: "16:00"}
+session_anchor: "18:00"     # [IMPL] CME Globex session open (ET). Anchors session VWAP and the prior-session pivot.
+
+bars:
+  source: tradingview        # tradingview | csv  (--demo overrides)
+  n_bars_1m: 600
+  n_bars_5m: 1200            # 200 EMA + prior-session pivot need ~2 sessions of 5m bars
+  retries: 3
+  request_pause_sec: 1.0
+  csv_dir: data/scalp        # <SYMBOL>_1m.csv and <SYMBOL>_5m.csv, columns time (UTC), open, high, low, close[, volume]
+
+indicators: {atr_len: 14, rsi_len: 14}
+
+loop: {interval_sec: 60}     # --loop: rescan once a minute, alert on new TRIGGERED / AT LEVEL rows
+alerts: {windows_toast: true}
+output: {dir: output/scalp}
+
+# Front-month continuous contracts on TradingView (fut_contract 1). tick_value is USD per tick per contract.
+# I believe these tick values are correct for the full-size contracts; verify with CME before sizing.
+instruments:
+  ES: {tv_symbol: ES, tv_exchange: CME_MINI, tick: 0.25, tick_value: 12.50}
+  NQ: {tv_symbol: NQ, tv_exchange: CME_MINI, tick: 0.25, tick_value: 5.00}
+  CL: {tv_symbol: CL, tv_exchange: NYMEX,    tick: 0.01, tick_value: 10.00}
+  GC: {tv_symbol: GC, tv_exchange: COMEX,    tick: 0.10, tick_value: 10.00}
+
+# ATR risk management ("1-2 ATR rules apply"): stop distance in 5m ATRs where the rulebook gives no fixed stop.
+atr_stop_mult: 1.0           # [IMPL] the rulebook allows 1 to 2
+
+setups:
+  momo:                      # The MOMO / Base Trade (5 min, stop market orders)
+    enabled: [ES, NQ, CL, GC]          # CL is "not common" in the rulebook
+    min_bars: 3              # [IMPL] base = at least 3 completed 5m bars
+    max_bars: 12             # [IMPL]
+    max_height_atr: 1.0      # [IMPL] whole base (high to low) no taller than 1 x ATR(14, 5m)
+    entry_ticks: {ES: 2, NQ: 4, CL: 2, GC: 2}
+    targets_ticks: {ES: [8, 12], NQ: [20], CL: [5], GC: [10]}
+
+  trend:                     # The TREND Trade (5 min, limit at 9 EMA then 15 EMA)
+    max_gap_ticks: {ES: 10, NQ: 40, CL: 10, GC: 10}
+    slope_bars: 3            # [IMPL] both EMAs must be rising (long) / falling (short) over 3 bars
+    targets_ticks: {ES: [8, 12], NQ: [40], CL: [10], GC: [10]}
+
+  rma:                       # Regular Moving Average Trade (5 min, limit at the level)
+    levels: [ema30, ema65, ema200, pivot, vwap]
+    min_ext_ticks: {ES: 40, NQ: 160, CL: 25, GC: 20}   # NQ 160-200, CL 25-30: low end used
+    ext_atr_mult: 2.0        # "or 2ATR"
+    ext_mode: either         # [IMPL] either = the smaller of ticks and 2 ATR qualifies; both = the larger
+    lookback_bars: 48        # [IMPL] the extension must have happened within the last 4 hours
+    confluence_atr: 0.25     # [IMPL] levels closer than 0.25 ATR are reported as one row
+    targets_ticks: {ES: [8, 12], NQ: [40], CL: [10], GC: [10]}
+
+  ffma:                      # Far From Moving Average (5 min signal, 1 min market entry)
+    ref_ema: 9               # [IMPL] "moves towards the EMAs": distance measured from the 5m 9 EMA
+    min_dist_ticks: {ES: 40, NQ: 160, CL: 25, GC: 20}
+    rsi_short: 80
+    rsi_long: 20
+    signal_bars: 3           # [IMPL] the RSI extreme must be on one of the last 3 completed 5m bars
+    fresh_1m_bars: 2         # [IMPL] the 1m turn must be on one of the last 2 completed 1m bars
+    targets_ticks: {ES: [8, 12], NQ: [20, 40], CL: [10], GC: [10]}
+
+  dbdt:                      # Double Bottom / Double Top (5 min, limit at the second test)
+    min_move_ticks: {ES: 40, NQ: 120, CL: 20, GC: 30}  # ES 10+ pts, NQ 30+ pts, CL 20+ ticks, GC 30+ ticks
+    pivot_width: 2           # [IMPL]
+    lookback_bars: 60        # [IMPL]
+    prior_lookback_bars: 24  # [IMPL] where the "prior high/low" is searched before the first bottom/top
+    min_bounce_atr: 1.0      # [IMPL] the middle peak must be at least 1 ATR off the first bottom
+    tolerance_atr: 0.25      # [IMPL] "at the second bottom" = within 0.25 ATR of the first
+    targets_ticks: {ES: [8, 12], NQ: [40], CL: [10], GC: [10]}
+
+  orb:                       # Open Range Breakout (5m ORB until 09:45 ET, 15m ORB from 09:45 to 16:00)
+    switch_to_15m: "09:45"
+    momo_stop: entry_candle  # entry_candle | orb_mid | opposite  (all three are shown in the note)
+    momo_targets_ticks: {ES: [8, 16], NQ: [20, 40], CL: [10], GC: [20, 30]}
+    trend_ext_ticks: {ES: 40, NQ: 160, CL: 25, GC: 20}
+    trend_ext_atr_mult: {ES: 2.0}   # ES: 40 ticks or ~2 ATR, whichever is larger
+    trend_stop_ticks: {ES: 16, NQ: 40, CL: 10, GC: 20} # or 50% of the ORB, whichever is smaller
+    trend_targets_ticks: {ES: [8, 16], NQ: [20, 40], CL: [10, 20], GC: [20, 30]}  # GC "points" read as ticks
+
+  range_break:               # 1-Min Range Break (5m trend + 1m flat-top / flat-bottom coil)
+    min_bars: 3
+    max_bars: 15             # [IMPL]
+    flat_ticks: 2            # resistance / support varies by no more than 1-2 ticks
+    max_depth: {ES: 5.0, NQ: 5.0, CL: 0.50, GC: 5.0}   # price units. "5 points... up to you"; CL is [IMPL]
+    rsi_slope_bars: 3        # [IMPL] "RSI trending upward" = higher than 3 bars ago
+    near_ema_atr: 1.0        # [IMPL] flag "near EMAs" when the range is within 1 x ATR(1m) of the 1m 9 EMA
+    targets_r: [1, 2]        # [IMPL] the rulebook gives no target; shown as 1R and 2R
