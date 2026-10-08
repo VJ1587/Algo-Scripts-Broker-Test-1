@@ -551,33 +551,41 @@ def load_cot(ctx: Ctx) -> dict:
 
 
 def personality_changes(ctx: Ctx, sym: str, drift: pd.DataFrame, cause: Optional[str]) -> list[dict]:
-    """Drift beyond +/-2 for more than 60 days is a personality change. Logged once when it starts, closed
-    when the drift comes back inside."""
+    """Drift beyond +/-2 for more than 60 days is a personality change. One instrument has one personality, so
+    it has at most one open change: a single row whose trait column is the mix of traits drifting together
+    (gold: energy, energy_long, atr_pct). The row is rewritten when the mix changes and closed when every
+    trait in it is back inside the band. Older per-trait rows for the instrument are folded into it."""
     th = float(ctx.cfg["traits"].get("drift_threshold", 2.0))
     need = int(ctx.cfg["traits"].get("drift_days", 60))
+    today = str(ctx.asof.date())
+    unknown = "not identified: investigate"
     log = ctx.journal.read("personality_changes.csv")
-    open_ = log[(log.get("symbol") == sym) & (log.get("status") == "open")] if not log.empty else log
-    events = []
-    for trait in drift.columns:
-        n, sign = drift_streak(drift[trait], th)
-        is_open = (not open_.empty) and ((open_["trait"] == trait).any())
-        if n > need and not is_open:
-            events.append({"date": str(ctx.asof.date()), "symbol": sym, "trait": trait, "direction": "higher" if sign > 0 else "lower",
-                           "drift": round(float(drift[trait].dropna().iloc[-1]), 2), "days": n, "status": "open",
-                           "suspected_cause": cause or "not identified: investigate", "closed": ""})
-        elif n == 0 and is_open:
-            events.append({"date": str(ctx.asof.date()), "symbol": sym, "trait": trait, "direction": "", "drift":
-                           round(float(drift[trait].dropna().iloc[-1]), 2) if drift[trait].notna().any() else "",
-                           "days": 0, "status": "closed", "suspected_cause": "drift back inside the band", "closed": str(ctx.asof.date())})
-    if events:
-        if any(e["status"] == "closed" for e in events) and not log.empty:
-            closed = {e["trait"] for e in events if e["status"] == "closed"}
-            mask = (log["symbol"] == sym) & (log["trait"].isin(closed)) & (log["status"] == "open")
-            log.loc[mask, "status"] = "closed"
-            log.loc[mask, "closed"] = str(ctx.asof.date())
-            ctx.journal.rewrite("personality_changes.csv", log)
-        ctx.journal.append("personality_changes.csv", [e for e in events if e["status"] == "open"])
-    return events
+    mask = ((log["symbol"] == sym) & (log["status"] == "open")) if not log.empty else pd.Series(dtype=bool)
+    prior = [t.strip() for x in (log.loc[mask, "trait"] if mask.any() else []) for t in str(x).split(",") if t.strip()]
+    streaks = {t: drift_streak(drift[t], th) for t in drift.columns}
+    # a trait stays in the mix until its drift is back inside; a new one joins once it passes 60 days
+    mix = [t for t in drift.columns if streaks[t][0] > need or (t in prior and streaks[t][0] > 0)]
+    if not mix and not prior:
+        return []
+    if mix:
+        last = {t: float(drift[t].dropna().iloc[-1]) for t in mix}
+        dirs = {"higher" if streaks[t][1] > 0 else "lower" for t in mix}
+        row = {"date": str(log.loc[mask, "date"].min()) if prior else today, "symbol": sym, "trait": ", ".join(mix),
+               "direction": dirs.pop() if len(dirs) == 1 else "mixed: " + ", ".join(
+                   f"{t} {'higher' if streaks[t][1] > 0 else 'lower'}" for t in mix),
+               "drift": round(max(last.values(), key=abs), 2), "days": max(streaks[t][0] for t in mix), "status": "open",
+               "suspected_cause": next((c for c in ([str(x) for x in log.loc[mask, "suspected_cause"]] if prior else [])
+                                        if c and c != unknown), None) or cause or unknown, "closed": ""}
+    else:
+        row = {"date": str(log.loc[mask, "date"].min()), "symbol": sym, "trait": ", ".join(prior), "direction": "",
+               "drift": "", "days": 0, "status": "closed", "suspected_cause": "drift back inside the band", "closed": today}
+    if prior and row["trait"] == ", ".join(prior) and row["status"] == "open" and mask.sum() == 1:
+        return []  # same mix still open: nothing new to log today
+    if prior:
+        log = log[~mask]
+    log = pd.concat([log, pd.DataFrame([row])], ignore_index=True) if not log.empty else pd.DataFrame([row])
+    ctx.journal.rewrite("personality_changes.csv", log)
+    return [row]
 
 
 def flips_step(ctx: Ctx) -> dict:

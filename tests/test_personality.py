@@ -361,3 +361,36 @@ def test_last_completed_session_skips_unfinished_day_and_weekend():
     assert last_completed_session(pd.Timestamp("2026-10-07 14:00", tz="UTC")) == pd.Timestamp("2026-10-06")  # 10:00 New York
     assert last_completed_session(pd.Timestamp("2026-10-07 22:30", tz="UTC")) == pd.Timestamp("2026-10-07")
     assert last_completed_session(pd.Timestamp("2026-10-10 12:00", tz="UTC")) == pd.Timestamp("2026-10-09")  # Saturday
+
+
+def test_personality_change_is_one_row_per_instrument_with_the_trait_mix(tmp_path):
+    from types import SimpleNamespace
+    from empire.monitor import personality_changes
+    j = jr.Journal(tmp_path)
+    # a legacy journal: gold logged once per trait
+    j.append("personality_changes.csv", [
+        {"date": "2026-10-07", "symbol": "XAUUSD", "trait": t, "direction": "higher", "drift": 2.5, "days": 120,
+         "status": "open", "suspected_cause": "not identified: investigate", "closed": ""}
+        for t in ("energy", "energy_long", "atr_pct")])
+    ctx = SimpleNamespace(cfg={"traits": {"drift_threshold": 2.0, "drift_days": 60}}, journal=j,
+                          asof=pd.Timestamp("2026-10-08"))
+    idx = pd.bdate_range("2026-01-01", periods=200)
+    high = pd.Series(2.5, idx)
+    drift = pd.DataFrame({"energy": high, "energy_long": high, "atr_pct": high, "conviction": pd.Series(0.1, idx)})
+    out = personality_changes(ctx, "XAUUSD", drift, None)
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and len(out) == 1
+    assert log.iloc[0]["trait"] == "energy, energy_long, atr_pct"
+    assert log.iloc[0]["date"] == "2026-10-07" and log.iloc[0]["status"] == "open"
+    assert personality_changes(ctx, "XAUUSD", drift, None) == []  # same mix: nothing new
+    # one trait comes back inside the band: still one row, smaller mix
+    drift.loc[idx[-1], "atr_pct"] = 0.0
+    personality_changes(ctx, "XAUUSD", drift, "event X")
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and log.iloc[0]["trait"] == "energy, energy_long"
+    assert log.iloc[0]["suspected_cause"] == "event X"
+    # all back inside: the one row closes
+    drift.loc[idx[-1]] = 0.0
+    out = personality_changes(ctx, "XAUUSD", drift, None)
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and log.iloc[0]["status"] == "closed" and out[0]["status"] == "closed"
