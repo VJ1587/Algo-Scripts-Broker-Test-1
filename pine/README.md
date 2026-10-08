@@ -1,6 +1,6 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` (v2.8.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+`scaling_scanner.pine` (v2.9.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
 when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
@@ -99,3 +99,19 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
   re-entry tag is meant to cover that.
 - **Forward-test first** on demo or paper, and compare a few weeks of alerts with your own read of
   the chart before you size up.
+
+## Strategy version (Strategy Tester)
+
+`scaling_scanner_strategy.pine` is generated from the indicator by `python pine/build_strategy.py`
+(run it after every indicator change; it fails loudly if a hook it needs has moved). It takes the
+indicator's exact entries for Setups S, A and B and trades them in the Strategy Tester:
+
+- **Entry:** market at the signal candle's close (`process_orders_on_close`), or the Buy/Sell Limit
+  for breakouts.
+- **Exits:** a partial at TP1 (setting "Close at TP1 (%)", default 50 %), the rest at the stop. The
+  stop moves to breakeven when the indicator says so (+$2 / +2 pts), and a structure-break exit
+  closes everything that's left.
+- **Size:** the risk-% tiers (1 % → 1.5 % → 2 % → 3 % at +25 / +50 / +100 % growth), based on the
+  strategy's own equity. Lots are converted to TradingView units with `syminfo.pointvalue`.
+- **Settings:** each setup (S, A, B) can be switched on or off to test it on its own. Set
+  commission and slippage in the strategy's Properties tab (both default to 0).
