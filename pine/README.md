@@ -1,6 +1,6 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` (v2.7.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+`scaling_scanner.pine` (v2.8.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
 when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
@@ -63,6 +63,7 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
 | EMA colors | EMA14 (Setup A, 2H) cyan, EMA50 (Setup B, 15m) magenta; both adjustable in settings. |
 | Stop-loss lines (A and B) | Each entry's stop is drawn as a flat line from entry to exit: red while open (dashed = limit not filled yet). After breakeven the line continues dotted at the entry price. When the trade closes the line turns green (win: TP1 reached or closed in profit), red (loss: original stop hit or closed at a loss) or grey (breakeven before TP1). The last 500 lines stay on the chart. |
 | Win / loss record | The table counts wins, losses and breakevens for Setups A and B over the loaded chart history, with the win rate excluding breakevens. TP partials and costs are not modelled. |
+| Status table | Optional (Show status table). Default: **Compact** at the **bottom left** in tiny text, showing bias, Weekly/Daily, open S/A/B trades and trades this week. **Full** adds the 4H/2H/15m structure, the daily breakout waiting for a retest and the A/B win-loss record. Position and text size are settings. Equity and risk tier are no longer shown (they belong in the strategy tester). |
 | Sellers / buyers in control | On each setup's timeframe, structure flips bullish only after a higher low **and then** a close above the last swing high (mirror for bearish). No buys while that structure is bearish. |
 | EMA side | Buys only on a close above the EMA (14 on the 2H, 50 on the 15m); sells only below it. |
 | Impulse + correction | Impulse = a close that breaks the last swing high (buys) / low (sells). Correction = a pullback of at least 1 × ATR from the leg extreme that holds the last swing low / high. |

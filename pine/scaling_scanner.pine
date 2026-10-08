@@ -1,5 +1,5 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.7.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.8.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
@@ -121,6 +121,9 @@ showPriv  = input.bool(true, "Add private lines to entry alerts (setup, size, bi
 showZones = input.bool(true, "Show level zones", group = grpD, display = display.none)
 zonesEach = input.int(3, "Zones each side of price", minval = 1, maxval = 10, group = grpD, display = display.none)
 showTable = input.bool(true, "Show status table", group = grpD, display = display.none)
+tblMode   = input.string("Compact", "Table rows", options = ["Compact", "Full"], group = grpD, tooltip = "Compact: bias, weekly/daily, open trades, trades this week. Full adds 4H/2H/15m structure, daily breakout and the A/B win-loss record.", display = display.none)
+tblPos    = input.string("Bottom left", "Table position", options = ["Bottom left", "Bottom right", "Top left", "Top right", "Middle right"], group = grpD, display = display.none)
+tblSize   = input.string("Tiny", "Table text size", options = ["Tiny", "Small", "Normal"], group = grpD, display = display.none)
 showSL    = input.bool(true, "Show stop-loss lines for Setups A and B", group = grpD, tooltip = "Flat line at each entry's stop, from entry to exit. Red while open (dashed = limit not filled yet). When closed: green = win (TP1 reached or closed in profit), red = loss, grey = breakeven.", display = display.none)
 vioOn     = input.bool(true, "Alert on structure violation (4H / Daily close through the last swing against the trade)", group = grpD, display = display.none)
 colA      = input.color(color.new(#00BCD4, 0), "EMA14 (Setup A) color", group = grpD, display = display.none)
@@ -797,40 +800,41 @@ if showZones and barstate.islast
         bx = box.new(math.max(bar_index - 150, 0), lv + bf, bar_index + 10, lv - bf, border_color = color.new(col, 60), bgcolor = col, text = str.tostring(lv, "#.##") + (isMaj ? " MAJOR" : " mid"), text_size = size.tiny, text_halign = text.align_right, text_color = color.gray)
         array.push(zoneBoxes, bx)
 
-var table tbl = table.new(position.top_right, 2, 15, bgcolor = color.new(color.black, 20), border_width = 1)
+f_tblPos(p) =>
+    switch p
+        "Bottom left" => position.bottom_left
+        "Bottom right" => position.bottom_right
+        "Top left" => position.top_left
+        "Top right" => position.top_right
+        => position.middle_right
+
+f_tblSize(sz) =>
+    sz == "Tiny" ? size.tiny : sz == "Small" ? size.small : size.normal
+
+var table tbl = table.new(f_tblPos(tblPos), 2, 13, bgcolor = color.new(color.black, 45), border_width = 1)
+
+f_row(int r, string k, string v, color bg) =>
+    tsz = f_tblSize(tblSize)
+    table.cell(tbl, 0, r, k, text_color = color.white, text_size = tsz, text_halign = text.align_left)
+    table.cell(tbl, 1, r, v, text_color = color.white, bgcolor = bg, text_size = tsz, text_halign = text.align_left)
+    r + 1
+
 if showTable and barstate.islast
-    eqShow = curEq > 0 ? curEq : startEq + bk.pnl
-    gShow = (eqShow / startEq - 1) * 100
-    rShow = gShow >= t3g ? t3r : gShow >= t2g ? t2r : gShow >= t1g ? t1r : r0
-    bCol = bias == 1 ? color.green : bias == -1 ? color.red : color.gray
-    tfWarn = chartSec > timeframe.in_seconds(tfB) ? " (chart TF too high!)" : ""
-    table.cell(tbl, 0, 0, "Instrument", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 0, instName + tfWarn, text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 1, "Weekly / Daily", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 1, "W " + (wMixed ? "MIXED" : f_trendTxt(wTrend)) + " (H " + f_p(wSwH) + " / L " + f_p(wSwL) + ") | D " + f_trendTxt(dTrend) + " (H " + f_p(dSwH) + " / L " + f_p(dSwL) + ")", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 2, "Trade bias", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 2, biasState, text_color = color.white, bgcolor = bCol, text_size = size.small)
-    table.cell(tbl, 0, 3, "A structure / EMA", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 3, f_trendTxt(aTrend) + " / " + (close > aEma ? "above" : "below"), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 4, "B structure / EMA", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 4, f_trendTxt(bTrend) + " / " + (close > bEma ? "above" : "below"), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 5, "Open A", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 5, f_openTxt(suA), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 6, "Open B", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 6, f_openTxt(suB), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 7, "Trades this week", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 7, str.tostring(bk.week), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 8, "Equity", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 8, "$" + str.tostring(eqShow, "#,##0") + " (" + (gShow >= 0 ? "+" : "") + str.tostring(gShow, "0.0") + "%)" + (curEq > 0 ? " manual" : " tracked"), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 9, "Risk tier", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 9, str.tostring(rShow) + "% per trade", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 10, "S: 4H structure", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 10, f_trendTxt(hTrend), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 11, "S: daily breakout", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 11, sBrkDir == 0 ? "None waiting" : "Closed " + (sBrkDir == 1 ? "above " : "below ") + f_lvlTxt(sBrkLvl, sBrkMaj) + ": waiting for retest", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 12, "Open S (swing)", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 12, f_openTxt(suS), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 13, "A record (history)", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 13, f_rec(suA), text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 14, "B record (history)", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 14, f_rec(suB), text_color = color.white, text_size = size.small)
+    table.clear(tbl, 0, 0, 1, 12)
+    bCol = bias == 1 ? color.new(color.green, 20) : bias == -1 ? color.new(color.red, 20) : color.new(color.gray, 40)
+    none = color.new(color.black, 100)
+    tfWarn = chartSec > timeframe.in_seconds(tfB) ? " (use the " + f_tfName(tfB) + " chart)" : ""
+    int r = 0
+    r := f_row(r, "Bias", biasState, bCol)
+    r := f_row(r, "Weekly / Daily", "W " + (wMixed ? "MIXED" : f_trendTxt(wTrend)) + " (H " + f_p(wSwH) + " / L " + f_p(wSwL) + ") | D " + f_trendTxt(dTrend) + " (H " + f_p(dSwH) + " / L " + f_p(dSwL) + ")", none)
+    if tblMode == "Full"
+        r := f_row(r, "Instrument", instName + tfWarn, none)
+        r := f_row(r, "4H (swing)", f_trendTxt(hTrend), none)
+        r := f_row(r, "A 2H / EMA14", f_trendTxt(aTrend) + " / " + (close > aEma ? "above" : "below"), none)
+        r := f_row(r, "B 15m / EMA50", f_trendTxt(bTrend) + " / " + (close > bEma ? "above" : "below"), none)
+        r := f_row(r, "Daily breakout", sBrkDir == 0 ? "None waiting" : "Closed " + (sBrkDir == 1 ? "above " : "below ") + f_lvlTxt(sBrkLvl, sBrkMaj) + ": waiting for retest", none)
+    r := f_row(r, "Open S / A / B", f_openTxt(suS) + " | " + f_openTxt(suA) + " | " + f_openTxt(suB), none)
+    r := f_row(r, "Trades this week", str.tostring(bk.week), none)
+    if tblMode == "Full"
+        r := f_row(r, "A record", f_rec(suA), none)
+        r := f_row(r, "B record", f_rec(suB), none)
