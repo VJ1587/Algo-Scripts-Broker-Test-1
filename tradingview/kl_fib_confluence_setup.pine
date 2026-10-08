@@ -19,8 +19,8 @@ indicator("Key Level + Fib Confluence Setup", shorttitle = "KL-Fib Setup", overl
 
 // ─────────────────────────────────────────────────────────── 1 · Key levels
 grpLv = "1 · Key levels"
-preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX", "Gold", "Custom"], group = grpLv,
-     tooltip = "Auto: forex symbols use the FX grid, XAU / GC use the Gold grid, everything else uses Custom.")
+preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX", "Gold", "S&P", "Custom"], group = grpLv,
+     tooltip = "Auto: forex symbols use the FX grid, XAU / GC the Gold grid, SPX / ES / US500 the S&P grid, everything else Custom.")
 fxMajorPips = input.float(500, "FX major step (pips)", minval = 1, group = grpLv)
 fxMidPips   = input.float(250, "FX mid step (pips)", minval = 1, group = grpLv)
 fxHalfPips  = input.float(10, "FX box half-width (pips)", minval = 0, group = grpLv, tooltip = "10 pips: 1.3000 becomes a 1.2990-1.3010 box.")
@@ -28,6 +28,9 @@ goldMajor   = input.float(100, "Gold major step ($)", minval = 1, group = grpLv)
 goldMid     = input.float(50, "Gold mid step ($)", minval = 1, group = grpLv)
 goldHalf    = input.float(10, "Gold box half-width ($)", minval = 0, group = grpLv, tooltip = "$1 = 10 pips on XAUUSD, so $10 is a +/-100 pip box: 3300 becomes 3290-3310.")
 goldPip     = input.float(0.10, "Gold pip size ($)", minval = 0.001, group = grpLv)
+spxMajor    = input.float(100, "S&P major step (points)", minval = 1, group = grpLv)
+spxMid      = input.float(50, "S&P mid step (points)", minval = 1, group = grpLv)
+spxHalf     = input.float(10, "S&P box half-width (points)", minval = 0, group = grpLv, tooltip = "3300 becomes 3290-3310.")
 cMajor      = input.float(100, "Custom major step (price)", minval = 0.00001, group = grpLv)
 cMid        = input.float(50, "Custom mid step (price)", minval = 0.00001, group = grpLv)
 cHalf       = input.float(1, "Custom box half-width (price)", minval = 0, group = grpLv)
@@ -87,12 +90,13 @@ colBear   = input.color(color.red, "Bear", group = grpD, inline = "dc")
 // ─────────────────────────────────────────────────────────── Instrument resolution
 isGoldSym = str.contains(syminfo.ticker, "XAU") or syminfo.root == "GC" or syminfo.root == "MGC"
 isFxSym   = syminfo.type == "forex"
-mode      = preset == "Auto" ? (isGoldSym ? "Gold" : isFxSym ? "FX" : "Custom") : preset
+isSpxSym  = str.contains(syminfo.ticker, "SPX") or str.contains(syminfo.ticker, "US500") or syminfo.root == "ES" or syminfo.root == "MES"
+mode      = preset == "Auto" ? (isGoldSym ? "Gold" : isSpxSym ? "S&P" : isFxSym ? "FX" : "Custom") : preset
 fxPip     = str.contains(syminfo.ticker, "JPY") ? 0.01 : 0.0001
-pip       = mode == "FX" ? fxPip : mode == "Gold" ? goldPip : (cPip > 0 ? cPip : syminfo.mintick * 10)
-majorStep = mode == "FX" ? fxMajorPips * fxPip : mode == "Gold" ? goldMajor : cMajor
-midStep   = mode == "FX" ? fxMidPips * fxPip : mode == "Gold" ? goldMid : cMid
-half      = mode == "FX" ? fxHalfPips * fxPip : mode == "Gold" ? goldHalf : cHalf
+pip       = mode == "FX" ? fxPip : mode == "Gold" ? goldPip : mode == "S&P" ? 1.0 : (cPip > 0 ? cPip : syminfo.mintick * 10)
+majorStep = mode == "FX" ? fxMajorPips * fxPip : mode == "Gold" ? goldMajor : mode == "S&P" ? spxMajor : cMajor
+midStep   = mode == "FX" ? fxMidPips * fxPip : mode == "Gold" ? goldMid : mode == "S&P" ? spxMid : cMid
+half      = mode == "FX" ? fxHalfPips * fxPip : mode == "Gold" ? goldHalf : mode == "S&P" ? spxHalf : cHalf
 ctSize    = contract > 0 ? contract : mode == "FX" ? 100000.0 : mode == "Gold" ? 100.0 : 1.0
 
 f_nearest(float p) =>

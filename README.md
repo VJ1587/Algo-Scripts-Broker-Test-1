@@ -92,7 +92,7 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 
 Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped (plus one `alert()` message with entry, SL and targets).
 
-Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. Gold is ±$10 in both the indicator and the scanner (cfg-0.10.0). Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
+Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. Gold is ±$10 and S&P ±10 points in both the indicator and the scanner (cfg-0.10.0 / 0.11.0); on S&P "pips" in the table are index points. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
 
 # Daily Instrument Scanner (Addendum v0.1)
 
@@ -116,7 +116,7 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 | Check | Name | Passes when |
 |---|---|---|
 | C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
@@ -273,9 +273,11 @@ config). Nothing in the scanner sends, changes or closes orders.
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
 5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
    half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 (XAUUSD
-   and GC; $1 = 10 pips, so +/-100 pips; was $20 before cfg-0.10.0), S&P 20 points, oil $1.00
+   and GC; $1 = 10 pips, so +/-100 pips; was $20 before cfg-0.10.0), S&P 10 points (was 20 before cfg-0.11.0), oil $1.00
    (placeholder; a $10-20 box would overlap the $2.50 oil grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
-   to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
+   to the ATR width and is flagged "zone width not set". Chart-pattern (C4) tolerances scale from
+   `pattern_zone_half_width` when set: gold and S&P keep 20 so narrowing their zones (cfg-0.10.0 / 0.11.0)
+   did not change pattern detection. C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the
    opposite wick, close not through the zone). Two or more adds a "zone tested: N wicks" flag. It never

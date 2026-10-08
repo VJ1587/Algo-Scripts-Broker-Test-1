@@ -126,7 +126,7 @@ def test_psych_zone_fixed_15_pips_fx_and_atr_where_unset():
     assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.15), "fixed")
     assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(10.0), "fixed")  # gold +/- $10
     assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(10.0), "fixed")
-    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P stays at 20
+    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(10.0), "fixed")   # S&P +/- 10 points
     assert sc.psych_zone_half_width(UNIVERSE["WTI"], 0.3) == (pytest.approx(1.0), "fixed")  # oil: gold ratio
     assert all(i.psych_zone_hw is not None for i in UNIVERSE.values())                       # no ATR fallback left
     # gold 3,300 major: 3,292 is inside the $3,290-$3,310 zone, 3,288 is outside
@@ -746,3 +746,12 @@ def test_prune_only_old_intraday_html_and_csv(tmp_path):
     assert sc.prune_outputs(tmp_path, pd.Timestamp("2026-10-07 12:05", tz="UTC"), 14) == 2
     left = sorted(p.name for p in tmp_path.iterdir())
     assert left == ["scan_20260901T1205Z_preNY.html", "scan_20260901T1405Z_intraday.json", "scan_20261006T1405Z_intraday.html"]
+
+
+def test_gold_and_spx_pattern_tolerance_keeps_old_basis():
+    # cfg-0.11.0: zones narrowed to 10, chart-pattern tolerances still scale from 20
+    for sym in ("XAUUSD", "GC", "ES"):
+        inst = UNIVERSE[sym]
+        assert inst.psych_zone_hw == pytest.approx(10.0)
+        assert inst.pattern_zone_hw == pytest.approx(20.0)
+    assert UNIVERSE["EURUSD"].pattern_zone_hw is None   # FX unchanged: patterns use the zone width

@@ -23,7 +23,7 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
          FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
          JPY pairs     5.00 / 2.50                    0.15      (15 pips)
          Gold          $100 / $50                     $10       (3,300 -> 3,290 to 3,310; $1 = 10 pips)
-         S&P           100 / 50 points                20 points (unchanged when gold moved to $10)
+         S&P           100 / 50 points                10 points (3,300 -> 3,290 to 3,310)
          Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
        Why: institutions' orders sit spread around a round number, so price reacts across an area.
        Gold is +/-$10 (100 pips each side) per the owner, cfg-0.10.0 (was $20).
@@ -145,6 +145,7 @@ class Instrument:
     short_test: bool = False      # gold and S&P: carry v1.0 short experiment flag
     roll: Optional[str] = None
     psych_zone_hw: Optional[float] = None  # fixed zone half-width around grid levels; None = not set
+    pattern_zone_hw: Optional[float] = None  # width that scales chart-pattern tolerances; None = psych_zone_hw
 
     @property
     def calendar_currencies(self) -> list[str]:
@@ -175,13 +176,13 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
-def _grid_zone_hw(g: dict) -> Optional[float]:
-    v = g.get("zone_half_width")
+def _grid_zone_hw(g: dict, key: str = "zone_half_width") -> Optional[float]:
+    v = g.get(key)
     if v is None:
         return None
     v = float(v)
     if v <= 0:
-        raise ValueError(f"grid zone_half_width must be positive, got {v}")
+        raise ValueError(f"grid {key} must be positive, got {v}")
     return v
 
 
@@ -195,13 +196,15 @@ def build_universe(cfg: dict) -> list[Instrument]:
             g = grids["jpy" if jpy else "fx"]
             out.append(Instrument(symbol=sym, group=grp, asset="fx", tick=0.001 if jpy else 0.00001,
                                   grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                                  psych_zone_hw=_grid_zone_hw(g), tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
+                                  psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                                  tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
                                   base=base, quote=quote))
     for it in cfg.get("other_instruments", []):
         g = grids[it["grid"]]
         out.append(Instrument(symbol=it["symbol"], group=it["group"], asset=it["asset"], tick=float(it["tick"]),
                               grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                              psych_zone_hw=_grid_zone_hw(g), tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
+                              psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                              tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
                               fut_contract=it.get("fut_contract"), underlying=it.get("underlying"),
                               cot=it.get("cot"), short_test=bool(it.get("short_test", False)),
                               roll=it.get("roll"), base=it.get("base"), quote=it.get("quote")))
@@ -896,7 +899,7 @@ CONFLUENCES = {
                               "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
                              "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
-                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold every 100 and 50, +/-10; S&P every 100 and 50, +/-20; "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-10; "
                              "oil every 5.00 and 2.50, +/-1.00."),
     "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
                                     "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "
@@ -1062,14 +1065,16 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
     """[OWNER cfg-0.4.0, C4] Double bottom/top and (inverse) head and shoulders on Daily or 4H, confirmed by a
     candle CLOSE beyond the neckline (a wick does not count) within the last break_max_age_bars bars,
     with the latest close still beyond it. The reversal extreme (a bottom, or the head) must sit in a key
-    level zone. Tolerances scale with the instrument's zone half-width. Returns '' if none."""
+    level zone. Tolerances scale with the instrument's pattern width (grids.*.pattern_zone_half_width, cfg-0.11.0),
+    which defaults to the zone half-width. Returns '' if none."""
     t = len(df) - 1
     c = df["close"].values
     seq = alternating_upto(pivots, t)
     ext = "L" if direction == LONG else "H"
     idx = [i for i, q in enumerate(seq) if q.kind == ext]
-    tol = float(cp["match_tol_zone_mult"][tf]) * zone_hw
-    margin = float(cp["head_margin_zone_mult"][tf]) * zone_hw
+    pat_hw = inst.pattern_zone_hw if inst.pattern_zone_hw is not None else zone_hw
+    tol = float(cp["match_tol_zone_mult"][tf]) * pat_hw
+    margin = float(cp["head_margin_zone_mult"][tf]) * pat_hw
     min_gap = int(cp["min_gap_bars"])
     max_age = int(cp["break_max_age_bars"])
     beyond = (lambda x, lvl: x > lvl) if direction == LONG else (lambda x, lvl: x < lvl)
