@@ -1,5 +1,5 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.6.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.7.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
@@ -36,7 +36,7 @@
 // Pine cannot read the broker account. Equity = Starting equity + P&L of the tracked trades closed
 // since "Track P&L from", unless "Current equity" is set (then that value is used as is).
 
-indicator("Gold / ES Scaling Scanner", shorttitle = "ScaleScan", overlay = true, max_labels_count = 500, max_boxes_count = 100)
+indicator("Gold / ES Scaling Scanner", shorttitle = "ScaleScan", overlay = true, max_labels_count = 500, max_boxes_count = 100, max_lines_count = 500)
 
 TZ = "America/New_York"
 
@@ -121,6 +121,7 @@ showPriv  = input.bool(true, "Add private lines to entry alerts (setup, size, bi
 showZones = input.bool(true, "Show level zones", group = grpD, display = display.none)
 zonesEach = input.int(3, "Zones each side of price", minval = 1, maxval = 10, group = grpD, display = display.none)
 showTable = input.bool(true, "Show status table", group = grpD, display = display.none)
+showSL    = input.bool(true, "Show stop-loss lines for Setups A and B", group = grpD, tooltip = "Flat line at each entry's stop, from entry to exit. Red while open (dashed = limit not filled yet). When closed: green = win (TP1 reached or closed in profit), red = loss, grey = breakeven.", display = display.none)
 vioOn     = input.bool(true, "Alert on structure violation (4H / Daily close through the last swing against the trade)", group = grpD, display = display.none)
 colA      = input.color(color.new(#00BCD4, 0), "EMA14 (Setup A) color", group = grpD, display = display.none)
 colB      = input.color(color.new(#E040FB, 0), "EMA50 (Setup B) color", group = grpD, display = display.none)
@@ -481,6 +482,7 @@ type Trade
     array<float> tps
     int tpHit = 0
     int bar = 0
+    line sl               // drawn stop-loss line (Setups A and B)
 
 // Every entry is its own tracked trade, so a setup can hold several at once (scaling in).
 type Setup
@@ -489,6 +491,9 @@ type Setup
     int rearm = 0
     int impId = -2        // impulse (break of structure) the last entries belong to
     int impCount = 0      // entries taken on that impulse
+    int wins = 0          // closed trades: TP1 reached, or closed in profit
+    int losses = 0        // closed trades: original stop hit, or closed at a loss
+    int bes = 0           // closed trades: stopped at breakeven before TP1
 
 type Book
     int week = 0
@@ -512,17 +517,36 @@ if bar_index > 0 and (dowNY < dowNY[1] or time - time[1] >= 7 * 86400000)
     bk.week := 0
 
 // Manage one tracked trade (rule 10). Sets tr.dir to 0 when the trade is finished.
+// Record a finished trade (1 win, 0 breakeven, -1 loss) and color its stop line by the result.
+f_finish(Trade tr, Setup su, int res) =>
+    if not na(tr.sl)
+        line.set_x2(tr.sl, bar_index)
+        line.set_color(tr.sl, res == 1 ? color.new(color.lime, 20) : res == -1 ? color.new(color.red, 20) : color.new(color.gray, 30))
+    if res == 1
+        su.wins += 1
+    else if res == -1
+        su.losses += 1
+    else
+        su.bes += 1
+    res
+
 f_manage(Trade tr, Setup su, Book book, string sname, bool isClose, int ratio, int trend, bool bullBOS, bool bearBOS) =>
     string out = ""
     d = tr.dir
     tag = "Trade #" + str.tostring(tr.num) + " | " + instName + " " + (d == 1 ? "Buy" : "Sell") + " (" + sname + ")"
+    if not na(tr.sl)
+        line.set_x2(tr.sl, bar_index)
     if tr.pending
         if (d == 1 ? low <= tr.entry : high >= tr.entry)
             tr.pending := false
             tr.bar := bar_index
+            if not na(tr.sl)
+                line.set_style(tr.sl, line.style_solid)
             out := f_add(out, "🔵 " + tag + "\n" + (d == 1 ? "Buy" : "Sell") + " Limit filled at " + f_p(tr.entry) + ". Stop Loss " + f_p(tr.stop) + ".")
         else if bar_index - tr.bar > retestN * ratio
             out := f_add(out, "⚪ " + tag + "\nLimit at " + f_p(tr.entry) + " not filled in time: cancel the order.")
+            if not na(tr.sl)
+                line.delete(tr.sl)
             tr.dir := 0
     else
         hit = d == 1 ? low <= tr.stop : high >= tr.stop
@@ -535,11 +559,17 @@ f_manage(Trade tr, Setup su, Book book, string sname, bool isClose, int ratio, i
             out := f_add(out, msg + (valid ? "\nConditions are still favorable: watching for a RE-ENTRY." : "\nConditions changed: no re-entry for now."))
             label.new(bar_index, d == 1 ? low : high, tr.be ? "BE #" + str.tostring(tr.num) : "SL #" + str.tostring(tr.num), color = color.gray, textcolor = color.white, style = d == 1 ? label.style_label_up : label.style_label_down, size = size.tiny)
             su.rearm := valid ? d : 0
+            f_finish(tr, su, tr.tpHit > 0 ? 1 : tr.be ? 0 : -1)
             tr.dir := 0
         else
             if not tr.be and (d == 1 ? high >= tr.entry + beTrig : low <= tr.entry - beTrig)
                 tr.stop := tr.entry
                 tr.be := true
+                // The original stop segment ends here; the stop line continues at breakeven.
+                if not na(tr.sl)
+                    line.set_x2(tr.sl, bar_index)
+                    line.set_color(tr.sl, color.new(color.red, 60))
+                    tr.sl := line.new(bar_index, tr.entry, bar_index, tr.entry, color = color.new(color.gray, 0), width = 2, style = line.style_dotted)
                 out := f_add(out, "🔵 " + tag + "\nPrice is " + f_amt(beTrig) + " in profit: move the Stop Loss to breakeven (" + f_p(tr.entry) + ").")
             while tr.tpHit < array.size(tr.tps) and (d == 1 ? high >= array.get(tr.tps, tr.tpHit) : low <= array.get(tr.tps, tr.tpHit))
                 out := f_add(out, "✅ " + tag + "\nTake Profit " + str.tostring(tr.tpHit + 1) + " hit (" + f_p(array.get(tr.tps, tr.tpHit)) + "). Partial is optional.")
@@ -551,6 +581,7 @@ f_manage(Trade tr, Setup su, Book book, string sname, bool isClose, int ratio, i
                 out := f_add(out, "⚠️ " + tag + "\nStructure broken on the " + sname + " chart: get out (price " + f_p(close) + ").")
                 label.new(bar_index, d == 1 ? high : low, "EXIT #" + str.tostring(tr.num), color = color.orange, textcolor = color.white, style = d == 1 ? label.style_label_down : label.style_label_up, size = size.tiny)
                 su.rearm := 0
+                f_finish(tr, su, tr.tpHit > 0 or (close - tr.entry) * d > 0 ? 1 : (close - tr.entry) * d < 0 ? -1 : 0)
                 tr.dir := 0
     out
 
@@ -573,7 +604,7 @@ f_openTxt(Setup su) =>
     t == "" ? "Flat" : t
 
 // Manage one setup's open trades and look for its next entry. Returns the alert text ("" = none).
-f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, int trend, int sigL, int sigS, string txtL, string txtS, float stopL, float stopS, float limL, float limS, bool bullBOS, bool bearBOS, int impL, int impS) =>
+f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, int trend, int sigL, int sigS, string txtL, string txtS, float stopL, float stopS, float limL, float limS, bool bullBOS, bool bearBOS, int impL, int impS, bool drawSL) =>
     string out = ""
 
     // 1. Manage every open trade; drop the finished ones.
@@ -654,7 +685,8 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
             out := f_add(out, m)
             label.new(bar_index, buy ? low : high, "#" + str.tostring(n) + " " + (isRe ? "RE " : "") + (buy ? "BUY " : "SELL ") + kind + "\n" + (swing ? "A" : "B"), color = buy ? color.green : color.red, textcolor = color.white, style = buy ? label.style_label_up : label.style_label_down, size = size.small)
 
-            array.push(su.trades, Trade.new(dir = dir, num = n, pending = isLimit, entry = entry, stop = stopPx, be = false, lots = math.max(lots, 0), kind = kind, tps = tps, tpHit = 0, bar = bar_index))
+            line slLine = drawSL ? line.new(bar_index, stopPx, bar_index, stopPx, color = color.new(color.red, 0), width = 2, style = isLimit ? line.style_dashed : line.style_solid) : na
+            array.push(su.trades, Trade.new(dir = dir, num = n, pending = isLimit, entry = entry, stop = stopPx, be = false, lots = math.max(lots, 0), kind = kind, tps = tps, tpHit = 0, bar = bar_index, sl = slLine))
             su.impCount := sameImp ? su.impCount + 1 : 1
             su.impId := impNow
             su.lastBar := bar_index
@@ -715,9 +747,9 @@ if barstate.isconfirmed
             sTxtS := "Daily closed with a lower high / lower low, back in line with the Weekly"
     sIsClose = dIsClose or hIsClose or biasFlip
     dayId = int(time_close / 86400000)
-    oS = f_run(suS, bk, nameS, true, sIsClose, ratioS, hTrend, sSigL, sSigS, sTxtL, sTxtS, hStopL, hStopS, na, na, hIsClose and hBull, hIsClose and hBear, dayId, dayId)
-    oA = f_run(suA, bk, nameA, false, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aImpL, aImpS)
-    oB = f_run(suB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bImpL, bImpS)
+    oS = f_run(suS, bk, nameS, true, sIsClose, ratioS, hTrend, sSigL, sSigS, sTxtL, sTxtS, hStopL, hStopS, na, na, hIsClose and hBull, hIsClose and hBear, dayId, dayId, false)
+    oA = f_run(suA, bk, nameA, false, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aImpL, aImpS, showSL)
+    oB = f_run(suB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bImpL, bImpS, showSL)
     // Bias change alerts: the Daily turning back in line with the Weekly is the cue to look for entries.
     string biasMsg = ""
     if autoBias != autoBias[1] and biasMode == "Auto (Weekly bias, Daily confirms)"
@@ -746,10 +778,10 @@ if barstate.isconfirmed
 // ───────────────────────────── Drawing ─────────────────────────────
 plot(aEma, "EMA14 (Setup A, 2H)", color = colA, linewidth = 2, display = display.all - display.status_line)
 plot(bEma, "EMA50 (Setup B, 15m)", color = colB, linewidth = 2, display = display.all - display.status_line)
-f_lastStop(Setup su) =>
-    array.size(su.trades) > 0 ? array.last(su.trades).stop : na
-plot(f_lastStop(suA), "Setup A latest stop", color = color.new(color.red, 0), style = plot.style_linebr, display = display.all - display.status_line)
-plot(f_lastStop(suB), "Setup B latest stop", color = color.new(color.red, 40), style = plot.style_linebr, display = display.all - display.status_line)
+// Win / loss record of a setup over the loaded history.
+f_rec(Setup su) =>
+    decided = su.wins + su.losses
+    "W " + str.tostring(su.wins) + " / L " + str.tostring(su.losses) + " / BE " + str.tostring(su.bes) + (decided > 0 ? " | win rate " + str.tostring(100.0 * su.wins / decided, "0") + "% (excl. BE)" : "")
 
 var array<box> zoneBoxes = array.new<box>()
 if showZones and barstate.islast
@@ -765,7 +797,7 @@ if showZones and barstate.islast
         bx = box.new(math.max(bar_index - 150, 0), lv + bf, bar_index + 10, lv - bf, border_color = color.new(col, 60), bgcolor = col, text = str.tostring(lv, "#.##") + (isMaj ? " MAJOR" : " mid"), text_size = size.tiny, text_halign = text.align_right, text_color = color.gray)
         array.push(zoneBoxes, bx)
 
-var table tbl = table.new(position.top_right, 2, 13, bgcolor = color.new(color.black, 20), border_width = 1)
+var table tbl = table.new(position.top_right, 2, 15, bgcolor = color.new(color.black, 20), border_width = 1)
 if showTable and barstate.islast
     eqShow = curEq > 0 ? curEq : startEq + bk.pnl
     gShow = (eqShow / startEq - 1) * 100
@@ -798,3 +830,7 @@ if showTable and barstate.islast
     table.cell(tbl, 1, 11, sBrkDir == 0 ? "None waiting" : "Closed " + (sBrkDir == 1 ? "above " : "below ") + f_lvlTxt(sBrkLvl, sBrkMaj) + ": waiting for retest", text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 12, "Open S (swing)", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 12, f_openTxt(suS), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 13, "A record (history)", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 13, f_rec(suA), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 14, "B record (history)", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 14, f_rec(suB), text_color = color.white, text_size = size.small)
