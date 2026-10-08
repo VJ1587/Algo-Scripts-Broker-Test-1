@@ -22,11 +22,11 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
          market        major / mid level spacing      zone half-width
          FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
          JPY pairs     5.00 / 2.50                    0.15      (15 pips)
-         Gold          $100 / $50                     $20       (3,300 -> 3,280 to 3,320)
-         S&P           100 / 50 points                20 points (follows gold for now)
+         Gold          $100 / $50                     $10       (3,300 -> 3,290 to 3,310; $1 = 10 pips)
+         S&P           100 / 50 points                20 points (unchanged when gold moved to $10)
          Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
        Why: institutions' orders sit spread around a round number, so price reacts across an area.
-       Gold gets a wider box because news-driven overshoots of $15-25 are not breaks.
+       Gold is +/-$10 (100 pips each side) per the owner, cfg-0.10.0 (was $20).
        C2 = latest completed 2H close inside the zone. Fib (C3) and trend line (C6) tolerance still
        use the v1.0 ATR width (zone_half_width).
 
@@ -847,7 +847,7 @@ def zone_half_width(inst: Instrument, atr4_value: float, fcfg: dict) -> float:
 
 def psych_zone_half_width(inst: Instrument, atr_hw: float) -> tuple[float, str]:
     """[OWNER cfg-0.2.0] Key levels are zones, not lines. Half-width around every major and mid grid
-    level: the fixed width from config (FX +/-15 pips, gold +/-$20), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
+    level: the fixed width from config (FX +/-15 pips, gold +/-$10), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
     if inst.psych_zone_hw is not None:
         return inst.psych_zone_hw, "fixed"
     return atr_hw, "atr"
@@ -896,7 +896,7 @@ CONFLUENCES = {
                               "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
                              "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
-                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-20; "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold every 100 and 50, +/-10; S&P every 100 and 50, +/-20; "
                              "oil every 5.00 and 2.50, +/-1.00."),
     "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
                                     "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "

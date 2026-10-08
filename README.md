@@ -82,7 +82,7 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 
 | Step | What the indicator does |
 | --- | --- |
-| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; gold defaults to ±$20 (see note). |
+| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; ±$10 for gold ($1 = 10 pips, so ±100 pips). |
 | 2 Range | Finds a consolidation whose top and bottom each have ≥2 separate touches (by default both must sit at key levels). Draws the range box; on a **close** beyond the box ± half-width it clones the box in the breakout direction as the target. Signals are suppressed while price is inside an unbroken range. |
 | 3–4 Bias | Daily and 4H structure from swing pivots: HH+HL = bullish, LH+LL = bearish, otherwise ranging. Fib setups are only taken when both agree. Uses the last closed HTF bar (no repainting). |
 | 5 Impulse | Swing low → swing high (or high → low) on the chart, at least 2.5 × ATR in ≤40 bars, in the bias direction. |
@@ -92,7 +92,7 @@ A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pi
 
 Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped (plus one `alert()` message with entry, SL and targets).
 
-Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. The document gives no gold box width in dollars, so gold keeps the scanner's $20; set it to 1.0 for a literal ±10 pips at a $0.10 pip. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
+Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. Gold is ±$10 in both the indicator and the scanner (cfg-0.10.0). Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
 
 # Daily Instrument Scanner (Addendum v0.1)
 
@@ -272,9 +272,9 @@ config). Nothing in the scanner sends, changes or closes orders.
 4. **Impulse void.** An impulse is dropped once a 4H close passes its origin A (config switch).
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
 5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
-   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $20 (XAUUSD
-   and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
-   grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
+   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 (XAUUSD
+   and GC; $1 = 10 pips, so +/-100 pips; was $20 before cfg-0.10.0), S&P 20 points, oil $1.00
+   (placeholder; a $10-20 box would overlap the $2.50 oil grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
    to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the

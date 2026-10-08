@@ -124,14 +124,14 @@ def test_psych_zone_fixed_15_pips_fx_and_atr_where_unset():
     eu, uj, xau = UNIVERSE["EURUSD"], UNIVERSE["USDJPY"], UNIVERSE["XAUUSD"]
     assert sc.psych_zone_half_width(eu, 0.0004) == (pytest.approx(0.0015), "fixed")
     assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.15), "fixed")
-    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(20.0), "fixed")  # gold +/- $20
-    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(20.0), "fixed")
-    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P follows gold
+    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(10.0), "fixed")  # gold +/- $10
+    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(10.0), "fixed")
+    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P stays at 20
     assert sc.psych_zone_half_width(UNIVERSE["WTI"], 0.3) == (pytest.approx(1.0), "fixed")  # oil: gold ratio
     assert all(i.psych_zone_hw is not None for i in UNIVERSE.values())                       # no ATR fallback left
-    # gold 3,300 major: 3,282 is inside the $3,280-$3,320 zone, 3,278 is outside
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[1:] == (pytest.approx(3300.0), "major")
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[0] and not sc.in_psych_zone(xau, 3278.0, 20.0)[0]
+    # gold 3,300 major: 3,292 is inside the $3,290-$3,310 zone, 3,288 is outside
+    assert sc.in_psych_zone(xau, 3292.0, 10.0)[1:] == (pytest.approx(3300.0), "major")
+    assert sc.in_psych_zone(xau, 3292.0, 10.0)[0] and not sc.in_psych_zone(xau, 3288.0, 10.0)[0]
     # 1.1736 is 14 pips under the 1.1750 mid level: inside; 1.1734 is 16 pips under: outside
     assert sc.in_psych_zone(eu, 1.1736, 0.0015)[0] and not sc.in_psych_zone(eu, 1.1734, 0.0015)[0]
 

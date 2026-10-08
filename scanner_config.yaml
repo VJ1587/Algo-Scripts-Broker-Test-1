@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.9.0"
+config_version: "cfg-0.10.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -21,6 +21,7 @@ changelog:
   - {version: "cfg-0.7.0", date: "2026-10-07", change: "Developing = any 2+ of C1-C6 that do not qualify (was C1 + C2 + 2 checks); trade gate --include-developing offers all of them. C1-C6 named and defined in one place; dashboard lists every developing setup with checks met and missing; journal spells out each trade's confluences and adds results by section, setup and confluence", reason: "Owner: report must show developing setups with 2 confluences; spell out C1-C6 in the journal to see which setups work"}
   - {version: "cfg-0.8.0", date: "2026-10-07", change: "Position Trading Confluence System: A setup = C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6 (C4 no longer required); B setup = C1 + (C2 or C3 at 50/61.8) + one of C4/C5/C6; C6 becomes 4H market structure holding (trend line is information only); FX crosses need an A setup with C4; S&P and oil trade A setups only; gold C1 = Weekly + Daily (no 4H), B = C1 + C2 + C3, A adds stacked Fib + C4, DXY shown as context; dashboard shows Fib stop 78.6/89 and TP1 -27 / TP2 -61.8", reason: "Owner document: Position Trading Confluence System and gold confluences; owner answers October 7 (7 USD majors, gold Weekly + Daily, S&P and oil A only, full C4 pattern list at key levels)"}
   - {version: "cfg-0.9.0", date: "2026-10-07", change: "Daemon runs every 2 hours at :05 UTC (intraday runs keep the Daily bias from the last evening run); Windows notification for new or upgraded A/B setups; calendar snapshot reused for 4 hours and used when a fetch fails; intraday HTML/CSV pruned after 14 days; chart patterns name their key level", reason: "Owner: update the scanner through the day so a setup that fully develops is caught; 2-hourly matches the 2H bar close"}
+  - {version: "cfg-0.10.0", date: "2026-10-08", change: "Gold zone half-width $20 -> $10 (XAUUSD and GC); S&P stays at 20 points", reason: "Owner: gold box is +/-$10 ($1 = 10 pips on XAUUSD, so $20 was a 200 pip box each side)"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -128,8 +129,8 @@ features:
 grids:
   fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0015}
   jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.15}
-  gold: {major: 100,    mid: 50,     zone_half_width: 20}     # owner default $20 (range $15-25)
-  spx:  {major: 100,    mid: 50,     zone_half_width: 20}     # follows gold for now
+  gold: {major: 100,    mid: 50,     zone_half_width: 10}     # owner: +/-$10 = +/-100 pips ($1 = 10 pips), cfg-0.10.0
+  spx:  {major: 100,    mid: 50,     zone_half_width: 20}     # unchanged at 20 points (gold moved to $10 in cfg-0.10.0)
   oil:  {major: 5.00,   mid: 2.50,   zone_half_width: 1.00}   # gold ratio (20% of major); grid untested
 
 # ---------------------------------------------------------------- universe (Addendum Section 3)
