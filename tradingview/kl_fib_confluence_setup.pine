@@ -80,6 +80,8 @@ slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, displ
 // ─────────────────────────────────────────────────────────── 7 · Confluence
 grpC = "7 · Confluence"
 minConf = input.int(3, "Min confluences (of 4)", minval = 2, maxval = 4, display = display.none, group = grpC)
+minRR   = input.float(2.0, "Min R:R to TP1 for a good setup", minval = 0.1, step = 0.1, display = display.none, group = grpC,
+     tooltip = "Shown once the minimum confluences line up. R:R = distance to the target / distance to the stop, from the estimated entry.")
 reqKey  = input.bool(true, "Require fib level inside a key box", display = display.none, group = grpC, tooltip = "The document's minimum three: fib level + key level box + confirmation candle. Structure is the optional fourth.")
 
 // ─────────────────────────────────────────────────────────── Position sizing
@@ -479,6 +481,14 @@ L786 = f_lv(0.786)
 TP1  = f_lv(-0.27)
 TP2  = f_lv(-0.618)
 SL   = L618 - fDir * slPips * pip
+
+// Risk to reward: distance to target / distance to stop, from an entry price
+f_rr(float entry, float tp) =>
+    risk = math.abs(entry - SL)
+    risk > 0 ? math.abs(tp - entry) / risk : na
+
+f_rrTxt(float entry) =>
+    str.tostring(f_rr(entry, TP1), "#.#") + "R / " + str.tostring(f_rr(entry, TP2), "#.#") + "R"
 tol  = fibTolPips * pip
 
 key382 = f_inKeyBox(L382)
@@ -588,7 +598,7 @@ if fDir != 0 and barstate.isconfirmed
                 lvlTxt = fDeep >= 0.618 ? "61.8" : fDeep >= 0.5 ? "50" : "38.2"
                 label.new(bar_index, isLong ? low : high,
                      (isLong ? "LONG " : "SHORT ") + (cnt == 4 ? "A" : "B") + " " + str.tostring(cnt) + "/4\n" + candleNow + " @ " + lvlTxt +
-                     "\nSL " + f_px(SL) + "  TP1 " + f_px(TP1) + "  TP2 " + f_px(TP2),
+                     "\nSL " + f_px(SL) + "  TP1 " + f_px(TP1) + "  TP2 " + f_px(TP2) + "\nR:R " + f_rrTxt(close) + " (TP1 / TP2)",
                      style = isLong ? label.style_label_up : label.style_label_down,
                      color = isLong ? colBull : colBear, textcolor = color.white, size = size.small)
 
@@ -664,11 +674,11 @@ if barstate.islast
             else if r == 1.0
                 txt := "A  " + f_px(p)
             else if r == 0.382
-                txt := "38.2  " + f_px(p) + "  " + side + " · small " + str.tostring(f_size(p, w382), "#.##") + " lots" + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "")
+                txt := "38.2  " + f_px(p) + "  " + side + " · small " + str.tostring(f_size(p, w382), "#.##") + " lots · " + f_rrTxt(p) + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "")
             else if r == 0.5
-                txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots" + (key50 ? "  [KEY BOX]" : near50 ? "  [NEAR BOX]" : "")
+                txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots · " + f_rrTxt(p) + (key50 ? "  [KEY BOX]" : near50 ? "  [NEAR BOX]" : "")
             else if r == 0.618
-                txt := "61.8  " + f_px(p) + "  " + side + " · large " + str.tostring(f_size(p, w618), "#.##") + " lots" + (key618 ? "  [KEY BOX]" : near618 ? "  [NEAR BOX]" : "")
+                txt := "61.8  " + f_px(p) + "  " + side + " · large " + str.tostring(f_size(p, w618), "#.##") + " lots · " + f_rrTxt(p) + (key618 ? "  [KEY BOX]" : near618 ? "  [NEAR BOX]" : "")
             else if r == 0.786
                 txt := "78.6  " + f_px(p) + "  close beyond = invalid"
             else if r == -0.27
@@ -689,7 +699,7 @@ f_biasTxt(int b) =>
     b == 1 ? "Bullish (HH/HL)" : b == -1 ? "Bearish (LH/LL)" : "Ranging, wait"
 
 var table tbl = table.new(tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right :
-     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 14, bgcolor = color.new(color.black, 5),
+     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 15, bgcolor = color.new(color.black, 5),
      border_width = 1, border_color = color.new(color.gray, 60))
 
 tSize = tableSize == "Tiny" ? size.tiny : tableSize == "Normal" ? size.normal : size.small
@@ -742,6 +752,21 @@ if barstate.islast and showTable
     g382 = gB - 0.382 * (gB - gA)
     g618 = gB - 0.618 * (gB - gA)
     inBig = gLive and hasFib and math.max(L382, L618) >= math.min(g382, g618) and math.min(L382, L618) <= math.max(g382, g618)
+    // R:R once the minimum confluences line up: estimated entry = weighted average of the limits
+    // filled so far (38.2 / 50 / 61.8 at their lot weights), or the latest close if none filled yet
+    fw382 = fDeep >= 0.382 ? w382 : 0.0
+    fw50  = fDeep >= 0.5 ? w50 : 0.0
+    fw618 = fDeep >= 0.618 ? w618 : 0.0
+    fwSum = fw382 + fw50 + fw618
+    estE  = fState >= 2 and not na(fEntry) ? fEntry : fwSum > 0 ? (fw382 * L382 + fw50 * L50 + fw618 * L618) / fwSum : close
+    rrOn  = hasFib and confNow >= minConf
+    rr1   = rrOn ? f_rr(estE, TP1) : na
+    rrOk  = rrOn and rr1 >= minRR
+    table.cell(tbl, 0, 14, "R:R (TP1 / TP2)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, 14, rrOn ? f_mark(rrOk) : "")
+    table.cell(tbl, 2, 14, not hasFib ? "-" : not rrOn ? "shown at " + str.tostring(minConf) + " confluences" :
+         f_rrTxt(estE) + " from " + f_px(estE) + (rrOk ? " · good (≥ " : " · below ") + str.tostring(minRR, "#.#") + "R)",
+         text_color = rrOn ? (rrOk ? color.lime : color.orange) : color.silver, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 0, 13, "Daily fib (context)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 13, gLive and hasFib ? f_mark(inBig) : "")
     table.cell(tbl, 2, 13, not tableDetail ? "" : not showDFib ? "off" : not gLive ? "none active" :
