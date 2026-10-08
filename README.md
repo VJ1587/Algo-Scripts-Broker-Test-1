@@ -76,6 +76,24 @@ python broker_v11_algo.py --data-dir ./quotes --route L --news news.csv --out re
 
 See the script header for the CSV format used by `--data-dir` and `--news`.
 
+## TradingView indicator (`tradingview/kl_fib_confluence_setup.pine`)
+
+A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pine Editor, *Add to chart*, and use it on the **2H** chart (the table warns if you're on another timeframe). It draws and checks the nine checklist items:
+
+| Step | What the indicator does |
+| --- | --- |
+| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; gold defaults to ±$20 (see note). |
+| 2 Range | Finds a consolidation whose top and bottom each have ≥2 separate touches (by default both must sit at key levels). Draws the range box; on a **close** beyond the box ± half-width it clones the box in the breakout direction as the target. Signals are suppressed while price is inside an unbroken range. |
+| 3–4 Bias | Daily and 4H structure from swing pivots: HH+HL = bullish, LH+LL = bearish, otherwise ranging. Fib setups are only taken when both agree. Uses the last closed HTF bar (no repainting). |
+| 5 Impulse | Swing low → swing high (or high → low) on the chart, at least 2.5 × ATR in ≤40 bars, in the bias direction. |
+| 6 Fib ladder | 38.2 / 50 / 61.8 buy or sell limits with small / medium / large lot weights (1:2:3) and sizes from account and risk %. SL a few pips beyond 61.8. A close beyond 78.6 marks the setup invalid. |
+| 7 Confluence | Fib zone reached, fib level inside a key box, higher low / lower high forming in the zone, confirmation candle (engulfing, hammer / shooting star, morning / evening star) at the zone. A signal needs fib + key box + candle (3); with structure it is graded A (4/4). |
+| 8 Manage | TP1 at -0.27 (move SL to breakeven), TP2 at -0.618. |
+
+Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped (plus one `alert()` message with entry, SL and targets).
+
+Differences from the scanner to be aware of: the scanner's FX zone is ±15 pips (cfg-0.2.0); this indicator uses the ±10 pips in the setup document. The document gives no gold box width in dollars, so gold keeps the scanner's $20; set it to 1.0 for a literal ±10 pips at a $0.10 pip. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
+
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
