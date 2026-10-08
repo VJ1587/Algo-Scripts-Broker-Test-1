@@ -60,7 +60,9 @@ structLen = input.int(5, "HTF swing length (bars each side)", minval = 2, displa
 
 // ─────────────────────────────────────────────────────────── 5-6 · Impulse and Fibonacci
 grpI = "5-6 · Impulse + Fib (found on the 2H)"
-tfImp       = input.timeframe("120", "Impulse timeframe", display = display.none, group = grpI, tooltip = "The A-to-B impulse is always taken from this timeframe, whatever chart you are on.")
+tfImp       = input.timeframe("120", "Entry fib timeframe", display = display.none, group = grpI, tooltip = "The entry A-to-B impulse is always taken from this timeframe, whatever chart you are on. Signals come from this fib.")
+showDFib    = input.bool(true, "Also draw the big-picture fib", display = display.none, group = grpI, tooltip = "Same impulse rules on the Daily. Drawn in purple for context; signals still come from the 2H fib.")
+tfImpD      = input.timeframe("D", "Big-picture fib timeframe", display = display.none, group = grpI)
 swLen       = input.int(5, "Swing length (bars each side)", minval = 2, display = display.none, group = grpI)
 impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, display = display.none, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
 impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, display = display.none, group = grpI)
@@ -406,6 +408,24 @@ f_impulses(int len, float mult, int maxBars, int minBars, float dirPct, float bo
      lookahead = barmerge.lookahead_on)
 impMs = timeframe.in_seconds(tfImp) * 1000
 
+// Big-picture fib: the same rules on the Daily, in the Daily bias direction. Context only.
+[duA, duB, duAt, duBt, duK, duW, ddA, ddB, ddAt, ddBt, ddK, ddW] = request.security(syminfo.tickerid, tfImpD,
+     f_impulses(swLen, impAtr, impMaxBars, impMinBars, impDirPct, impBodyPct, impEffPct, preLen, consolAtr, majorStep, half, half + retestPips * pip),
+     lookahead = barmerge.lookahead_on)
+gA  = biasDir == 1 ? duA : biasDir == -1 ? ddA : na
+gB  = biasDir == 1 ? duB : biasDir == -1 ? ddB : na
+gAt = biasDir == 1 ? duAt : biasDir == -1 ? ddAt : na
+gBt = biasDir == 1 ? duBt : biasDir == -1 ? ddBt : na
+var int  gSeenBt = na
+var bool gDead   = false
+if na(gSeenBt) or gBt != gSeenBt
+    gSeenBt := gBt
+    gDead   := false
+g786 = gB - 0.786 * (gB - gA)
+if barstate.isconfirmed and not na(gB) and (biasDir == 1 ? (close < g786 or close > gB) : (close > g786 or close < gB))
+    gDead := true    // closed beyond 78.6 (dead) or beyond B (move extended)
+gLive = showDFib and biasDir != 0 and not na(gB) and not gDead
+
 // ─────────────────────────────────────────────────────────── 6 · Fibonacci setup state
 // Daily sideways or 4H disagreeing = no fib. Aligned = fib on the most recent impulse in the Daily direction.
 var int    fDir    = 0       // 1 long, -1 short
@@ -600,6 +620,26 @@ f_stateText(int s) =>
         -5 => "Daily / 4H no longer aligned: setup dropped"
         => "-"
 
+var array<line>  gLines  = array.new<line>()
+var array<label> gLabels = array.new<label>()
+if barstate.islast
+    for l in gLines
+        line.delete(l)
+    for l in gLabels
+        label.delete(l)
+    array.clear(gLines)
+    array.clear(gLabels)
+    if gLive
+        gc     = color.new(color.purple, 0)
+        gRight = time + 30 * timeframe.in_seconds() * 1000
+        array.push(gLines, line.new(gAt, gA, gBt, gB, xloc = xloc.bar_time, color = color.new(gc, 40), width = 2, style = line.style_dotted))
+        for r in array.from(0.0, 0.382, 0.5, 0.618, 0.786, 1.0)
+            p = gB - r * (gB - gA)
+            array.push(gLines, line.new(gBt, p, gRight, p, xloc = xloc.bar_time, color = color.new(gc, r == 0.786 ? 60 : 30),
+                 style = line.style_dashed, width = 1))
+            array.push(gLabels, label.new(gBt, p, "D " + (r == 0.0 ? "B" : r == 1.0 ? "A" : str.tostring(r * 100, "#.#")) + "  " + f_px(p),
+                 xloc = xloc.bar_time, style = label.style_label_right, color = color.new(gc, 85), textcolor = gc, size = size.small))
+
 if barstate.islast
     for l in fibLines
         line.delete(l)
@@ -649,7 +689,7 @@ f_biasTxt(int b) =>
     b == 1 ? "Bullish (HH/HL)" : b == -1 ? "Bearish (LH/LL)" : "Ranging, wait"
 
 var table tbl = table.new(tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right :
-     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 13, bgcolor = color.new(color.black, 5),
+     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 14, bgcolor = color.new(color.black, 5),
      border_width = 1, border_color = color.new(color.gray, 60))
 
 tSize = tableSize == "Tiny" ? size.tiny : tableSize == "Normal" ? size.normal : size.small
@@ -698,6 +738,14 @@ if barstate.islast and showTable
     table.cell(tbl, 0, 12, "Plan", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 12, "")
     table.cell(tbl, 2, 12, not tableDetail ? "" : hasFib ? "SL " + f_px(SL) + " · TP1 " + f_px(TP1) + " · TP2 " + f_px(TP2) : "-",
+         text_color = color.silver, text_size = tSize, text_halign = text.align_left)
+    g382 = gB - 0.382 * (gB - gA)
+    g618 = gB - 0.618 * (gB - gA)
+    inBig = gLive and hasFib and math.max(L382, L618) >= math.min(g382, g618) and math.min(L382, L618) <= math.max(g382, g618)
+    table.cell(tbl, 0, 13, "Daily fib (context)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, 13, gLive and hasFib ? f_mark(inBig) : "")
+    table.cell(tbl, 2, 13, not tableDetail ? "" : not showDFib ? "off" : not gLive ? "none active" :
+         "A " + f_px(gA) + " → B " + f_px(gB) + (hasFib ? (inBig ? " · 2H zone inside Daily 38.2-61.8" : " · 2H zone outside Daily 38.2-61.8") : ""),
          text_color = color.silver, text_size = tSize, text_halign = text.align_left)
 
 // ─────────────────────────────────────────────────────────── Alerts
