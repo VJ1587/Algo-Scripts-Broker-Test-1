@@ -7,7 +7,7 @@
 //   3. Daily bias (HH/HL vs LH/LL)
 //   4. 4H confirmation of the Daily bias
 //   5. Impulse move (A -> B) on the chart timeframe (designed for the 2H chart)
-//   6. Fib 38.2 / 50 / 61.8 entry ladder with lot weights, SL below/above 61.8, 78.6 invalidation
+//   6. Fib 38.2 / 50 / 61.8 entry ladder with lot weights, SL a few pips beyond 78.6, 78.6 close = invalid
 //   7. Confluence check: fib zone, fib level inside a key box, structure (HL/LH), confirmation candle
 //   8. TP1 at -0.27 (move SL to breakeven), TP2 at -0.618
 //
@@ -75,7 +75,7 @@ consolAtr   = input.float(4, "Range before A if its height is under (x ATR)", mi
 retestPips  = input.float(10, "Retest tolerance beyond the key box (pips)", minval = 0, display = display.none, group = grpI)
 expiryBars  = input.int(60, "Setup expires after (impulse-timeframe bars from B, no entry)", minval = 5, display = display.none, group = grpI)
 fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, display = display.none, group = grpI)
-slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, display = display.none, group = grpI)
+slPips      = input.float(5, "Stop buffer beyond 78.6 (pips)", minval = 0, display = display.none, group = grpI)
 
 // ─────────────────────────────────────────────────────────── 7 · Confluence
 grpC = "7 · Confluence"
@@ -480,7 +480,7 @@ L618 = f_lv(0.618)
 L786 = f_lv(0.786)
 TP1  = f_lv(-0.27)
 TP2  = f_lv(-0.618)
-SL   = L618 - fDir * slPips * pip
+SL   = L786 - fDir * slPips * pip   // stop a few pips beyond the 78.6
 
 // Risk to reward: distance to target / distance to stop, from an entry price
 f_rr(float entry, float tp) =>
@@ -691,7 +691,7 @@ if barstate.islast
             array.push(fibLabels, label.new(right, p, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(lc, 85),
                  textcolor = lc, size = size.small))
         array.push(fibLines, line.new(fBt, SL, right, SL, xloc = xloc.bar_time, color = color.red, width = 2))
-        array.push(fibLabels, label.new(right, SL, xloc = xloc.bar_time, text = "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 61.8)",
+        array.push(fibLabels, label.new(right, SL, xloc = xloc.bar_time, text = "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 78.6)",
              style = label.style_label_left, color = color.new(color.red, 85), textcolor = color.red, size = size.small))
 
 // ─────────────────────────────────────────────────────────── Checklist table
