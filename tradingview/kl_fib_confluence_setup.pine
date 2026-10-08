@@ -674,7 +674,7 @@ if barstate.islast
             else if r == 1.0
                 txt := "A  " + f_px(p)
             else if r == 0.382
-                txt := "38.2  " + f_px(p) + "  " + side + " · small " + str.tostring(f_size(p, w382), "#.##") + " lots · " + f_rrTxt(p) + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "")
+                txt := "38.2  " + f_px(p) + "  " + side + " · starter, small " + str.tostring(f_size(p, w382), "#.##") + " lots · " + f_rrTxt(p) + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "")
             else if r == 0.5
                 txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots · " + f_rrTxt(p) + (key50 ? "  [KEY BOX]" : near50 ? "  [NEAR BOX]" : "")
             else if r == 0.618
@@ -760,12 +760,17 @@ if barstate.islast and showTable
     fwSum = fw382 + fw50 + fw618
     estE  = fState >= 2 and not na(fEntry) ? fEntry : fwSum > 0 ? (fw382 * L382 + fw50 * L50 + fw618 * L618) / fwSum : close
     rrOn  = hasFib and confNow >= minConf
-    rr1   = rrOn ? f_rr(estE, TP1) : na
+    // 38.2 is the starter entry (smallest lot, so the move is not missed): it is judged on the full ladder
+    // plan it starts, not on its own R:R
+    starter = fState < 2 and fDeep < 0.5
+    planE = (w382 * L382 + w50 * L50 + w618 * L618) / math.max(w382 + w50 + w618, 1e-9)
+    rr1   = rrOn ? f_rr(starter ? planE : estE, TP1) : na
     rrOk  = rrOn and rr1 >= minRR
     table.cell(tbl, 0, 14, "R:R (TP1 / TP2)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 14, rrOn ? f_mark(rrOk) : "")
     table.cell(tbl, 2, 14, not hasFib ? "-" : not rrOn ? "shown at " + str.tostring(minConf) + " confluences" :
-         f_rrTxt(estE) + " from " + f_px(estE) + (rrOk ? " · good (≥ " : " · below ") + str.tostring(minRR, "#.#") + "R)",
+         (starter ? "38.2 starter " + f_rrTxt(L382) + " · full ladder " + f_rrTxt(planE) : f_rrTxt(estE) + " from " + f_px(estE)) +
+         (rrOk ? " · good (≥ " : " · below ") + str.tostring(minRR, "#.#") + "R)",
          text_color = rrOn ? (rrOk ? color.lime : color.orange) : color.silver, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 0, 13, "Daily fib (context)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
     table.cell(tbl, 1, 13, gLive and hasFib ? f_mark(inBig) : "")
