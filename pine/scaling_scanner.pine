@@ -1,11 +1,13 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.3.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.4.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
 //
 // Owner rules (Q&A, October 7, 2026):
-//   Bias        Trade with the Daily OR Weekly structure; if they conflict the Daily wins.
+//   Bias        Weekly sets the bias, Daily confirms. W up + D up = buys only; W down + D down = sells
+//               only; W and D disagree = wait for the Daily to reverse back in line; Weekly
+//               consolidating (mixed swings) = no bias, no trades.
 //   Structure   Setup timeframe structure must agree. Sellers in control (LH/LL) = no buys until a
 //               higher low, then a higher high (and the mirror for sells).
 //   Setup A     2H, EMA14. Setup B: 15m, EMA50 rubber band. Buy only above the EMA, sell only below.
@@ -91,7 +93,8 @@ grpT = "Market structure (swing pivots)"
 cPivot = input.int(5, "Setup timeframe swing length (bars each side)", minval = 1, group = grpT, display = display.none)
 dPivot = input.int(3, "Daily swing length", minval = 1, group = grpT, tooltip = "Bars each side to confirm a Daily swing. Smaller = reacts faster to a trend change.", display = display.none)
 wPivot = input.int(2, "Weekly swing length", minval = 1, group = grpT, display = display.none)
-biasMode = input.string("Auto (Daily, then Weekly)", "Trade direction", options = ["Auto (Daily, then Weekly)", "Sells only", "Buys only"], group = grpT, tooltip = "Override the automatic Daily/Weekly bias with your own read of the higher timeframe.", display = display.none)
+wMixedOn = input.bool(true, "Mixed Weekly swings = consolidating (no bias)", group = grpT, tooltip = "Weekly made a higher high but a lower low, or a lower high but a higher low.", display = display.none)
+biasMode = input.string("Auto (Weekly bias, Daily confirms)", "Trade direction", options = ["Auto (Weekly bias, Daily confirms)", "Sells only", "Buys only"], group = grpT, tooltip = "Override the automatic Daily/Weekly bias with your own read of the higher timeframe.", display = display.none)
 
 grpR = "Risk and scaling"
 startEq   = input.float(10000.0, "Starting equity ($)", group = grpR, display = display.none)
@@ -220,12 +223,12 @@ f_structure(len) =>
         trend := 1
     else if trend != -1 and not na(lastL) and close < lastL and (trend == 0 or lastH < prevH)
         trend := -1
-    [trend, lastH, lastL, bullBOS, bearBOS]
+    [trend, lastH, lastL, bullBOS, bearBOS, prevH, prevL]
 
 // Higher-timeframe trend as of the last closed HTF bar (no repainting).
 f_htf(len) =>
-    [t, h, l, bb, sb] = f_structure(len)
-    [t[1], h[1], l[1]]
+    [t, h, l, bb, sb, ph, pl] = f_structure(len)
+    [t[1], h[1], l[1], ph[1], pl[1]]
 
 // Candlestick patterns (single, double, triple). Return the pattern name or "".
 f_bullPat(b, ab, at, rg, uw, lw) =>
@@ -283,7 +286,7 @@ f_scan(emaLen, pivLen, retN) =>
     loWV  = math.min(open, close) - low
     avgB  = ta.sma(bodyV, 14)
     tol   = nearMode == "ATR" ? nearAtr * atrV : nearFix
-    [trend, lastH, lastL, bullBOS, bearBOS] = f_structure(pivLen)
+    [trend, lastH, lastL, bullBOS, bearBOS, prevH, prevL] = f_structure(pivLen)
     pL = f_bullPat(bodyV, avgB, atrV, rngV, upWV, loWV)
     pS = f_bearPat(bodyV, avgB, atrV, rngV, upWV, loWV)
 
@@ -383,10 +386,15 @@ f_scan(emaLen, pivLen, retN) =>
 
 // ───────────────────────────── Data ─────────────────────────────
 // Higher-timeframe bias (rule 1): Daily, or Weekly when the Daily has no trend yet.
-[dTrend, dSwH, dSwL] = request.security(syminfo.tickerid, "D", f_htf(dPivot), lookahead = barmerge.lookahead_on)
-[wTrend, wSwH, wSwL] = request.security(syminfo.tickerid, "W", f_htf(wPivot), lookahead = barmerge.lookahead_on)
-autoBias = dTrend != 0 ? dTrend : wTrend
+// Weekly = bias, Daily = confirmation (owner framework, October 8, 2026).
+[dTrend, dSwH, dSwL, dPrevH, dPrevL] = request.security(syminfo.tickerid, "D", f_htf(dPivot), lookahead = barmerge.lookahead_on)
+[wTrend, wSwH, wSwL, wPrevH, wPrevL] = request.security(syminfo.tickerid, "W", f_htf(wPivot), lookahead = barmerge.lookahead_on)
+wMixed = wMixedOn and not na(wPrevH) and not na(wPrevL) and ((wSwH > wPrevH) != (wSwL > wPrevL))
+wBias = wMixed ? 0 : wTrend
+autoBias = wBias != 0 and dTrend == wBias ? wBias : 0
 bias = biasMode == "Sells only" ? -1 : biasMode == "Buys only" ? 1 : autoBias
+biasState = biasMode != "Auto (Weekly bias, Daily confirms)" ? "MANUAL: " + str.upper(biasMode) : wBias == 0 ? (wMixed ? "NO BIAS: weekly consolidating" : "NO BIAS: weekly has no trend") : dTrend == wBias ? (wBias == 1 ? "BUYS ONLY (A+)" : "SELLS ONLY (A+)") : wBias == 1 ? "WAIT: daily pulling back, buy after it reverses up" : "WAIT: daily bouncing, sell after it reverses down"
+
 
 // Each setup on its own timeframe. A setup is acted on only on the chart bar that closes its bar.
 [aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aEma, aImpL, aImpS] = request.security(syminfo.tickerid, tfA, f_scan(emaALen, cPivot, retestN), lookahead = barmerge.lookahead_off)
@@ -564,7 +572,7 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
             if showPriv
                 m += "\n\n— Private —\n📊 " + sname + " " + kind + (isRe ? " (RE-ENTRY)" : "") + ": " + (buy ? txtL : txtS)
                 m += "\n📏 Size: " + sizeTxt + " (risk " + str.tostring(riskPct) + "% = $" + str.tostring(riskUsd, "#,##0") + " of $" + str.tostring(eqNow, "#,##0") + ")"
-                m += "\n🧭 Daily " + f_trendTxt(dTrend) + " / Weekly " + f_trendTxt(wTrend) + " | " + sname + " structure " + f_trendTxt(trend)
+                m += "\n🧭 Weekly " + (wMixed ? "MIXED" : f_trendTxt(wTrend)) + " / Daily " + f_trendTxt(dTrend) + " = " + biasState + " | " + sname + " structure " + f_trendTxt(trend)
                 if openBefore != "Flat"
                     m += "\n➕ Scaling in. Already open on this setup: " + openBefore
                 m += "\n🔁 Entry " + str.tostring(sameImp ? su.impCount + 1 : 1) + " of " + str.tostring(perImp) + " on this impulse"
@@ -583,7 +591,11 @@ f_run(Setup su, Book book, string sname, bool swing, bool isClose, int ratio, in
 if barstate.isconfirmed
     oA = f_run(suA, bk, nameA, true, aIsClose, ratioA, aTrend, aSigL, aSigS, aTxtL, aTxtS, aStopL, aStopS, aLimL, aLimS, aBull, aBear, aImpL, aImpS)
     oB = f_run(suB, bk, nameB, false, bIsClose, ratioB, bTrend, bSigL, bSigS, bTxtL, bTxtS, bStopL, bStopS, bLimL, bLimS, bBull, bBear, bImpL, bImpS)
-    allMsg = f_add(oA, oB)
+    // Bias change alerts: the Daily turning back in line with the Weekly is the cue to look for entries.
+    string biasMsg = ""
+    if autoBias != autoBias[1] and biasMode == "Auto (Weekly bias, Daily confirms)"
+        biasMsg := autoBias != 0 ? "🧭 " + instName + ": Daily has turned back in line with the Weekly (" + f_trendTxt(autoBias) + "). Looking for " + (autoBias == 1 ? "BUYS" : "SELLS") + " only." : "⏸️ " + instName + ": " + biasState + ". No new entries until it lines up again."
+    allMsg = f_add(biasMsg, f_add(oA, oB))
     if allMsg != ""
         alert(allMsg, alert.freq_once_per_bar_close)
 
@@ -618,10 +630,10 @@ if showTable and barstate.islast
     tfWarn = chartSec > timeframe.in_seconds(tfB) ? " (chart TF too high!)" : ""
     table.cell(tbl, 0, 0, "Instrument", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 0, instName + tfWarn, text_color = color.white, text_size = size.small)
-    table.cell(tbl, 0, 1, "Daily / Weekly", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 1, f_trendTxt(dTrend) + " (D swing H " + f_p(dSwH) + " / L " + f_p(dSwL) + ") / " + f_trendTxt(wTrend) + (biasMode != "Auto (Daily, then Weekly)" ? " | MANUAL: " + biasMode : ""), text_color = color.white, text_size = size.small)
+    table.cell(tbl, 0, 1, "Weekly / Daily", text_color = color.white, text_size = size.small)
+    table.cell(tbl, 1, 1, "W " + (wMixed ? "MIXED" : f_trendTxt(wTrend)) + " (H " + f_p(wSwH) + " / L " + f_p(wSwL) + ") | D " + f_trendTxt(dTrend) + " (H " + f_p(dSwH) + " / L " + f_p(dSwL) + ")", text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 2, "Trade bias", text_color = color.white, text_size = size.small)
-    table.cell(tbl, 1, 2, bias == 1 ? "BUYS ONLY" : bias == -1 ? "SELLS ONLY" : "STAND ASIDE", text_color = color.white, bgcolor = bCol, text_size = size.small)
+    table.cell(tbl, 1, 2, biasState, text_color = color.white, bgcolor = bCol, text_size = size.small)
     table.cell(tbl, 0, 3, "A structure / EMA", text_color = color.white, text_size = size.small)
     table.cell(tbl, 1, 3, f_trendTxt(aTrend) + " / " + (close > aEma ? "above" : "below"), text_color = color.white, text_size = size.small)
     table.cell(tbl, 0, 4, "B structure / EMA", text_color = color.white, text_size = size.small)
