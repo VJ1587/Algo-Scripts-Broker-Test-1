@@ -19,74 +19,74 @@ indicator("Key Level + Fib Confluence Setup", shorttitle = "KL-Fib Setup", overl
 
 // ─────────────────────────────────────────────────────────── 1 · Key levels
 grpLv = "1 · Key levels"
-preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX", "Gold", "S&P", "Custom"], group = grpLv,
+preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX", "Gold", "S&P", "Custom"], display = display.none, group = grpLv,
      tooltip = "Auto: forex symbols use the FX grid, XAU / GC the Gold grid, SPX / ES / US500 the S&P grid, everything else Custom.")
-fxMajorPips = input.float(500, "FX major step (pips)", minval = 1, group = grpLv)
-fxMidPips   = input.float(250, "FX mid step (pips)", minval = 1, group = grpLv)
-fxHalfPips  = input.float(10, "FX box half-width (pips)", minval = 0, group = grpLv, tooltip = "10 pips: 1.3000 becomes a 1.2990-1.3010 box.")
-fxNearPips  = input.float(10, "FX near-box band (pips)", minval = 0, group = grpLv, tooltip = "A fib level up to this far outside a box is flagged NEAR (developing). It does not count as the key level confluence. Matches the scanner (cfg-0.12.0).")
-goldMajor   = input.float(100, "Gold major step ($)", minval = 1, group = grpLv)
-goldMid     = input.float(50, "Gold mid step ($)", minval = 1, group = grpLv)
-goldHalf    = input.float(10, "Gold box half-width ($)", minval = 0, group = grpLv, tooltip = "$1 = 10 pips on XAUUSD, so $10 is a +/-100 pip box: 3300 becomes 3290-3310.")
-goldPip     = input.float(0.10, "Gold pip size ($)", minval = 0.001, group = grpLv)
-spxMajor    = input.float(100, "S&P major step (points)", minval = 1, group = grpLv)
-spxMid      = input.float(50, "S&P mid step (points)", minval = 1, group = grpLv)
-spxHalf     = input.float(10, "S&P box half-width (points)", minval = 0, group = grpLv, tooltip = "3300 becomes 3290-3310.")
-cMajor      = input.float(100, "Custom major step (price)", minval = 0.00001, group = grpLv)
-cMid        = input.float(50, "Custom mid step (price)", minval = 0.00001, group = grpLv)
-cHalf       = input.float(1, "Custom box half-width (price)", minval = 0, group = grpLv)
-cPip        = input.float(0, "Custom pip size (0 = 10 ticks)", minval = 0, group = grpLv)
-showLevels  = input.bool(true, "Draw key level boxes", group = grpLv)
-levelsEach  = input.int(6, "Mid steps drawn above / below price", minval = 1, maxval = 40, group = grpLv)
-colMajor    = input.color(color.new(color.orange, 75), "Major box", group = grpLv, inline = "lc")
-colMid      = input.color(color.new(color.gray, 82), "Mid box", group = grpLv, inline = "lc")
+fxMajorPips = input.float(500, "FX major step (pips)", minval = 1, display = display.none, group = grpLv)
+fxMidPips   = input.float(250, "FX mid step (pips)", minval = 1, display = display.none, group = grpLv)
+fxHalfPips  = input.float(10, "FX box half-width (pips)", minval = 0, display = display.none, group = grpLv, tooltip = "10 pips: 1.3000 becomes a 1.2990-1.3010 box.")
+fxNearPips  = input.float(10, "FX near-box band (pips)", minval = 0, display = display.none, group = grpLv, tooltip = "A fib level up to this far outside a box is flagged NEAR (developing). It does not count as the key level confluence. Matches the scanner (cfg-0.12.0).")
+goldMajor   = input.float(100, "Gold major step ($)", minval = 1, display = display.none, group = grpLv)
+goldMid     = input.float(50, "Gold mid step ($)", minval = 1, display = display.none, group = grpLv)
+goldHalf    = input.float(10, "Gold box half-width ($)", minval = 0, display = display.none, group = grpLv, tooltip = "$1 = 10 pips on XAUUSD, so $10 is a +/-100 pip box: 3300 becomes 3290-3310.")
+goldPip     = input.float(0.10, "Gold pip size ($)", minval = 0.001, display = display.none, group = grpLv)
+spxMajor    = input.float(100, "S&P major step (points)", minval = 1, display = display.none, group = grpLv)
+spxMid      = input.float(50, "S&P mid step (points)", minval = 1, display = display.none, group = grpLv)
+spxHalf     = input.float(10, "S&P box half-width (points)", minval = 0, display = display.none, group = grpLv, tooltip = "3300 becomes 3290-3310.")
+cMajor      = input.float(100, "Custom major step (price)", minval = 0.00001, display = display.none, group = grpLv)
+cMid        = input.float(50, "Custom mid step (price)", minval = 0.00001, display = display.none, group = grpLv)
+cHalf       = input.float(1, "Custom box half-width (price)", minval = 0, display = display.none, group = grpLv)
+cPip        = input.float(0, "Custom pip size (0 = 10 ticks)", minval = 0, display = display.none, group = grpLv)
+showLevels  = input.bool(true, "Draw key level boxes", display = display.none, group = grpLv)
+levelsEach  = input.int(6, "Mid steps drawn above / below price", minval = 1, maxval = 40, display = display.none, group = grpLv)
+colMajor    = input.color(color.new(color.orange, 75), "Major box", display = display.none, group = grpLv, inline = "lc")
+colMid      = input.color(color.new(color.gray, 82), "Mid box", display = display.none, group = grpLv, inline = "lc")
 
 // ─────────────────────────────────────────────────────────── 2 · Range
 grpR = "2 · Range"
-showRange    = input.bool(true, "Detect ranges", group = grpR)
-rngLen       = input.int(60, "Range lookback (bars)", minval = 10, maxval = 400, group = grpR)
-rngMinTouch  = input.int(2, "Min touches of each boundary", minval = 1, group = grpR)
-rngTouchPips = input.float(10, "Touch tolerance (pips)", minval = 0, group = grpR, tooltip = "How close a high / low must get to the boundary to count as a touch.")
-rngNeedKey   = input.bool(true, "Boundaries must sit at key levels", group = grpR,
+showRange    = input.bool(true, "Detect ranges", display = display.none, group = grpR)
+rngLen       = input.int(60, "Range lookback (bars)", minval = 10, maxval = 400, display = display.none, group = grpR)
+rngMinTouch  = input.int(2, "Min touches of each boundary", minval = 1, display = display.none, group = grpR)
+rngTouchPips = input.float(10, "Touch tolerance (pips)", minval = 0, display = display.none, group = grpR, tooltip = "How close a high / low must get to the boundary to count as a touch.")
+rngNeedKey   = input.bool(true, "Boundaries must sit at key levels", display = display.none, group = grpR,
      tooltip = "On: the range top and bottom must be inside (or within the touch tolerance of) two different key level boxes. Off: any consolidation no taller than the ATR cap below.")
-rngMaxAtr    = input.float(8, "Max range height (x ATR) when key levels are off", minval = 1, group = grpR)
-blockInRange = input.bool(true, "No signals while price is inside an unbroken range", group = grpR)
+rngMaxAtr    = input.float(8, "Max range height (x ATR) when key levels are off", minval = 1, display = display.none, group = grpR)
+blockInRange = input.bool(true, "No signals while price is inside an unbroken range", display = display.none, group = grpR)
 
 // ─────────────────────────────────────────────────────────── 3-4 · Bias
 grpB = "3-4 · Bias"
-tfBias    = input.timeframe("D", "Bias timeframe", group = grpB)
-tfConf    = input.timeframe("240", "Confirmation timeframe", group = grpB)
-structLen = input.int(5, "HTF swing length (bars each side)", minval = 2, group = grpB)
+tfBias    = input.timeframe("D", "Bias timeframe", display = display.none, group = grpB)
+tfConf    = input.timeframe("240", "Confirmation timeframe", display = display.none, group = grpB)
+structLen = input.int(5, "HTF swing length (bars each side)", minval = 2, display = display.none, group = grpB)
 
 // ─────────────────────────────────────────────────────────── 5-6 · Impulse and Fibonacci
 grpI = "5-6 · Impulse + Fib (use on the 2H chart)"
-swLen       = input.int(5, "Swing length (bars each side)", minval = 2, group = grpI)
-impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
-impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, group = grpI)
-allowNoBias = input.bool(false, "Draw fib when Daily and 4H are not aligned", group = grpI)
-fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, group = grpI)
-slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, group = grpI)
+swLen       = input.int(5, "Swing length (bars each side)", minval = 2, display = display.none, group = grpI)
+impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, display = display.none, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
+impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, display = display.none, group = grpI)
+allowNoBias = input.bool(false, "Draw fib when Daily and 4H are not aligned", display = display.none, group = grpI)
+fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, display = display.none, group = grpI)
+slPips      = input.float(5, "Stop buffer beyond 61.8 (pips)", minval = 0, display = display.none, group = grpI)
 
 // ─────────────────────────────────────────────────────────── 7 · Confluence
 grpC = "7 · Confluence"
-minConf = input.int(3, "Min confluences (of 4)", minval = 2, maxval = 4, group = grpC)
-reqKey  = input.bool(true, "Require fib level inside a key box", group = grpC, tooltip = "The document's minimum three: fib level + key level box + confirmation candle. Structure is the optional fourth.")
+minConf = input.int(3, "Min confluences (of 4)", minval = 2, maxval = 4, display = display.none, group = grpC)
+reqKey  = input.bool(true, "Require fib level inside a key box", display = display.none, group = grpC, tooltip = "The document's minimum three: fib level + key level box + confirmation candle. Structure is the optional fourth.")
 
 // ─────────────────────────────────────────────────────────── Position sizing
 grpS = "Position sizing (display only)"
-acct     = input.float(10000, "Account size", minval = 0, group = grpS)
-riskPct  = input.float(1.0, "Risk if all three limits fill (%)", minval = 0, group = grpS)
-w382     = input.float(1, "Weight 38.2 (small)", minval = 0, group = grpS, inline = "w")
-w50      = input.float(2, "50 (medium)", minval = 0, group = grpS, inline = "w")
-w618     = input.float(3, "61.8 (large)", minval = 0, group = grpS, inline = "w")
-contract = input.float(0, "Contract size (0 = auto: FX 100k, gold 100 oz, custom 1)", minval = 0, group = grpS)
+acct     = input.float(10000, "Account size", minval = 0, display = display.none, group = grpS)
+riskPct  = input.float(1.0, "Risk if all three limits fill (%)", minval = 0, display = display.none, group = grpS)
+w382     = input.float(1, "Weight 38.2 (small)", minval = 0, display = display.none, group = grpS, inline = "w")
+w50      = input.float(2, "50 (medium)", minval = 0, display = display.none, group = grpS, inline = "w")
+w618     = input.float(3, "61.8 (large)", minval = 0, display = display.none, group = grpS, inline = "w")
+contract = input.float(0, "Contract size (0 = auto: FX 100k, gold 100 oz, custom 1)", minval = 0, display = display.none, group = grpS)
 
 // ─────────────────────────────────────────────────────────── Display
 grpD = "Display"
-showTable = input.bool(true, "Show checklist table", group = grpD)
-tablePos  = input.string("Top right", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], group = grpD)
-colBull   = input.color(color.teal, "Bull", group = grpD, inline = "dc")
-colBear   = input.color(color.red, "Bear", group = grpD, inline = "dc")
+showTable = input.bool(true, "Show checklist table", display = display.none, group = grpD)
+tablePos  = input.string("Top right", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], display = display.none, group = grpD)
+colBull   = input.color(color.teal, "Bull", display = display.none, group = grpD, inline = "dc")
+colBear   = input.color(color.red, "Bear", display = display.none, group = grpD, inline = "dc")
 
 // ─────────────────────────────────────────────────────────── Instrument resolution
 isGoldSym = str.contains(syminfo.ticker, "XAU") or syminfo.root == "GC" or syminfo.root == "MGC"
@@ -191,7 +191,7 @@ if showRange
         int  tBot   = 0
         bool wasTop = false
         bool wasBot = false
-        for i = rngLen to 1 by -1
+        for i = rngLen to 1   // counts down: Pine steps -1 when from > to
             hiT = high[i] >= candTop - touchTol
             loT = low[i] <= candBot + touchTol
             if hiT and not wasTop
