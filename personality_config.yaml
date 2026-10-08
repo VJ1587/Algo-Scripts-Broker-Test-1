@@ -5,13 +5,19 @@
 # Values the engine recalibrates itself (T, lambda, grade thresholds, half lives, round-level switch) live in
 # data/personality/params_state.json with their own change log; the numbers here are the starting values.
 
-config_version: "pcfg-1.0.0"
+config_version: "pcfg-1.3.0"
 changelog:
   - {version: "pcfg-1.0.0", date: "2026-10-07", change: "Initial config from the framework doc", reason: "Owner: daily runs with monthly and quarterly personality updates; MT5 + TradingView, FRED for gaps; versioned YAML ledger; HTML + JSON/CSV; compare against multiple scanners; all recalibration automatic"}
+  - {version: "pcfg-1.1.0", date: "2026-10-08", change: "Add crosses AUDCAD and CADJPY", reason: "Owner: profile the pairs in the 2026-10-07 tick exports (AUDCAD, CADJPY were the only ones missing)"}
+  - {version: "pcfg-1.2.0", date: "2026-10-08", change: "paths.politics and paths.cycle_scorecard (ledger/ subfolder)", reason: "Owner: track elections, leaders, control shifts and policy regimes against personality; keep the 63 cycle inputs in their own file feeding the ledger"}
+  - {version: "pcfg-1.3.0", date: "2026-10-08", change: "paths.profiles (ledger/personality_profiles.yaml): human take per instrument and factor", reason: "Owner: overall personality built from tracked factors, with our own view labelled human judgement / bias next to the measurements"}
 
 paths:
   ledger: personality_ledger.yaml
   events: personality_events.yaml
+  politics: ledger/politics.yaml            # leaders, elections, control shifts, policy regimes (evolution page)
+  cycle_scorecard: ledger/cycle_scorecard.yaml  # the 63 cycle inputs; merged into the ledger players on load
+  profiles: ledger/personality_profiles.yaml    # our own take per instrument and factor (human judgement / bias)
   scanner_config: scanner_config.yaml      # reused for MT5 settings, COT markets and the calendar archive
   state_dir: data/personality              # the journal (git-ignored, back it up)
   output_dir: output/personality
@@ -45,6 +51,8 @@ instruments:
   AUDJPY: {kind: fx, grid: jpy, sources: [{mt5: AUDJPY}, {tv: AUDJPY, exchange: OANDA}, {demo: AUDJPY}]}
   AUDNZD: {kind: fx, grid: fx,  sources: [{mt5: AUDNZD}, {tv: AUDNZD, exchange: OANDA}, {demo: AUDNZD}]}
   EURGBP: {kind: fx, grid: fx,  sources: [{mt5: EURGBP}, {tv: EURGBP, exchange: OANDA}, {demo: EURGBP}]}
+  AUDCAD: {kind: fx, grid: fx,  sources: [{mt5: AUDCAD}, {tv: AUDCAD, exchange: OANDA}, {demo: AUDCAD}]}
+  CADJPY: {kind: fx, grid: jpy, sources: [{mt5: CADJPY}, {tv: CADJPY, exchange: OANDA}, {demo: CADJPY}]}
   # the scoreboard, metals, energy, equities, the price of money. Spot or unadjusted prices for the map.
   DXY:    {kind: index,     grid: dxy,    label: "Dollar index", sources: [{tv: DXY, exchange: TVC}, {demo: DXY}]}
   XAUUSD: {kind: commodity, grid: gold,   cot: GOLD, label: "Gold spot", sources: [{mt5: XAUUSD}, {tv: XAUUSD, exchange: OANDA}, {demo: XAUUSD}]}

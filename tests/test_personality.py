@@ -350,8 +350,10 @@ def test_demo_end_to_end(tmp_path):
     import personality
     for f in ("personality_config.yaml", "personality_ledger.yaml", "personality_events.yaml"):
         shutil.copy(ROOT / f, tmp_path / f)
+    shutil.copytree(ROOT / "ledger", tmp_path / "ledger")
     paths = personality.run_once(tmp_path / "personality_config.yaml", pd.Timestamp("2026-10-06"), "quarterly", True)
-    assert len(paths) == 3 and all(p.exists() for p in paths)
+    assert len(paths) == 4 and all(p.exists() for p in paths)
+    assert paths[-1].name == "evolution_2026-Q3.html" and "Phase map, year by year" in paths[-1].read_text(encoding="utf-8")
     rep = json.loads(paths[0].with_suffix(".json").read_text(encoding="utf-8"))
     assert rep["regime"]["regime"] and rep["cards"] and rep["forecasts_written"] > 0
 
@@ -361,3 +363,171 @@ def test_last_completed_session_skips_unfinished_day_and_weekend():
     assert last_completed_session(pd.Timestamp("2026-10-07 14:00", tz="UTC")) == pd.Timestamp("2026-10-06")  # 10:00 New York
     assert last_completed_session(pd.Timestamp("2026-10-07 22:30", tz="UTC")) == pd.Timestamp("2026-10-07")
     assert last_completed_session(pd.Timestamp("2026-10-10 12:00", tz="UTC")) == pd.Timestamp("2026-10-09")  # Saturday
+
+
+def test_personality_change_is_one_row_per_instrument_with_the_trait_mix(tmp_path):
+    from types import SimpleNamespace
+    from empire.monitor import personality_changes
+    j = jr.Journal(tmp_path)
+    # a legacy journal: gold logged once per trait
+    j.append("personality_changes.csv", [
+        {"date": "2026-10-07", "symbol": "XAUUSD", "trait": t, "direction": "higher", "drift": 2.5, "days": 120,
+         "status": "open", "suspected_cause": "not identified: investigate", "closed": ""}
+        for t in ("energy", "energy_long", "atr_pct")])
+    ctx = SimpleNamespace(cfg={"traits": {"drift_threshold": 2.0, "drift_days": 60}}, journal=j,
+                          asof=pd.Timestamp("2026-10-08"))
+    idx = pd.bdate_range("2026-01-01", periods=200)
+    high = pd.Series(2.5, idx)
+    drift = pd.DataFrame({"energy": high, "energy_long": high, "atr_pct": high, "conviction": pd.Series(0.1, idx)})
+    out = personality_changes(ctx, "XAUUSD", drift, None)
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and len(out) == 1
+    assert log.iloc[0]["trait"] == "energy, energy_long, atr_pct"
+    assert log.iloc[0]["date"] == "2026-10-07" and log.iloc[0]["status"] == "open"
+    assert personality_changes(ctx, "XAUUSD", drift, None) == []  # same mix: nothing new
+    # one trait comes back inside the band: still one row, smaller mix
+    drift.loc[idx[-1], "atr_pct"] = 0.0
+    personality_changes(ctx, "XAUUSD", drift, "event X")
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and log.iloc[0]["trait"] == "energy, energy_long"
+    assert log.iloc[0]["suspected_cause"] == "event X"
+    # all back inside: the one row closes
+    drift.loc[idx[-1]] = 0.0
+    out = personality_changes(ctx, "XAUUSD", drift, None)
+    log = j.read("personality_changes.csv")
+    assert len(log) == 1 and log.iloc[0]["status"] == "closed" and out[0]["status"] == "closed"
+
+
+def test_personality_history_flags_a_shift_and_stays_point_in_time():
+    from empire.review import personality_history
+    idx = pd.bdate_range("2006-01-02", "2025-12-31")
+    rng = np.random.default_rng(3)
+    df = pd.DataFrame({t: 1.0 + 0.01 * rng.normal(size=len(idx)) for t in ("energy", "conviction", "patience", "asymmetry")}, idx)
+    df.loc[df.index.year == 2020, ["energy", "conviction", "patience", "asymmetry"]] += 5.0  # one year out of character
+    ph = personality_history({"XAUUSD": df}, "annual", pd.Timestamp("2025-12-31"))
+    top = ph["biggest"]["XAUUSD"]
+    assert {top[0]["period"], top[1]["period"]} == {"2020", "2021"}  # into and out of the odd year
+    assert ph["latest"][0]["period"] == "2025" and not ph["latest"][0]["changed"]
+    cut = personality_history({"XAUUSD": df}, "annual", pd.Timestamp("2019-12-31"))
+    assert "2020" not in cut["history"]["XAUUSD"]  # nothing after the period end
+    q = personality_history({"XAUUSD": df}, "quarterly", pd.Timestamp("2025-09-30"))
+    assert q["latest"][0]["period"] == "2025-Q3"
+
+
+# ---------------------------------------------------------------- evolution: phases, politics, cycle scorecard
+
+def _phase_frames(values: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    med = pd.DataFrame(values, index=pd.date_range("2006-12-31", periods=len(next(iter(values.values()))), freq="YE"))
+    mad = (med - med.median()).abs().median() * 1.4826
+    return med, (med - med.median()) / mad.where(mad > 0)
+
+
+def test_phases_tell_a_return_to_a_known_state_from_a_new_one_and_a_complete_change():
+    from empire.evolution import classify_phases
+    rng = np.random.default_rng(5)
+    base = list(1.0 + 0.05 * rng.normal(size=16))
+    # years 4 and 5 visit a high state; year 11 returns to it (known); years 14 and 15 go somewhere never seen and stay
+    a = base.copy(); a[4] = a[5] = 3.0; a[11] = 3.0; a[14] = a[15] = -4.0
+    b = base.copy(); b[4] = b[5] = 3.0; b[11] = 3.0; b[14] = b[15] = 6.0
+    med, z = _phase_frames({"energy": a, "conviction": b})
+    ph = {r["t"]: r for r in classify_phases(med, z, warmup=3)}  # short synthetic history
+    assert ph[1]["phase"] == "warm-up"
+    assert ph[11]["phase"] == "known phase" and ph[11]["nearest"] in (4, 5)
+    assert ph[14]["phase"] == "new phase"
+    assert ph[15]["phase"] == "complete change"
+
+
+def test_behavior_flip_needs_a_sign_change_away_from_zero():
+    from empire.evolution import classify_phases
+    fb = [0.002] * 6 + [-0.002] * 4 + [0.00001, -0.00001]
+    med, z = _phase_frames({"fear_beta": fb, "energy": [1.0 + 0.01 * i for i in range(12)]})
+    ph = {r["t"]: r for r in classify_phases(med, z)}
+    assert ph[6]["flips"] == ["fear_beta + to -"]
+    assert ph[11]["flips"] == []  # tiny values either side of zero are noise
+
+
+def test_timeline_flags_a_change_of_party_and_maps_instruments_to_countries():
+    from empire.evolution import countries_for, timeline
+    pol = {"currency_countries": {"USD": "US", "JPY": "JP"}, "instrument_countries": {"XAUUSD": ["US", "CN"]},
+           "countries": {"JP": {"offices": {"Prime Minister": [
+               {"holder": "Aso", "party": "LDP", "start": "2008-09-24"}, {"holder": "Hatoyama", "party": "DPJ", "start": "2009-09-16"},
+               {"holder": "Kan", "party": "DPJ", "start": "2010-06-08"}]},
+               "events": [{"date": "2013-04-04", "kind": "policy", "text": "QQE"}]}}}
+    tl = timeline(pol, [{"date": "2025-06-13", "player": "IL", "type": "war_supply", "headline": "war", "id": "EV-1"}])
+    lead = [x for x in tl if x["kind"] == "leader"]
+    assert [x["control_shift"] for x in lead] == [True, False]
+    assert tl[-1]["text"].startswith("war") and tl[0]["date"] == pd.Timestamp("2009-09-16")
+
+    class I:
+        currencies = ["USD", "JPY"]
+    assert countries_for("USDJPY", I(), pol) == ["US", "JP"]
+    assert countries_for("XAUUSD", None, pol) == ["US", "CN"]
+    assert countries_for("JPY_IDX", None, pol) == ["JP"]
+
+
+def test_scorecard_file_feeds_each_player_separately_and_staleness_uses_its_window(tmp_path):
+    from empire.players import cycle_staleness, merge_scorecard, parse_ledger
+    blank = {"deficit_share_of_output": {"value": None}}
+    raw = {"players": {"US": {"weight": 0.3, "cycle_scorecard": blank}, "IL": {"weight": 0.04, "cycle_scorecard": blank}}}
+    (tmp_path / "sc.yaml").write_text(
+        "indicators:\n  deficit_share_of_output: {max_age_days: 460}\n  reserve_and_invoicing_share: {max_age_days: 200}\n"
+        "values:\n  US:\n    deficit_share_of_output: {value: -0.06, as_of: 2025-12-31}\n"
+        "    reserve_and_invoicing_share: {value: 0.57, as_of: 2025-12-31}\n"
+        "  IL:\n    deficit_share_of_output: {value: null}\n    reserve_and_invoicing_share: {applicable: false, value: null}\n",
+        encoding="utf-8")
+    merged = merge_scorecard(raw, tmp_path / "sc.yaml")
+    assert raw["players"]["US"]["cycle_scorecard"] is blank and blank["deficit_share_of_output"]["value"] is None
+    led = parse_ledger(merged)
+    st = {(x["player"], x["indicator"]): x["status"] for x in cycle_staleness(led, pd.Timestamp("2026-10-08"))}
+    assert ("US", "deficit_share_of_output") not in st          # 281 days old, inside 460
+    assert st[("US", "reserve_and_invoicing_share")].startswith("stale")  # 281 days, beyond 200
+    assert st[("IL", "deficit_share_of_output")] == "unknown"
+    assert ("IL", "reserve_and_invoicing_share") not in st       # not applicable
+
+
+def test_shipped_politics_and_scorecard_files_load():
+    from empire.evolution import timeline
+    pol = load_yaml(ROOT / "ledger" / "politics.yaml")
+    tl = timeline(pol)
+    assert len(tl) > 150 and all(isinstance(x["date"], pd.Timestamp) for x in tl)
+    sc = load_yaml(ROOT / "ledger" / "cycle_scorecard.yaml")
+    assert len(sc["values"]) == 9 and sum(len(v) for v in sc["values"].values()) == 63
+    assert set(sc["indicators"]) == set(sc["values"]["US"])
+
+
+def test_factor_profile_tracks_how_long_each_reading_has_held():
+    from empire.evolution import factor_profile
+    idx = pd.date_range("2006-12-31", periods=10, freq="YE")
+    med = pd.DataFrame({"energy": [1, 1, 1, 1, 1, 1, 1, 5, 5, 5.0],            # wilder since year 8
+                        "fear_beta": [0.002] * 4 + [-0.002] * 6}, idx)        # falls in fear since year 5
+    rank = med.rank(pct=True) * 100
+    labels = [str(y) for y in idx.year]
+    p = factor_profile(med, rank, labels)
+    by = {f["factor"]: f for f in p["factors"]}
+    assert by["energy"]["reading"] == "wilder than usual" and by["energy"]["since"] == "2013" and by["energy"]["held"] == 3
+    assert by["fear_beta"]["reading"] == "falls when fear rises" and by["fear_beta"]["since"] == "2010"
+    assert by["fear_beta"]["before"] == "rises when fear rises"
+    assert p["overall"] == "falls when fear rises; wilder than usual"   # role first, then temper
+
+
+def test_major_change_status_separates_recent_from_long_standing():
+    from empire.evolution import major_change
+    yrs = [{"period": str(y), "phase": "stable", "flips": [], "moved": []} for y in range(2010, 2026)]
+    yrs[5]["phase"] = "new phase"  # 2015
+    old = major_change(yrs, [])
+    assert old["last"]["period"] == "2015" and old["held_years"] == 10 and old["status"] == "long-standing (6+ years)"
+    yrs[-1]["flips"] = ["fear_beta + to -"]
+    assert major_change(yrs, [])["status"] == "changing now"
+    yrs[-1]["flips"] = []
+    q = [{"period": "2025-Q4", "phase": "new phase", "flips": []}]
+    assert major_change(yrs, q)["status"] == "changing now (latest quarters)"
+
+
+def test_human_profiles_merge_into_the_ledger_with_their_label(tmp_path):
+    from empire.players import merge_profiles
+    (tmp_path / "p.yaml").write_text('label: "human judgement / bias"\nprofiles:\n  XAUUSD:\n    overall: {take: "dips get bought"}\n'
+                                     '    factors:\n      central_bank_buying: {take: "floor", direction: up}\n', encoding="utf-8")
+    raw = merge_profiles({"players": {}}, tmp_path / "p.yaml")
+    assert raw["human_label"] == "human judgement / bias"
+    assert raw["human_profiles"]["XAUUSD"]["factors"]["central_bank_buying"]["direction"] == "up"
+    assert merge_profiles({"players": {}}, tmp_path / "missing.yaml") == {"players": {}}

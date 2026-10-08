@@ -1,4 +1,4 @@
-"""Monthly and quarterly reviews: where the reports build on each other.
+"""Monthly, quarterly and annual reviews: where the reports build on each other.
 
 Monthly   forecast scorecard for the month and to date; every written behavior (hypothesis) re-tested and
           its status logged (validated, regime-dependent, invalidated, inconclusive); personality changes and
@@ -7,6 +7,8 @@ Monthly   forecast scorecard for the month and to date; every written behavior (
 Quarterly everything monthly, plus the validation tests from the framework (levels versus random, trait
           rankings out of sample, pair beta identity, incentive gap closure), recalibration of T and lambda,
           grade threshold recalibration, setup retirement, the two pivot triggers, and the ledger review list.
+Annual    the quarterly tests without a second recalibration, personality year by year. Quarterly and annual
+          reviews also carry the evolution view (phases, politics, policy and market regimes over the history).
 All parameter changes apply automatically (owner decision) and are logged with their reason and evidence.
 """
 from __future__ import annotations
@@ -16,6 +18,9 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
+from .config import load_yaml
+from .evolution import (classify_phases, countries_for, events_by_period, factor_profile, load_politics, major_change,
+                        period_label, regime_mix, timeline)
 from .journal import fit_temperature, scorecard
 from .pairs import gap_closure_rate
 from .players import cycle_staleness, evaluate_hypothesis
@@ -24,7 +29,9 @@ PROFILE_TRAITS = ["energy", "conviction", "patience", "fear_beta", "rate_beta", 
 
 
 def period_bounds(asof: pd.Timestamp, kind: str) -> tuple[pd.Timestamp, pd.Timestamp, str]:
-    """The period just completed (or running, if forced mid-period): previous month or quarter."""
+    """The period just completed (or running, if forced mid-period): previous month, quarter or calendar year."""
+    if kind == "annual":
+        return pd.Timestamp(asof.year - 1, 1, 1), pd.Timestamp(asof.year - 1, 12, 31), str(asof.year - 1)
     if kind == "monthly":
         first_this = asof.replace(day=1)
         start = (first_this - pd.DateOffset(months=1)).normalize()
@@ -88,6 +95,84 @@ def hypotheses_step(ctx, kind_label: str) -> dict:
                                                "metric": r["metric"], "expect": r["expect"], "now": r["now"], "long_run": r["long_run"],
                                                "status": r["status"], "regimes": r["regimes"]} for r in res])
     return {"results": res, "changes": changes}
+
+
+def personality_history(traits_cache: dict, kind: str, end: pd.Timestamp, top_n: int = 3) -> dict:
+    """Personality measured over whole periods instead of day to day. Each trait is the median of its daily
+    values inside each quarter (or year), using only data up to `end`, so the history is point in time.
+    Each period's trait is scored as a robust z against the instrument's own periods (median and MAD), so a
+    period far outside its usual range counts for more than one that is merely the highest. shift = mean
+    absolute move in those z scores across traits from one period to the next; a shift at or above the
+    instrument's own 90th percentile of shifts is a personality change for that instrument. Each period also
+    gets a phase (stable, known phase, new phase, complete change) and any behavior flips: see
+    evolution.classify_phases."""
+    freq, min_days = ("YE", 150) if kind == "annual" else ("QE", 40)
+    latest, history, biggest, periods, profiles = [], {}, {}, {}, {}
+    for sym, df in traits_cache.items():
+        cols = [t for t in PROFILE_TRAITS if t in df]
+        d = df.loc[df.index <= end, cols]
+        if d.empty:
+            continue
+        g = d.resample(freq)
+        med = g.median()[g.count().max(axis=1) >= min_days].dropna(how="all", axis=1)
+        if len(med) < 4:
+            continue
+        rank = med.rank(pct=True) * 100  # each period against the instrument's own periods
+        mad = (med - med.median()).abs().median() * 1.4826
+        z = (med - med.median()) / mad.where(mad > 0)
+        shift = z.diff().abs().mean(axis=1).iloc[1:]
+        labels = [period_label(ts, kind) for ts in med.index]
+        phases = classify_phases(med, z, warmup=5 if kind == "annual" else 8)
+        periods[sym] = [{"period": labels[r["t"]], "nearest_period": None if r["nearest"] is None else labels[r["nearest"]],
+                         **{k: v for k, v in r.items() if k not in ("t", "nearest")}} for r in phases]
+        profiles[sym] = factor_profile(med, rank, labels)
+        history[sym] = {period_label(ts, kind): round(float(v), 1) for ts, v in shift.items()}
+        biggest[sym] = [{"period": period_label(ts, kind), "shift": round(float(v), 1),
+                         "moved": [t for t in z.columns if abs(z[t].diff().loc[ts]) >= 2]}
+                        for ts, v in shift.nlargest(top_n).items()]
+        now, zn, zp = rank.iloc[-1], z.iloc[-1], z.iloc[-2]
+        s_now = float(shift.iloc[-1])
+        s_pct = float((shift <= s_now).mean() * 100)
+        last = periods[sym][-1] if periods[sym] else {}
+        latest.append({"symbol": sym, "period": labels[-1], "periods": len(rank),
+                       "shift": round(s_now, 1), "shift_pct": round(s_pct, 0), "changed": s_pct >= 90,
+                       "phase": last.get("phase"), "nearest_period": last.get("nearest_period"), "flips": last.get("flips", []),
+                       "high": [t for t in rank.columns if now[t] >= 80], "low": [t for t in rank.columns if now[t] <= 20],
+                       "moved": [f"{t} {'up' if zn[t] > zp[t] else 'down'}" for t in z.columns if abs(zn[t] - zp[t]) >= 2]})
+    latest.sort(key=lambda r: -r["shift_pct"])
+    return {"kind": kind, "latest": latest, "history": history, "biggest": biggest, "periods": periods, "profiles": profiles}
+
+
+def evolution_view(ctx, end: pd.Timestamp, annual: dict, quarterly: dict) -> dict:
+    """Everything the evolution page needs: phases by year and by quarter, the politics and policy timeline,
+    and the market regime mix, each keyed by period so the page can line them up."""
+    pol = load_politics(ctx.base / ctx.cfg["paths"].get("politics", "ledger/politics.yaml"))
+    ev_path = ctx.base / ctx.cfg["paths"].get("events", "personality_events.yaml")
+    owner = (load_yaml(ev_path).get("events") or []) if ev_path.exists() else []
+    tl = [e for e in timeline(pol, owner) if e["date"] <= ctx.asof]
+    regimes = getattr(ctx, "regimes", None)
+    regimes = regimes[regimes.index <= end] if regimes is not None and len(regimes) else regimes
+    syms = sorted(set(annual.get("periods", {})) | set(quarterly.get("periods", {})))
+    human = ctx.ledger.raw.get("human_profiles") or {}
+    summary = []
+    for s in syms:
+        pa, pq = annual.get("periods", {}).get(s, []), quarterly.get("periods", {}).get(s, [])
+        prof = annual.get("profiles", {}).get(s) or {}
+        summary.append({"symbol": s, "overall": prof.get("overall"), "role": prof.get("role", []), "temper": prof.get("temper", []),
+                        "year": pa[-1] if pa else None, "quarter": pq[-1] if pq else None,
+                        "change": major_change(pa, pq), "new_factors": prof.get("new_factors", []),
+                        "human": (human.get(s) or {}).get("overall")})
+    return {"end": str(end.date()), "politics_version": pol.get("politics_version"),
+            "countries": {s: countries_for(s, ctx.insts.get(s), pol) for s in syms},
+            "country_names": {c: v.get("name", c) for c, v in (pol.get("countries") or {}).items()},
+            "annual": annual.get("periods", {}), "quarterly": {s: rows[-12:] for s, rows in quarterly.get("periods", {}).items()},
+            "events_annual": events_by_period(tl, "annual"), "events_quarterly": events_by_period(tl, "quarterly"),
+            "regimes_annual": regime_mix(regimes, "annual"), "regimes_quarterly": regime_mix(regimes, "quarterly"),
+            "summary": summary, "profiles": annual.get("profiles", {}), "human": human,
+            "human_label": ctx.ledger.raw.get("human_label", "human judgement / bias"),
+            "partial_year": end.month != 12 or end.day != 31,
+            "unverified": sum(1 for e in tl if e.get("evidence") == "unverified"),
+            "to_check": [e for e in tl if e.get("check")]}
 
 
 def profile_snapshot(ctx, kind_label: str, views: dict) -> dict:
@@ -340,6 +425,12 @@ def pivot_checks(ctx, views: dict, lvl: dict, start: pd.Timestamp, end: pd.Times
 
 def run_review(ctx, kind: str, daily: dict) -> dict:
     start, end, label = period_bounds(ctx.asof, kind)
+    # a forced rerun of a review replaces that period's rows instead of logging them twice
+    for name, keep in (("profiles.csv", lambda d: d["period"] != label), ("hypotheses_log.csv", lambda d: d["period"] != label),
+                       ("reviews.csv", lambda d: (d["kind"] != kind) | (d["period"] != label))):
+        old = ctx.journal.read(name)
+        if not old.empty and not keep(old).all():
+            ctx.journal.rewrite(name, old[keep(old)])
     fc = ctx.journal.read("forecasts.csv")
     period_fc = fc
     if not fc.empty:
@@ -370,11 +461,17 @@ def run_review(ctx, kind: str, daily: dict) -> dict:
     lc = ctx.journal.read("ledger_changes.csv")
     if not lc.empty:
         out["ledger_changes"] = lc[pd.to_datetime(lc["run"]) >= start].to_dict("records")
-    if kind == "quarterly":
+    if kind in ("quarterly", "annual"):
+        tc = getattr(ctx, "traits_cache", {})
+        out["personality_history"] = personality_history(tc, kind, end)
+        other = personality_history(tc, "quarterly" if kind == "annual" else "annual", end)
+        ph_a, ph_q = (out["personality_history"], other) if kind == "annual" else (other, out["personality_history"])
+        out["evolution"] = evolution_view(ctx, end, ph_a, ph_q)
         lvl = level_edge_test(views)
         out["validation"] = {"levels": lvl, "traits": trait_oos_test(ctx), "pair_math": pair_beta_test(views),
                              "incentive_gap": gap_test(ctx)}
-        out["recalibration"] = recalibrate(ctx, fc)
+        # parameters are tuned once a quarter; the annual review reads them, it does not tune them again
+        out["recalibration"] = recalibrate(ctx, fc) if kind == "quarterly" else []
         out["pivots"] = pivot_checks(ctx, views, lvl, start, end)
         out["ledger_review"] = [{"player": p, "weight": v.get("weight"), "evidence": v.get("weight_evidence", "working assumption")}
                                 for p, v in ctx.ledger.players.items()]

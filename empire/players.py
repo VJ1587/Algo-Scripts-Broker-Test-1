@@ -6,13 +6,15 @@ from likelihoods, and a missing input is recorded as unknown, never estimated to
 """
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 
-from .config import check_evidence, evidence_ok
+from .config import check_evidence, evidence_ok, load_yaml
 
 OUTCOME_SIGN = {"up": +1, "down": -1, "range": 0}
 
@@ -211,16 +213,51 @@ def alignment_scores(ledger: Ledger, events: pd.DataFrame, asof: pd.Timestamp, d
     return out
 
 
+def merge_scorecard(raw: dict, path: Path) -> dict:
+    """Fold ledger/cycle_scorecard.yaml into the raw ledger: its values replace each player's cycle_scorecard
+    and its indicator definitions ride along, so the ledger snapshot and change log cover the scorecard too.
+    Players are copied one by one because the ledger seeds them from a single shared YAML anchor."""
+    if not path.exists():
+        return raw
+    sc = load_yaml(path) or {}
+    raw = copy.deepcopy(raw)
+    for pid, vals in (sc.get("values") or {}).items():
+        if pid in (raw.get("players") or {}):
+            raw["players"][pid]["cycle_scorecard"] = copy.deepcopy(vals)
+    raw["cycle_indicators"] = sc.get("indicators") or {}
+    raw["cycle_scorecard_version"] = sc.get("scorecard_version")
+    return raw
+
+
+def merge_profiles(raw: dict, path: Path) -> dict:
+    """Fold ledger/personality_profiles.yaml (our own take, labelled human judgement / bias) into the raw ledger so
+    edits are snapshotted and diffed with it. It never feeds a measurement, likelihood or grade."""
+    if not path.exists():
+        return raw
+    pf = load_yaml(path) or {}
+    raw = dict(raw)
+    raw["human_profiles"] = copy.deepcopy(pf.get("profiles") or {})
+    raw["human_label"] = pf.get("label", "human judgement / bias")
+    raw["human_profiles_version"] = pf.get("profiles_version")
+    return raw
+
+
 def cycle_staleness(ledger: Ledger, asof: pd.Timestamp, max_days: int = 100) -> list[dict]:
+    """Inputs that are blank, or older than their indicator's refresh window (max_age_days in the scorecard
+    file; `max_days` when an indicator does not set one). Inputs marked applicable: false are skipped."""
+    defs = ledger.raw.get("cycle_indicators") or {}
     out = []
     for pid, p in ledger.players.items():
         for ind, v in (p.get("cycle_scorecard") or {}).items():
             v = v or {}
+            if v.get("applicable") is False:
+                continue
+            limit = int((defs.get(ind) or {}).get("max_age_days", max_days))
             ao = v.get("as_of")
             age = None
             if ao:
                 age = (asof - pd.Timestamp(ao)).days
-            if v.get("value") is None or age is None or age > max_days:
+            if v.get("value") is None or age is None or age > limit:
                 out.append({"player": pid, "indicator": ind, "value": v.get("value"), "as_of": ao,
                             "status": "unknown" if v.get("value") is None else f"stale ({age} days)"})
     return out

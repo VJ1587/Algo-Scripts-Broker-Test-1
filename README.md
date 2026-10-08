@@ -24,6 +24,8 @@ report reads the journal the earlier ones wrote, so calls are checked against wh
 | Daily | Regime (dollar liquidity x risk appetite) and scoreboard (dollar index vs equal-weight dollar). Calendar windows. Events: event study, cross-market fingerprint, needle test, event weight, pressure. Character: eight traits, bands from each trait's own 20-year history, one distance-from-normal number, drift, relationship flips. Incentive gaps for pairs. The 20-year level map scored against random levels. One story card per instrument: likelihoods (base rates tilted by the ledger and pressure), reach, hold, EV at entry, four gates, grade, setup type, invalidation, long-term goal vs short-term behavior, alignment against **every configured scanner**. Exposure check. Every forecast is logged before the outcome and resolved after it. |
 | Monthly | Forecast scorecard (Brier, skill vs base rates, calibration buckets, hit rates by setup, grade, gates and alignment cell per scanner). Every written behavior in the ledger re-tested: validated, regime-dependent, invalidated or inconclusive, with status changes since last month. Measured profile vs last month. Plan alignment scores and pivot triggers. Event library; pressure half lives refit. |
 | Quarterly | Everything monthly plus the validation tests: round and market-made levels vs random levels, trait rankings out of sample (first 14 years vs last 6), pair math identity, incentive gap closure. Recalibrates T and lambda on the forecast log (after 30 resolved), nudges grade thresholds (after 30 per grade), retires setups below a coin flip, fires the pivot triggers (for example dropping the round-number grid if it shows no edge). |
+| Annual | The quarterly tests (no second recalibration) and personality year by year over the whole history. |
+| Evolution page | Second page of every quarterly and annual review: each instrument's phase per year and per quarter (stable, known phase, new phase, complete change, behavior flips) next to elections, changes of party control, policy regimes and market regimes. |
 
 All recalibration applies automatically (owner decision) and is logged with its reason and evidence in
 `data/personality/params_changelog.csv`. Ledger edits are snapshotted and diffed on every run.
@@ -35,13 +37,15 @@ All recalibration applies automatically (owner decision) and is logged with its 
 | `personality_config.yaml` | Universe, sources, windows, thresholds, scanners to compare against | Versioned like `scanner_config.yaml`. Source order per instrument: MT5, TradingView, then FRED for gaps. |
 | `personality_ledger.yaml` | Players and weights, incentive scores (B, K, U, C), levers, pain zones, plans and goals, hypotheses | Every entry carries an evidence label. `unverified` and `unknown` entries show on cards but are excluded from likelihoods. Seeded from the doc: **review every seed before trusting a grade.** |
 | `personality_events.yaml` | Wars, sanctions, policy shifts, confirmed headlines | Red-folder releases come in automatically from the scanner's calendar archive. |
+| `ledger/politics.yaml` | Heads of government and state, central bank heads, elections, changes of control, policy regimes | Seeded from memory and `unverified`; the evolution page lists the least certain entries. Does not feed likelihoods. |
+| `ledger/cycle_scorecard.yaml` | The 63 cycle inputs (9 players x 7 indicators): definitions, sources, refresh windows, values | Merged into the ledger players on load, so edits are snapshotted and diffed with the ledger. |
 
 **Scanners.** Add one entry per scanner under `scanners:` in the config. `scanner_json` reads `scanner.py`
 output; `generic_csv` and `generic_json` read any scanner that writes `symbol, direction, status`. Each card
 shows its alignment cell (aligned, watch, tactical, conflict, no trade) per scanner, and the reviews track
 results per cell, which is the framework's decisive test of whether the story layer adds value.
 
-**Outputs.** `output/personality/daily_<date>.html|json`, `monthly_<YYYY-MM>.*`, `quarterly_<YYYY-Qn>.*`.
+**Outputs.** `output/personality/daily_<date>.html|json`, `monthly_<YYYY-MM>.*`, `quarterly_<YYYY-Qn>.*`, `annual_<YYYY>.*`, `evolution_<period>.html`.
 The journal lives in `data/personality/` (git-ignored, so back it up: it is the system's memory).
 
 ```powershell

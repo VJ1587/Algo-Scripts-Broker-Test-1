@@ -1,0 +1,333 @@
+# Empire Game political and policy timeline
+# =========================================
+# Who held power, when control changed hands, and when the rules of the game changed. The evolution page lines
+# these up against each instrument's personality, year by year, so a personality shift can be read next to the
+# election, change of party or policy regime around it. It does not feed likelihoods.
+#
+# SEED NOTICE: seeded from memory on 2026-10-08, not from primary sources. Every entry is `unverified` until
+# checked at the official record (government, parliament or central bank site). Entries marked `check:` are the
+# ones I am least sure of. Fix a date by editing it and setting evidence: confirmed fact with a source.
+#
+# offices     one list per office, in order. party: null for central bank heads. end: null = in office.
+#             A change of holder is a leadership change; a change of party in a head of government or state
+#             office is flagged as a change of control.
+# events      kind: election | control | referendum | policy | crisis | scheduled
+#             control_shift: true when a different party or bloc took control of government or a chamber.
+#             policy = the rules changed (rates regime, QE, pegs, tariffs, bailouts).
+
+politics_version: "politics-1.0.0"
+default_evidence: unverified
+default_source: "From memory 2026-10-08; verify at the official record"
+
+# which countries' politics bear on each instrument; FX pairs and solo indices follow their currencies
+currency_countries: {USD: US, EUR: EU, JPY: JP, GBP: UK, CAD: CA, AUD: AU, NZD: NZ, CHF: CH}
+instrument_countries:
+  XAUUSD: [US, CN]
+  WTI: [US, CA]
+  COPPER: [CN, AU, US]
+  DXY: [US]
+  SPX: [US]
+  NDX: [US]
+  US02Y: [US]
+  US10Y: [US]
+
+countries:
+  US:
+    name: United States
+    offices:
+      President:
+        - {holder: George W. Bush, party: Republican, start: 2001-01-20, end: 2009-01-20}
+        - {holder: Barack Obama, party: Democratic, start: 2009-01-20, end: 2017-01-20}
+        - {holder: Donald Trump, party: Republican, start: 2017-01-20, end: 2021-01-20}
+        - {holder: Joe Biden, party: Democratic, start: 2021-01-20, end: 2025-01-20}
+        - {holder: Donald Trump, party: Republican, start: 2025-01-20, end: null}
+      Fed Chair:
+        - {holder: Alan Greenspan, party: null, start: 1987-08-11, end: 2006-01-31}
+        - {holder: Ben Bernanke, party: null, start: 2006-02-01, end: 2014-01-31}
+        - {holder: Janet Yellen, party: null, start: 2014-02-03, end: 2018-02-03}
+        - {holder: Jerome Powell, party: null, start: 2018-02-05, end: 2026-05-15}
+        - {holder: Kevin Warsh, party: null, start: 2026-05-15, end: null, check: "ledger note says confirmed May 2026; exact start date not verified"}
+    events:
+      - {date: 2006-11-07, kind: election, text: "Midterms: Democrats win the House and the Senate", control_shift: true}
+      - {date: 2008-11-04, kind: election, text: "Obama elected; Democrats hold both chambers", control_shift: true}
+      - {date: 2008-11-25, kind: policy, text: "Fed QE1 announced"}
+      - {date: 2008-12-16, kind: policy, text: "Fed cuts to 0-0.25% (zero rates)"}
+      - {date: 2010-11-02, kind: election, text: "Midterms: Republicans win the House", control_shift: true}
+      - {date: 2010-11-03, kind: policy, text: "Fed QE2"}
+      - {date: 2011-08-05, kind: crisis, text: "S&P downgrades US to AA+ after debt ceiling standoff"}
+      - {date: 2012-09-13, kind: policy, text: "Fed QE3, open ended"}
+      - {date: 2013-05-22, kind: policy, text: "Bernanke signals taper (taper tantrum)"}
+      - {date: 2014-11-04, kind: election, text: "Midterms: Republicans win the Senate, hold the House", control_shift: true}
+      - {date: 2015-12-16, kind: policy, text: "Fed first hike since 2006 (liftoff)"}
+      - {date: 2016-11-08, kind: election, text: "Trump elected; Republicans hold both chambers", control_shift: true}
+      - {date: 2018-07-06, kind: policy, text: "First US tariffs on Chinese goods take effect (trade war)"}
+      - {date: 2018-11-06, kind: election, text: "Midterms: Democrats win the House", control_shift: true}
+      - {date: 2019-07-31, kind: policy, text: "Fed first cut since 2008"}
+      - {date: 2020-03-15, kind: policy, text: "Fed emergency cut to zero and unlimited QE (pandemic)"}
+      - {date: 2020-11-03, kind: election, text: "Biden elected; Democrats win the Senate in January runoffs", control_shift: true}
+      - {date: 2022-03-16, kind: policy, text: "Fed first hike of the inflation cycle"}
+      - {date: 2022-11-08, kind: election, text: "Midterms: Republicans win the House", control_shift: true}
+      - {date: 2023-08-01, kind: crisis, text: "Fitch downgrades US to AA+"}
+      - {date: 2024-09-18, kind: policy, text: "Fed first cut of the cycle (50bp)"}
+      - {date: 2024-11-05, kind: election, text: "Trump elected; Republicans win the Senate and hold the House", control_shift: true}
+      - {date: 2025-04-02, kind: policy, text: "Broad 'reciprocal' tariffs announced"}
+      - {date: 2025-05-16, kind: crisis, text: "Moody's downgrades US to Aa1, last AAA rating lost"}
+      - {date: 2026-11-03, kind: scheduled, text: "Midterm elections (House and a third of the Senate)"}
+
+  CN:
+    name: China
+    offices:
+      General Secretary:
+        - {holder: Hu Jintao, party: CCP, start: 2002-11-15, end: 2012-11-15}
+        - {holder: Xi Jinping, party: CCP, start: 2012-11-15, end: null}
+      Premier:
+        - {holder: Wen Jiabao, party: CCP, start: 2003-03-16, end: 2013-03-15}
+        - {holder: Li Keqiang, party: CCP, start: 2013-03-15, end: 2023-03-11}
+        - {holder: Li Qiang, party: CCP, start: 2023-03-11, end: null}
+      PBoC Governor:
+        - {holder: Zhou Xiaochuan, party: null, start: 2002-12-27, end: 2018-03-19}
+        - {holder: Yi Gang, party: null, start: 2018-03-19, end: 2023-07-25}
+        - {holder: Pan Gongsheng, party: null, start: 2023-07-25, end: null}
+    events:
+      - {date: 2005-07-21, kind: policy, text: "Yuan dollar peg dropped for a managed float"}
+      - {date: 2008-11-09, kind: policy, text: "4 trillion yuan stimulus"}
+      - {date: 2010-06-19, kind: policy, text: "Yuan flexibility resumed after crisis re-peg"}
+      - {date: 2015-08-11, kind: policy, text: "Yuan devaluation and fixing reform"}
+      - {date: 2016-10-01, kind: policy, text: "Yuan joins the IMF SDR basket"}
+      - {date: 2018-03-11, kind: control, text: "Presidential term limits removed"}
+      - {date: 2020-01-23, kind: crisis, text: "Wuhan lockdown (pandemic)"}
+      - {date: 2022-10-23, kind: control, text: "Xi begins a third term as General Secretary (20th Party Congress)"}
+      - {date: 2022-12-07, kind: policy, text: "Zero-COVID policy ends"}
+      - {date: 2024-09-24, kind: policy, text: "PBoC broad stimulus package"}
+
+  EU:
+    name: Euro area and European Union
+    offices:
+      ECB President:
+        - {holder: Jean-Claude Trichet, party: null, start: 2003-11-01, end: 2011-10-31}
+        - {holder: Mario Draghi, party: null, start: 2011-11-01, end: 2019-10-31}
+        - {holder: Christine Lagarde, party: null, start: 2019-11-01, end: null}
+      Commission President:
+        - {holder: Jose Manuel Barroso, party: EPP, start: 2004-11-22, end: 2014-10-31}
+        - {holder: Jean-Claude Juncker, party: EPP, start: 2014-11-01, end: 2019-11-30}
+        - {holder: Ursula von der Leyen, party: EPP, start: 2019-12-01, end: null}
+      German Chancellor:
+        - {holder: Gerhard Schroeder, party: SPD, start: 1998-10-27, end: 2005-11-22}
+        - {holder: Angela Merkel, party: CDU, start: 2005-11-22, end: 2021-12-08}
+        - {holder: Olaf Scholz, party: SPD, start: 2021-12-08, end: 2025-05-06}
+        - {holder: Friedrich Merz, party: CDU, start: 2025-05-06, end: null}
+      French President:
+        - {holder: Jacques Chirac, party: UMP, start: 1995-05-17, end: 2007-05-16}
+        - {holder: Nicolas Sarkozy, party: UMP, start: 2007-05-16, end: 2012-05-15}
+        - {holder: Francois Hollande, party: PS, start: 2012-05-15, end: 2017-05-14}
+        - {holder: Emmanuel Macron, party: Renaissance, start: 2017-05-14, end: null}
+    events:
+      - {date: 2005-09-18, kind: election, text: "Germany: election leads to CDU-SPD grand coalition", control_shift: true}
+      - {date: 2009-09-27, kind: election, text: "Germany: CDU-FDP coalition", control_shift: true}
+      - {date: 2010-05-02, kind: crisis, text: "First Greek bailout"}
+      - {date: 2011-11-16, kind: control, text: "Italy: Berlusconi replaced by technocrat Monti amid bond crisis", control_shift: true}
+      - {date: 2012-07-26, kind: policy, text: "Draghi: 'whatever it takes'"}
+      - {date: 2013-09-22, kind: election, text: "Germany: return to CDU-SPD grand coalition", control_shift: true}
+      - {date: 2014-06-05, kind: policy, text: "ECB negative deposit rate"}
+      - {date: 2015-01-22, kind: policy, text: "ECB quantitative easing announced"}
+      - {date: 2015-01-25, kind: election, text: "Greece: Syriza wins, Tsipras PM", control_shift: true}
+      - {date: 2015-07-05, kind: referendum, text: "Greece rejects bailout terms in referendum"}
+      - {date: 2017-05-07, kind: election, text: "France: Macron elected, new party takes power", control_shift: true}
+      - {date: 2018-06-01, kind: control, text: "Italy: populist M5S-League government", control_shift: true}
+      - {date: 2020-07-21, kind: policy, text: "NextGenerationEU agreed: first large joint EU debt"}
+      - {date: 2021-09-26, kind: election, text: "Germany: SPD-led traffic light coalition", control_shift: true}
+      - {date: 2022-07-21, kind: policy, text: "ECB first hike since 2011; spread tool (TPI) created"}
+      - {date: 2022-09-25, kind: election, text: "Italy: Meloni's Brothers of Italy wins", control_shift: true}
+      - {date: 2024-06-09, kind: control, text: "France: Macron dissolves the National Assembly after EU elections"}
+      - {date: 2024-07-07, kind: election, text: "France: hung parliament, no majority bloc", control_shift: true}
+      - {date: 2024-11-06, kind: control, text: "Germany: traffic light coalition collapses"}
+      - {date: 2024-12-04, kind: control, text: "France: Barnier government falls on a no-confidence vote"}
+      - {date: 2025-02-23, kind: election, text: "Germany: CDU wins snap election, AfD second", control_shift: true}
+      - {date: 2025-03-04, kind: policy, text: "ReArm Europe plan (800bn euros)"}
+      - {date: 2025-03-18, kind: policy, text: "Germany: Bundestag loosens the debt brake for defense and infrastructure"}
+      - {date: 2025-09-08, kind: control, text: "France: Bayrou government loses confidence vote"}
+      - {date: 2025-10-06, kind: control, text: "France: PM Lecornu resigns, reappointed 2025-10-10", check: "dates from memory"}
+
+  JP:
+    name: Japan
+    offices:
+      Prime Minister:
+        - {holder: Junichiro Koizumi, party: LDP, start: 2001-04-26, end: 2006-09-26}
+        - {holder: Shinzo Abe, party: LDP, start: 2006-09-26, end: 2007-09-26}
+        - {holder: Yasuo Fukuda, party: LDP, start: 2007-09-26, end: 2008-09-24}
+        - {holder: Taro Aso, party: LDP, start: 2008-09-24, end: 2009-09-16}
+        - {holder: Yukio Hatoyama, party: DPJ, start: 2009-09-16, end: 2010-06-08}
+        - {holder: Naoto Kan, party: DPJ, start: 2010-06-08, end: 2011-09-02}
+        - {holder: Yoshihiko Noda, party: DPJ, start: 2011-09-02, end: 2012-12-26}
+        - {holder: Shinzo Abe, party: LDP, start: 2012-12-26, end: 2020-09-16}
+        - {holder: Yoshihide Suga, party: LDP, start: 2020-09-16, end: 2021-10-04}
+        - {holder: Fumio Kishida, party: LDP, start: 2021-10-04, end: 2024-10-01}
+        - {holder: Shigeru Ishiba, party: LDP, start: 2024-10-01, end: 2025-10-21}
+        - {holder: Sanae Takaichi, party: LDP, start: 2025-10-21, end: null}
+      BoJ Governor:
+        - {holder: Toshihiko Fukui, party: null, start: 2003-03-20, end: 2008-03-19}
+        - {holder: Masaaki Shirakawa, party: null, start: 2008-04-09, end: 2013-03-19}
+        - {holder: Haruhiko Kuroda, party: null, start: 2013-03-20, end: 2023-04-08}
+        - {holder: Kazuo Ueda, party: null, start: 2023-04-09, end: null}
+    events:
+      - {date: 2005-09-11, kind: election, text: "Koizumi landslide on postal privatization"}
+      - {date: 2007-07-29, kind: election, text: "LDP loses the upper house (divided Diet)", control_shift: true}
+      - {date: 2009-08-30, kind: election, text: "DPJ wins, ends half a century of LDP rule", control_shift: true}
+      - {date: 2011-03-11, kind: crisis, text: "Earthquake, tsunami and Fukushima; G7 joint yen intervention 2011-03-18"}
+      - {date: 2012-12-16, kind: election, text: "LDP returns under Abe (Abenomics)", control_shift: true}
+      - {date: 2013-04-04, kind: policy, text: "BoJ quantitative and qualitative easing (Kuroda)"}
+      - {date: 2016-01-29, kind: policy, text: "BoJ negative rates"}
+      - {date: 2016-09-21, kind: policy, text: "BoJ yield curve control"}
+      - {date: 2022-09-22, kind: policy, text: "MoF buys yen, first intervention since 1998"}
+      - {date: 2022-12-20, kind: policy, text: "BoJ widens the yield curve control band"}
+      - {date: 2024-03-19, kind: policy, text: "BoJ ends negative rates and yield curve control"}
+      - {date: 2024-07-31, kind: policy, text: "BoJ hikes to 0.25%; carry unwind crash 2024-08-05"}
+      - {date: 2024-10-27, kind: election, text: "LDP-Komeito lose the lower house majority", control_shift: true}
+      - {date: 2025-01-24, kind: policy, text: "BoJ hikes to 0.5%"}
+      - {date: 2025-07-20, kind: election, text: "Ruling coalition loses the upper house majority", control_shift: true}
+      - {date: 2025-10-10, kind: control, text: "Komeito leaves the coalition; LDP partners with Ishin", control_shift: true}
+      - {date: 2026-02-08, kind: election, text: "Snap lower house election, large LDP win", control_shift: true, check: "from memory; confirm date and result"}
+
+  UK:
+    name: United Kingdom
+    offices:
+      Prime Minister:
+        - {holder: Tony Blair, party: Labour, start: 1997-05-02, end: 2007-06-27}
+        - {holder: Gordon Brown, party: Labour, start: 2007-06-27, end: 2010-05-11}
+        - {holder: David Cameron, party: Conservative, start: 2010-05-11, end: 2016-07-13}
+        - {holder: Theresa May, party: Conservative, start: 2016-07-13, end: 2019-07-24}
+        - {holder: Boris Johnson, party: Conservative, start: 2019-07-24, end: 2022-09-06}
+        - {holder: Liz Truss, party: Conservative, start: 2022-09-06, end: 2022-10-25}
+        - {holder: Rishi Sunak, party: Conservative, start: 2022-10-25, end: 2024-07-05}
+        - {holder: Keir Starmer, party: Labour, start: 2024-07-05, end: null}
+      BoE Governor:
+        - {holder: Mervyn King, party: null, start: 2003-07-01, end: 2013-06-30}
+        - {holder: Mark Carney, party: null, start: 2013-07-01, end: 2020-03-15}
+        - {holder: Andrew Bailey, party: null, start: 2020-03-16, end: null}
+    events:
+      - {date: 2005-05-05, kind: election, text: "Labour third term"}
+      - {date: 2010-05-06, kind: election, text: "Hung parliament; Conservative-Lib Dem coalition", control_shift: true}
+      - {date: 2015-05-07, kind: election, text: "Conservative majority"}
+      - {date: 2016-06-23, kind: referendum, text: "Brexit referendum: Leave wins"}
+      - {date: 2016-08-04, kind: policy, text: "BoE cuts and restarts QE after the referendum"}
+      - {date: 2017-06-08, kind: election, text: "Hung parliament; Conservative minority with DUP support", control_shift: true}
+      - {date: 2019-12-12, kind: election, text: "Conservative majority of 80"}
+      - {date: 2020-01-31, kind: policy, text: "UK leaves the EU"}
+      - {date: 2021-12-16, kind: policy, text: "BoE first hike of the inflation cycle"}
+      - {date: 2022-09-23, kind: crisis, text: "Mini-budget; gilt crisis, BoE emergency gilt buying 2022-09-28"}
+      - {date: 2024-07-04, kind: election, text: "Labour landslide", control_shift: true}
+
+  CA:
+    name: Canada
+    offices:
+      Prime Minister:
+        - {holder: Paul Martin, party: Liberal, start: 2003-12-12, end: 2006-02-06}
+        - {holder: Stephen Harper, party: Conservative, start: 2006-02-06, end: 2015-11-04}
+        - {holder: Justin Trudeau, party: Liberal, start: 2015-11-04, end: 2025-03-14}
+        - {holder: Mark Carney, party: Liberal, start: 2025-03-14, end: null}
+      BoC Governor:
+        - {holder: David Dodge, party: null, start: 2001-02-01, end: 2008-01-31}
+        - {holder: Mark Carney, party: null, start: 2008-02-01, end: 2013-06-01}
+        - {holder: Stephen Poloz, party: null, start: 2013-06-03, end: 2020-06-02}
+        - {holder: Tiff Macklem, party: null, start: 2020-06-03, end: null}
+    events:
+      - {date: 2006-01-23, kind: election, text: "Conservative minority", control_shift: true}
+      - {date: 2008-10-14, kind: election, text: "Conservative minority again"}
+      - {date: 2011-05-02, kind: election, text: "Conservative majority"}
+      - {date: 2015-01-21, kind: policy, text: "BoC surprise cut after the oil collapse"}
+      - {date: 2015-10-19, kind: election, text: "Liberal majority", control_shift: true}
+      - {date: 2018-09-30, kind: policy, text: "USMCA agreed, replacing NAFTA"}
+      - {date: 2019-10-21, kind: election, text: "Liberal minority"}
+      - {date: 2021-09-20, kind: election, text: "Liberal minority again"}
+      - {date: 2025-03-04, kind: policy, text: "US tariffs on Canadian goods take effect"}
+      - {date: 2025-04-28, kind: election, text: "Liberals under Carney win a fourth term (near majority)"}
+
+  AU:
+    name: Australia
+    offices:
+      Prime Minister:
+        - {holder: John Howard, party: Liberal, start: 1996-03-11, end: 2007-12-03}
+        - {holder: Kevin Rudd, party: Labor, start: 2007-12-03, end: 2010-06-24}
+        - {holder: Julia Gillard, party: Labor, start: 2010-06-24, end: 2013-06-27}
+        - {holder: Kevin Rudd, party: Labor, start: 2013-06-27, end: 2013-09-18}
+        - {holder: Tony Abbott, party: Liberal, start: 2013-09-18, end: 2015-09-15}
+        - {holder: Malcolm Turnbull, party: Liberal, start: 2015-09-15, end: 2018-08-24}
+        - {holder: Scott Morrison, party: Liberal, start: 2018-08-24, end: 2022-05-23}
+        - {holder: Anthony Albanese, party: Labor, start: 2022-05-23, end: null}
+      RBA Governor:
+        - {holder: Ian Macfarlane, party: null, start: 1996-09-18, end: 2006-09-17}
+        - {holder: Glenn Stevens, party: null, start: 2006-09-18, end: 2016-09-17}
+        - {holder: Philip Lowe, party: null, start: 2016-09-18, end: 2023-09-17}
+        - {holder: Michele Bullock, party: null, start: 2023-09-18, end: null}
+    events:
+      - {date: 2007-11-24, kind: election, text: "Labor wins", control_shift: true}
+      - {date: 2010-08-21, kind: election, text: "Hung parliament; Labor minority government"}
+      - {date: 2013-09-07, kind: election, text: "Liberal-National Coalition wins", control_shift: true}
+      - {date: 2020-05-18, kind: policy, text: "China starts trade restrictions on Australian goods (barley tariffs)"}
+      - {date: 2020-11-03, kind: policy, text: "RBA cuts to 0.10% and starts QE"}
+      - {date: 2022-05-03, kind: policy, text: "RBA first hike since 2010"}
+      - {date: 2022-05-21, kind: election, text: "Labor wins", control_shift: true}
+      - {date: 2025-05-03, kind: election, text: "Labor re-elected with a larger majority"}
+
+  NZ:
+    name: New Zealand
+    offices:
+      Prime Minister:
+        - {holder: Helen Clark, party: Labour, start: 1999-12-10, end: 2008-11-19}
+        - {holder: John Key, party: National, start: 2008-11-19, end: 2016-12-12}
+        - {holder: Bill English, party: National, start: 2016-12-12, end: 2017-10-26}
+        - {holder: Jacinda Ardern, party: Labour, start: 2017-10-26, end: 2023-01-25}
+        - {holder: Chris Hipkins, party: Labour, start: 2023-01-25, end: 2023-11-27}
+        - {holder: Christopher Luxon, party: National, start: 2023-11-27, end: null}
+      RBNZ Governor:
+        - {holder: Alan Bollard, party: null, start: 2002-09-24, end: 2012-09-25}
+        - {holder: Graeme Wheeler, party: null, start: 2012-09-26, end: 2017-09-26}
+        - {holder: Grant Spencer (acting), party: null, start: 2017-09-27, end: 2018-03-26}
+        - {holder: Adrian Orr, party: null, start: 2018-03-27, end: 2025-03-31}
+        - {holder: Christian Hawkesby (acting), party: null, start: 2025-04-01, end: 2025-11-30, check: "acting period dates from memory"}
+        - {holder: Anna Breman, party: null, start: 2025-12-01, end: null, check: "start date from memory"}
+    events:
+      - {date: 2008-11-08, kind: election, text: "National wins", control_shift: true}
+      - {date: 2017-09-23, kind: election, text: "Labour-led coalition forms", control_shift: true}
+      - {date: 2020-10-17, kind: election, text: "Labour single-party majority"}
+      - {date: 2021-10-06, kind: policy, text: "RBNZ first hike of the cycle"}
+      - {date: 2023-10-14, kind: election, text: "National-led coalition wins", control_shift: true}
+
+  CH:
+    name: Switzerland
+    note: "Government is the seven member Federal Council with a party split that rarely changes; the SNB matters most for the franc."
+    offices:
+      SNB Chair:
+        - {holder: Jean-Pierre Roth, party: null, start: 2001-01-01, end: 2009-12-31}
+        - {holder: Philipp Hildebrand, party: null, start: 2010-01-01, end: 2012-01-09}
+        - {holder: Thomas Jordan, party: null, start: 2012-01-09, end: 2024-09-30}
+        - {holder: Martin Schlegel, party: null, start: 2024-10-01, end: null}
+    events:
+      - {date: 2011-09-06, kind: policy, text: "SNB sets a 1.20 floor under EUR/CHF"}
+      - {date: 2014-12-18, kind: policy, text: "SNB announces negative rates"}
+      - {date: 2015-01-15, kind: policy, text: "SNB drops the EUR/CHF floor, rate -0.75%"}
+      - {date: 2022-06-16, kind: policy, text: "SNB surprise hike, first since 2007"}
+      - {date: 2025-06-19, kind: policy, text: "SNB cuts to 0%", check: "from memory"}
+
+  IL:
+    name: Israel
+    offices:
+      Prime Minister:
+        - {holder: Ariel Sharon, party: Kadima, start: 2001-03-07, end: 2006-01-04}
+        - {holder: Ehud Olmert, party: Kadima, start: 2006-01-04, end: 2009-03-31}
+        - {holder: Benjamin Netanyahu, party: Likud, start: 2009-03-31, end: 2021-06-13}
+        - {holder: Naftali Bennett, party: Yamina, start: 2021-06-13, end: 2022-07-01}
+        - {holder: Yair Lapid, party: Yesh Atid, start: 2022-07-01, end: 2022-12-29}
+        - {holder: Benjamin Netanyahu, party: Likud, start: 2022-12-29, end: null}
+      BoI Governor:
+        - {holder: Stanley Fischer, party: null, start: 2005-05-01, end: 2013-06-30}
+        - {holder: Karnit Flug, party: null, start: 2013-11-13, end: 2018-11-12}
+        - {holder: Amir Yaron, party: null, start: 2018-12-12, end: null}
+    events:
+      - {date: 2006-07-12, kind: crisis, text: "Second Lebanon war"}
+      - {date: 2009-02-10, kind: election, text: "Likud-led government under Netanyahu", control_shift: true}
+      - {date: 2021-03-23, kind: election, text: "Fourth election in two years; Bennett-Lapid coalition forms in June", control_shift: true}
+      - {date: 2022-11-01, kind: election, text: "Netanyahu returns with a right-wing coalition", control_shift: true}
+      - {date: 2023-01-04, kind: control, text: "Judicial overhaul announced; mass protests"}
+      - {date: 2023-10-07, kind: crisis, text: "Hamas attack; Gaza war begins"}
+      # wars logged in personality_events.yaml (2025 and 2026 Israel-Iran) join the timeline from there
