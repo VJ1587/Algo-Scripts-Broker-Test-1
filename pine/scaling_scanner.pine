@@ -1,5 +1,5 @@
 //@version=6
-// Gold / ES Scaling Scanner v2.5.0 (October 7, 2026)
+// Gold / ES Scaling Scanner v2.6.0 (October 7, 2026)
 // Alerts on trend-continuation setups for XAUUSD and ES / SPX500. Places no orders.
 // Run ONE copy per instrument on its 15m chart: it scans Setup A (2H, EMA14) and Setup B (15m, EMA50)
 // together, so trades are numbered once per instrument per week.
@@ -121,6 +121,9 @@ showPriv  = input.bool(true, "Add private lines to entry alerts (setup, size, bi
 showZones = input.bool(true, "Show level zones", group = grpD, display = display.none)
 zonesEach = input.int(3, "Zones each side of price", minval = 1, maxval = 10, group = grpD, display = display.none)
 showTable = input.bool(true, "Show status table", group = grpD, display = display.none)
+vioOn     = input.bool(true, "Alert on structure violation (4H / Daily close through the last swing against the trade)", group = grpD, display = display.none)
+colA      = input.color(color.new(#00BCD4, 0), "EMA14 (Setup A) color", group = grpD, display = display.none)
+colB      = input.color(color.new(#E040FB, 0), "EMA50 (Setup B) color", group = grpD, display = display.none)
 
 // ───────────────────────────── Instrument profile ─────────────────────────────
 tk = str.upper(syminfo.ticker)
@@ -412,7 +415,8 @@ f_daily() =>
     [bkS, bkSMaj, bkSBuf] = f_level(math.ceil(close / midStep) * midStep)
     brkL = close > bkL and close[1] <= bkL
     brkS = close < bkS and close[1] >= bkS
-    [revL, revS, revTxtL, revTxtS, brkL, brkS, bkL, bkLMaj, bkLBuf, bkS, bkSMaj, bkSBuf]
+    [dtr, dLastH, dLastL, dBullBOS, dBearBOS, dPH, dPL] = f_structure(dPivot)
+    [revL, revS, revTxtL, revTxtS, brkL, brkS, bkL, bkLMaj, bkLBuf, bkS, bkSMaj, bkSBuf, dBullBOS, dBearBOS, dLastH, dLastL]
 
 // 4H candle and structure, for swing entries (retest) and swing exits.
 f_h4() =>
@@ -426,7 +430,7 @@ f_h4() =>
     [trend, lastH, lastL, bullBOS, bearBOS, prevH, prevL] = f_structure(cPivot)
     swStopL = lastL - stopPad
     swStopS = lastH + stopPad
-    [trend, bullBOS, bearBOS, pL, pS, swStopL, swStopS, low, high, close]
+    [trend, bullBOS, bearBOS, pL, pS, swStopL, swStopS, low, high, close, lastH, lastL]
 
 // ───────────────────────────── Data ─────────────────────────────
 // Higher-timeframe bias (rule 1): Daily, or Weekly when the Daily has no trend yet.
@@ -454,8 +458,8 @@ f_tfName(tf) =>
     sec = timeframe.in_seconds(tf)
     sec >= 3600 ? str.tostring(math.round(sec / 3600)) + "H" : str.tostring(math.round(sec / 60)) + "m"
 nameA = "Setup A (" + f_tfName(tfA) + " EMA" + str.tostring(emaALen) + ")"
-[dRevL, dRevS, dRevTxtL, dRevTxtS, dBrkL, dBrkS, dBkL, dBkLMaj, dBkLBuf, dBkS, dBkSMaj, dBkSBuf] = request.security(syminfo.tickerid, "D", f_daily(), lookahead = barmerge.lookahead_off)
-[hTrend, hBull, hBear, hPatL, hPatS, hStopL, hStopS, hLow, hHigh, hClose] = request.security(syminfo.tickerid, tfS, f_h4(), lookahead = barmerge.lookahead_off)
+[dRevL, dRevS, dRevTxtL, dRevTxtS, dBrkL, dBrkS, dBkL, dBkLMaj, dBkLBuf, dBkS, dBkSMaj, dBkSBuf, dVioUp, dVioDn, dVioH, dVioL] = request.security(syminfo.tickerid, "D", f_daily(), lookahead = barmerge.lookahead_off)
+[hTrend, hBull, hBear, hPatL, hPatS, hStopL, hStopS, hLow, hHigh, hClose, hLastH, hLastL] = request.security(syminfo.tickerid, tfS, f_h4(), lookahead = barmerge.lookahead_off)
 dCloseT = request.security(syminfo.tickerid, "D", time_close, lookahead = barmerge.lookahead_on)
 hCloseT = request.security(syminfo.tickerid, tfS, time_close, lookahead = barmerge.lookahead_on)
 dIsClose = time_close == dCloseT
@@ -551,6 +555,17 @@ f_manage(Trade tr, Setup su, Book book, string sname, bool isClose, int ratio, i
     out
 
 // "#3 LONG (BE), #5 LONG" for the open trades of a setup.
+f_join(a, b) =>
+    a == "" ? b : b == "" ? a : a + ", " + b
+
+// "#3, #5" for open trades of one direction.
+f_nums(Setup su, int d) =>
+    string t = ""
+    for tr in su.trades
+        if tr.dir == d
+            t += (t == "" ? "" : ", ") + "#" + str.tostring(tr.num)
+    t
+
 f_openTxt(Setup su) =>
     string t = ""
     for tr in su.trades
@@ -707,13 +722,30 @@ if barstate.isconfirmed
     string biasMsg = ""
     if autoBias != autoBias[1] and biasMode == "Auto (Weekly bias, Daily confirms)"
         biasMsg := autoBias != 0 ? "🧭 " + instName + ": Daily has turned back in line with the Weekly (" + f_trendTxt(autoBias) + "). Looking for " + (autoBias == 1 ? "BUYS" : "SELLS") + " only." : "⏸️ " + instName + ": " + biasState + ". No new entries until it lines up again."
-    allMsg = f_add(f_add(biasMsg, sNote), f_add(oS, f_add(oA, oB)))
+    // Structure violation: a 4H or Daily CLOSE takes out the last swing point against the trade.
+    string vioMsg = ""
+    if vioOn
+        longsT = f_join(f_join(f_nums(suS, 1), f_nums(suA, 1)), f_nums(suB, 1))
+        shortsT = f_join(f_join(f_nums(suS, -1), f_nums(suA, -1)), f_nums(suB, -1))
+        watchLong = longsT != "" or (shortsT == "" and bias == 1)
+        watchShort = shortsT != "" or (longsT == "" and bias == -1)
+        if watchLong and hIsClose and hBear
+            vioMsg := f_add(vioMsg, "🚨 STRUCTURE VIOLATION (4H) | " + instName + "\n4H closed at " + f_p(hClose) + ", below the last 4H swing low " + f_p(hLastL) + ". The higher-low structure is broken." + (longsT != "" ? "\nOpen buys: " + longsT + ". Consider getting out." : "\nNo buys open. Hold off on new buys."))
+        if watchShort and hIsClose and hBull
+            vioMsg := f_add(vioMsg, "🚨 STRUCTURE VIOLATION (4H) | " + instName + "\n4H closed at " + f_p(hClose) + ", above the last 4H swing high " + f_p(hLastH) + ". The lower-high structure is broken." + (shortsT != "" ? "\nOpen sells: " + shortsT + ". Consider getting out." : "\nNo sells open. Hold off on new sells."))
+        if watchLong and dIsClose and dVioDn
+            vioMsg := f_add(vioMsg, "🚨 STRUCTURE VIOLATION (DAILY) | " + instName + "\nDaily closed at " + f_p(close) + ", below the last daily swing low " + f_p(dVioL) + ". The higher-low structure is broken." + (longsT != "" ? "\nOpen buys: " + longsT + ". Consider getting out." : "\nNo buys open. Hold off on new buys."))
+        if watchShort and dIsClose and dVioUp
+            vioMsg := f_add(vioMsg, "🚨 STRUCTURE VIOLATION (DAILY) | " + instName + "\nDaily closed at " + f_p(close) + ", above the last daily swing high " + f_p(dVioH) + ". The lower-high structure is broken." + (shortsT != "" ? "\nOpen sells: " + shortsT + ". Consider getting out." : "\nNo sells open. Hold off on new sells."))
+        if vioMsg != ""
+            label.new(bar_index, high, "STRUCTURE\nVIOLATION", color = color.new(color.purple, 0), textcolor = color.white, style = label.style_label_down, size = size.small)
+    allMsg = f_add(f_add(vioMsg, f_add(biasMsg, sNote)), f_add(oS, f_add(oA, oB)))
     if allMsg != ""
         alert(allMsg, alert.freq_once_per_bar_close)
 
 // ───────────────────────────── Drawing ─────────────────────────────
-plot(aEma, "Setup A EMA", color = color.new(color.orange, 0), linewidth = 2, display = display.all - display.status_line)
-plot(bEma, "Setup B EMA", color = color.new(color.yellow, 0), linewidth = 1, display = display.all - display.status_line)
+plot(aEma, "EMA14 (Setup A, 2H)", color = colA, linewidth = 2, display = display.all - display.status_line)
+plot(bEma, "EMA50 (Setup B, 15m)", color = colB, linewidth = 2, display = display.all - display.status_line)
 f_lastStop(Setup su) =>
     array.size(su.trades) > 0 ? array.last(su.trades).stop : na
 plot(f_lastStop(suA), "Setup A latest stop", color = color.new(color.red, 0), style = plot.style_linebr, display = display.all - display.status_line)

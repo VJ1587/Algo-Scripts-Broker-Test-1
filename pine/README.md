@@ -1,6 +1,6 @@
 # Gold / ES Scaling Scanner (TradingView Pine Script)
 
-`scaling_scanner.pine` (v2.5.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
+`scaling_scanner.pine` (v2.6.0) is a TradingView indicator (Pine Script v6) that sends trade alerts
 when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no orders.
 
 ## Install
@@ -59,6 +59,8 @@ when a trend-continuation setup forms on XAUUSD or ES / SPX500. It places no ord
 | --- | --- |
 | HTF direction | **Weekly sets the bias, Daily confirms.** Weekly up + Daily up = buys only (A+). Weekly down + Daily down = sells only (A+). Weekly and Daily disagree = wait: no entries until the Daily reverses back in line (an alert says when). Weekly with mixed swings (higher high but lower low, or the reverse) = consolidating, no bias. Swing length 3 on the Daily, 2 on the Weekly, read from the last **closed** candle. The table shows the swing highs/lows used. **Trade direction** setting: Auto, Sells only or Buys only. |
 | Setup S (swing / initial position) | Confirmed by the **daily close**: a wick through a level is a test, a close is acceptance. Entries: (1) the daily closes through a key/mid level (alert "Breakout accepted"), then a 4H candle retests that level and closes back on the right side with a pattern; (2) a reversal pattern at a level zone, once the daily candle has closed; (3) the Daily closes back in line with the Weekly (structure shift). The 4H structure must not be against the trade. A 4H break of structure against an open swing = get out. Alerts say "Swing Trade / Position Trade". Setups A (2H) and B (15m) are the scale-ins. |
+| Structure violation | 🚨 alert when a **4H or Daily candle closes** through the last swing point against the trade: below the last swing low for buys, above the last swing high for sells. It checks the direction of open trades (listing their numbers), or the current bias when nothing is open. A purple "STRUCTURE VIOLATION" label marks it on the chart. Setting under Alerts and display. |
+| EMA colors | EMA14 (Setup A, 2H) cyan, EMA50 (Setup B, 15m) magenta; both adjustable in settings. |
 | Sellers / buyers in control | On each setup's timeframe, structure flips bullish only after a higher low **and then** a close above the last swing high (mirror for bearish). No buys while that structure is bearish. |
 | EMA side | Buys only on a close above the EMA (14 on the 2H, 50 on the 15m); sells only below it. |
 | Impulse + correction | Impulse = a close that breaks the last swing high (buys) / low (sells). Correction = a pullback of at least 1 × ATR from the leg extreme that holds the last swing low / high. |
