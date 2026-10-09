@@ -1,0 +1,9 @@
+{
+  "tick_size": 0.25,
+  "distance_unit": 1,
+  "point_value": 50,
+  "quantity_step": 1,
+  "max_quantity": 10,
+  "session_start": "09:30",
+  "session_end": "16:00"
+}

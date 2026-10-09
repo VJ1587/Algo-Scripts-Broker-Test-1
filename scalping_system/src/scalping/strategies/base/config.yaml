@@ -1,0 +1,71 @@
+strategy_id: base
+schema_version: 1
+version: '1.0'
+setup_timeframe: 5min
+execution_timeframe: 1min
+mode: adaptive
+ema_periods:
+- 9
+- 15
+- 30
+- 65
+- 200
+rsi_period: 14
+stoch_period: 14
+stoch_smooth: 3
+extreme_levels:
+- 20
+- 80
+coefficients:
+  width: 0.5
+  breakout: 1.0e-06
+  stop: 0.5
+  target1: 0.5
+  target2: 1.5
+required_predicates:
+- six_completed_prior_bars
+- narrow_range
+- directional_escape
+confirmation_bars: 1
+strong_confirmation_bars: 2
+expiry: 15
+max_hold: 15
+target_fractions:
+- 0.5
+- 0.5
+risk_fraction: 0.005
+risk_cap: 0.02
+pyramiding: false
+partial_size_policy: skip
+adaptation:
+  profile_sessions: 20
+  min_bucket_observations: 10
+  bucket_minutes: 30
+  atr_period: 14
+  er_period: 20
+  slope_lag: 5
+  directional_enter_er: 0.45
+  directional_enter_slope: 0.05
+  directional_exit_er: 0.35
+  directional_exit_slope: 0.035
+  range_enter_er: 0.25
+  range_enter_slope: 0.025
+  range_exit_er: 0.35
+  range_exit_slope: 0.04
+  persistence: 3
+  volatility_low: 0.75
+  volatility_elevated: 1.5
+  volatility_extreme: 2.5
+  scale_min: 0.5
+  scale_max: 2.0
+  max_spread_ratio: 0.15
+  min_target_cost_ratio: 3.0
+  max_quote_age_seconds: 60
+  mode: adaptive
+  require_complete_sessions: true
+adaptation_override_bounds:
+  scale_min: 0.5
+  scale_max: 2
+legacy_distance_unit: 1.0
+max_stop_atr: 5.0
+base_minutes: 30

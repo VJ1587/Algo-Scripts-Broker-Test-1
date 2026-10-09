@@ -1,0 +1,36 @@
+symbol: DEMO_STOCK
+venue: SYNTHETIC
+asset_class: stock
+tick_size: 0.01
+quantity_step: 1
+min_quantity: 1
+max_quantity: 1000
+multiplier: 1
+pnl_currency: USD
+account_currency: USD
+timezone: America/New_York
+session_calendar_path: configs/sessions/synthetic.yaml
+price_basis: mid
+volume_kind: traded
+short_allowed: true
+supported_orders:
+- market
+- limit
+- stop
+metadata_as_of: '2026-01-01'
+synthetic: true
+settlement: synthetic engineering cash settlement
+cost_model:
+  spread: 0.01
+  slippage_ticks: 0.1
+  fee_per_unit_per_side: 0
+margin_per_unit: null
+lot_size: null
+pip_size: null
+quantity_unit: shares
+expiry: null
+roll_policy: null
+eligibility_manifest_path: configs/instruments/synthetic_eligibility.yaml
+corporate_action_basis: unadjusted synthetic; no actions
+quotes_path: examples/generated/stock_quotes.csv
+conversion_path: null

@@ -1,0 +1,36 @@
+symbol: DEMO_FX
+venue: SYNTHETIC
+asset_class: fx
+tick_size: 1.0e-05
+quantity_step: 1000
+min_quantity: 1000
+max_quantity: 1000000
+multiplier: 1
+pnl_currency: USD
+account_currency: EUR
+timezone: America/New_York
+session_calendar_path: configs/sessions/synthetic.yaml
+price_basis: mid
+volume_kind: tick
+short_allowed: true
+supported_orders:
+- market
+- limit
+- stop
+metadata_as_of: '2026-01-01'
+synthetic: true
+settlement: synthetic engineering cash settlement
+cost_model:
+  spread: 1.0e-05
+  slippage_ticks: 0.1
+  fee_per_unit_per_side: 0
+margin_per_unit: null
+lot_size: 100000
+pip_size: 0.0001
+quantity_unit: base_units
+expiry: null
+roll_policy: null
+eligibility_manifest_path: null
+corporate_action_basis: null
+quotes_path: examples/generated/fx_quotes.csv
+conversion_path: examples/generated/fx_conversion.csv

@@ -1,0 +1,3 @@
+# Preserve the hash-verified historical baseline across Windows checkouts.
+legacy/** -text whitespace=cr-at-eol
+*.zip binary

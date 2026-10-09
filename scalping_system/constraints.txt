@@ -1,0 +1,14 @@
+# Tested on CPython 3.14.7, Windows AMD64. Older supported Python versions may
+# need different wheel-compatible pins; pyproject.toml defines supported ranges.
+numpy==2.5.3
+pandas==3.0.6
+PyYAML==6.0.3
+pytest==9.1.1
+python-dateutil==2.9.0.post0
+tzdata==2026.5
+six==1.17.0
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0

@@ -1,0 +1,13 @@
+as_of: '2026-01-01'
+large_cap_min_usd: 10000000000
+manual_allowlist:
+- DEMO_STOCK
+mega_cap_min_usd: 200000000000
+members:
+- blue_chip: true
+  from: '2026-01-01'
+  market_cap_usd: 300000000000
+  symbol: DEMO_STOCK
+  through: '2026-12-31'
+  verified: true
+synthetic: true

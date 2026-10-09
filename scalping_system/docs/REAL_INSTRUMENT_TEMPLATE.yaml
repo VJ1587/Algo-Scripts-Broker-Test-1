@@ -1,0 +1,33 @@
+# Intentionally invalid: fill every required field from verified venue sources.
+symbol: null
+venue: null
+asset_class: null
+tick_size: null
+quantity_step: null
+min_quantity: null
+max_quantity: null
+multiplier: null
+pnl_currency: null
+account_currency: null
+timezone: null
+session_calendar_path: null
+price_basis: null
+volume_kind: null
+short_allowed: null
+supported_orders: []
+metadata_as_of: null
+synthetic: false
+settlement: null
+cost_model:
+  spread: null
+  slippage_ticks: null
+  fee_per_unit_per_side: null
+lot_size: null
+pip_size: null
+quantity_unit: null
+expiry: null
+margin_per_unit: null
+roll_policy: null
+eligibility_manifest_path: null
+corporate_action_basis: null
+executable_prices: true

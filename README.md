@@ -1,6 +1,6 @@
 # Algo-Scripts-Broker-Test-1
 
-Four scripts with separate jobs:
+Scripts and research packages with separate jobs:
 
 | Script | Job | Touches the market? |
 | --- | --- | --- |
@@ -9,6 +9,39 @@ Four scripts with separate jobs:
 | `scanner.py` | **Evaluation.** Scores live setups twice a day and says whether each is enough to take a trade (qualified, developing, or not shown). | Reads MT5 and TradingView. Places no orders. |
 | `futures_scalp_scanner.py` | **Scalping.** Scans ES, NQ, CL and GC on 5m and 1m bars for the seven WSGTA Futures Rule Book setups and prints entry, stop, targets and dollar risk. | Reads TradingView. Places no orders. |
 | `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
+| `scalping_system/` | **Adaptive scalping research.** Five independent methods with causal instrument/session profiles, bounded ATR distances, risk sizing and execution simulation. | No. Synthetic demonstrations and research simulation only; no broker adapter. |
+
+## Instrument-adaptive scalping system
+
+The complete implementation is in [`scalping_system/`](scalping_system/README.md),
+including all required modules, independent strategy configs/CLIs, synthetic
+stock/FX/futures examples, tests and documentation. The original 13-file prototype
+is preserved with verified hashes and a frozen `legacy/baseline-v0.zip`.
+
+The build validation recorded **107 modern tests**, **4 legacy tests**,
+**15 cross-asset smoke runs** and **6 engineering comparison variants**. These are
+synthetic engineering checks; real-data performance validation remains pending.
+
+Run independently from the package folder:
+
+```powershell
+cd scalping_system
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'
+python examples/generate_synthetic_data.py --output examples/generated --seed 42
+python -m scalping.cli run --strategy trend --data examples/generated/stock_bars.csv --instrument configs/instruments/DEMO_STOCK.yaml --mode adaptive --synthetic --output results
+python -m pytest -q
+```
+
+See the [project README](scalping_system/README.md) for all five methods and modes,
+the [validation report](scalping_system/docs/VALIDATION_REPORT.md) for executed
+checks and limitations, and [source rules](scalping_system/docs/SOURCE_RULES.md)
+for the declared interpretations. Generated data/results, virtual environments,
+test scratch directories and credentials stay local under `.gitignore`.
+
+The [source delivery ZIP](scalping_system_delivery.zip) includes the package and
+the frozen baseline, with generated inputs/results and environments excluded.
 
 ## Empire Game Market Personality engine (`personality.py`)
 

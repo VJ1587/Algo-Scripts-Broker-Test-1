@@ -1,0 +1,122 @@
+[
+  {
+    "strategy": "trend",
+    "asset": "stock",
+    "accepted": 5,
+    "trades": 2,
+    "output": "results\\smoke\\trend_DEMO_STOCK_60eed1da733fe3be5d4c_356d4c6beefc_757c2121b03b",
+    "exit_code": 0
+  },
+  {
+    "strategy": "regular_ma",
+    "asset": "stock",
+    "accepted": 27,
+    "trades": 3,
+    "output": "results\\smoke\\regular_ma_DEMO_STOCK_6a507dafa59fbde30238_356d4c6beefc_838732f5319e",
+    "exit_code": 0
+  },
+  {
+    "strategy": "far_ma",
+    "asset": "stock",
+    "accepted": 1,
+    "trades": 1,
+    "output": "results\\smoke\\far_ma_DEMO_STOCK_c64ad1e6fcf5ef620891_356d4c6beefc_037e4f082c72",
+    "exit_code": 0
+  },
+  {
+    "strategy": "base",
+    "asset": "stock",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\base_DEMO_STOCK_f74c0d1e1128ad336873_356d4c6beefc_554d8bec6f66",
+    "exit_code": 0
+  },
+  {
+    "strategy": "double",
+    "asset": "stock",
+    "accepted": 2,
+    "trades": 2,
+    "output": "results\\smoke\\double_DEMO_STOCK_7e723114ab0227f64e12_356d4c6beefc_2e5d4f419c9f",
+    "exit_code": 0
+  },
+  {
+    "strategy": "trend",
+    "asset": "fx",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\trend_DEMO_FX_60eed1da733fe3be5d4c_9611a3332e72_0691a79c506c",
+    "exit_code": 0
+  },
+  {
+    "strategy": "regular_ma",
+    "asset": "fx",
+    "accepted": 18,
+    "trades": 6,
+    "output": "results\\smoke\\regular_ma_DEMO_FX_6a507dafa59fbde30238_9611a3332e72_2ca6efd0ecb5",
+    "exit_code": 0
+  },
+  {
+    "strategy": "far_ma",
+    "asset": "fx",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\far_ma_DEMO_FX_c64ad1e6fcf5ef620891_9611a3332e72_8bfe33b19f66",
+    "exit_code": 0
+  },
+  {
+    "strategy": "base",
+    "asset": "fx",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\base_DEMO_FX_f74c0d1e1128ad336873_9611a3332e72_518884f84651",
+    "exit_code": 0
+  },
+  {
+    "strategy": "double",
+    "asset": "fx",
+    "accepted": 3,
+    "trades": 3,
+    "output": "results\\smoke\\double_DEMO_FX_7e723114ab0227f64e12_9611a3332e72_21805ae9e10e",
+    "exit_code": 0
+  },
+  {
+    "strategy": "trend",
+    "asset": "future",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\trend_DEMO_FUTURE_60eed1da733fe3be5d4c_d146e0e9febc_7ab2da0f0638",
+    "exit_code": 0
+  },
+  {
+    "strategy": "regular_ma",
+    "asset": "future",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\regular_ma_DEMO_FUTURE_6a507dafa59fbde30238_d146e0e9febc_83a85cf4d008",
+    "exit_code": 0
+  },
+  {
+    "strategy": "far_ma",
+    "asset": "future",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\far_ma_DEMO_FUTURE_c64ad1e6fcf5ef620891_d146e0e9febc_bb270e13c343",
+    "exit_code": 0
+  },
+  {
+    "strategy": "base",
+    "asset": "future",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\base_DEMO_FUTURE_f74c0d1e1128ad336873_d146e0e9febc_2a00975dc301",
+    "exit_code": 0
+  },
+  {
+    "strategy": "double",
+    "asset": "future",
+    "accepted": 0,
+    "trades": 0,
+    "output": "results\\smoke\\double_DEMO_FUTURE_7e723114ab0227f64e12_d146e0e9febc_0d129fd54a25",
+    "exit_code": 0
+  }
+]
