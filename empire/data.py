@@ -179,22 +179,35 @@ class TvDaily:
 
 
 class FredDaily:
-    """FRED keyless CSV download (fredgraph.csv). Close only: no high or low, so ATR falls back to |change|."""
+    """FRED daily closes. Reads the shared cache (<FRED_CACHE_DIR>/<ID>.csv, filled once by
+    Development/src/services/fred_cache) when it holds the series; otherwise the keyless fredgraph.csv
+    download. Close only: no high or low, so ATR falls back to |change|."""
     name = "fred"
     URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 
-    def __init__(self, start: str):
+    def __init__(self, start: str, cache_dir: Optional[str] = None):
         self.start = start
+        folder = cache_dir or os.environ.get("FRED_CACHE_DIR", "")
+        self.cache_dir = Path(folder) if folder else None
+        self.last_origin = ""
 
     def fetch(self, spec: dict, n: int) -> tuple[pd.DataFrame, Optional[float]]:
-        import requests
         sid = spec["fred"]
-        r = requests.get(self.URL, params={"id": sid, "cosd": self.start}, timeout=60)
-        r.raise_for_status()
-        raw = pd.read_csv(io.StringIO(r.text))
-        date_col = raw.columns[0]
-        vals = pd.to_numeric(raw[sid], errors="coerce") if sid in raw else pd.to_numeric(raw.iloc[:, 1], errors="coerce")
-        s = pd.Series(vals.values, index=pd.to_datetime(raw[date_col])).dropna()
+        cached = self.cache_dir / f"{sid}.csv" if self.cache_dir else None
+        if cached is not None and cached.exists():
+            raw = pd.read_csv(cached)
+            s = pd.Series(pd.to_numeric(raw["value"], errors="coerce").values, index=pd.to_datetime(raw["date"])).dropna()
+            s = s[s.index >= pd.Timestamp(self.start)]
+            self.last_origin = f"shared cache {cached}"
+        else:
+            import requests
+            r = requests.get(self.URL, params={"id": sid, "cosd": self.start}, timeout=60)
+            r.raise_for_status()
+            raw = pd.read_csv(io.StringIO(r.text))
+            date_col = raw.columns[0]
+            vals = pd.to_numeric(raw[sid], errors="coerce") if sid in raw else pd.to_numeric(raw.iloc[:, 1], errors="coerce")
+            s = pd.Series(vals.values, index=pd.to_datetime(raw[date_col])).dropna()
+            self.last_origin = "fredgraph download"
         if spec.get("invert"):
             s = 1.0 / s
         if s.empty:
