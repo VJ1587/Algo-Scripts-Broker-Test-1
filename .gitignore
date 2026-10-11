@@ -16,3 +16,6 @@ data/
 # Trade gate: local account list and approved tickets (never pushed)
 accounts.yaml
 tickets/
+
+# Private trade journal reviews (kept local, never pushed)
+journal/
