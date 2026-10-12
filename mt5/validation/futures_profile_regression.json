@@ -1,0 +1,6 @@
+{
+  "command": "Development/.venv/Scripts/python.exe -m pytest mt5/tests/test_futures_profiles.py tests/test_scalp.py -q -p no:cacheprovider -k \"not test_demo_scan_runs\"",
+  "result": "28 passed, 1 deselected in 2.09s",
+  "scope": "All 8 product-profile mappings versus scanner configuration, required profile selection, individual output isolation and existing scalp unit tests; no MQL5 runtime parity",
+  "deselected": "Existing full demo integration test; not needed for unchanged Python scanner"
+}

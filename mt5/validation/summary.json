@@ -1,0 +1,469 @@
+{
+  "compiler": "Installed MetaTrader 5 MetaEditor64",
+  "scripts": [
+    {
+      "file": "Futures_Scalp_Double_Bottom_Top.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "d68aaf98152f5918978f452aa7beb92391c32e97df748deb244aa51c52207e81",
+      "binary_sha256": "78e6e9e15f0529bc4557ba0626d75d712a42a32c2b3bd9f5d754298788fd72c3"
+    },
+    {
+      "file": "Futures_Scalp_FFMA.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "f27de58b00ec140281ff7b0368b058331fcbc7e2263b72215d0aeb481d012286",
+      "binary_sha256": "67ee32c1786682d5baffdd9aea747f1d654da442b60bb13516392b9fd766f206"
+    },
+    {
+      "file": "Futures_Scalp_MOMO_Base.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "1a689c0e43d693cf0eff4979b128321a592cf8420bf4e6aa4433fce1ae06579a",
+      "binary_sha256": "d67b000731e933180f08a292a55fc56b3aff28a2c5ab4f22e4ddc503668cd717"
+    },
+    {
+      "file": "Futures_Scalp_One_Minute_Range_Break.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "954a085b8cfdc1b657c40bc0ff150e2c710f42c079860c8ae3ecd98e75f43ac8",
+      "binary_sha256": "d984362ac0c59b3840cdc60f45fe67af6b0995f54702500081ece133892f8b29"
+    },
+    {
+      "file": "Futures_Scalp_ORB_MOMO.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "a2ee2cf72b1fe9d509dc79682c12b25aba76d3c5e3fd9f6534e911976ee7c9cf",
+      "binary_sha256": "f69163d61c4c5177eb3a1a9dfca06cc191ec5a53bb53c95878f59bb6852823f6"
+    },
+    {
+      "file": "Futures_Scalp_ORB_Trend.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "fa3a98b57432cc471e0aacbf6ca7cdc677a9282805a506f09b104676cd8f30e3",
+      "binary_sha256": "77bcc13f99b6119244fd0b95e5867036cb7e61f8b411a07df961d2ed957753f9"
+    },
+    {
+      "file": "Futures_Scalp_RMA.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "141ade6c6dd311eb1a6ec36f26cb6b2ecd349ce88487749aad70817aa4339039",
+      "binary_sha256": "b200b6b6a290c8b86f4dfce6d2d8988e71cfb8e52d7cc89b2961fe106d6604df"
+    },
+    {
+      "file": "Futures_Scalp_Trend.mq5",
+      "family": "futures scalp",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "9f306c3c0b81b8353f1997ec4c1106585b070589b96aacbc284d66947b5edbd7",
+      "binary_sha256": "15f3d4a68e471615c062a2eaf810d603835ed094910e1f2424834421f9fb6fd0"
+    },
+    {
+      "file": "Daily_FX_Major_A.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "103632fb3752e67b1e7d713548fc5dddd1fc4b93cf22289c7176904d34feeeeb",
+      "binary_sha256": "aed1563dd57a78adc846df4c91fb0bdf55da8d0406669047e68f6e0c2c9e6a1a"
+    },
+    {
+      "file": "Daily_FX_Major_B.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "ef962c32d07eac4f81e812187de3e0ac9486d31afa9d6f3923b5f939440ec6f6",
+      "binary_sha256": "8b59494733e4dc982be6fd8a9333e5e69d551641cd7bce5d73f887f7d59c0196"
+    },
+    {
+      "file": "Daily_FX_Cross_A.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "85a34e36d935f4fd6448d55b82424478a89d8f186b769567f752f9c17ff610e3",
+      "binary_sha256": "e6481e76b0c22b532174d103a8181a40e208091e15dfc45ab025a72db8b4366c"
+    },
+    {
+      "file": "Daily_Gold_A.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "04caa7fefcb3d76ff038f6bc9d16734394601dea2f7eb6d3ef5a9f19f25da5cd",
+      "binary_sha256": "49be54386072c4ac6686773e4613baa35a81ce451937aa90191e59973675a49b"
+    },
+    {
+      "file": "Daily_Gold_B.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "8f4e489918817b54d172148b5d581d2b88e947ba7fc75165841ae4ed7f2bc1e9",
+      "binary_sha256": "7180f5ecf552cb9fa4fce2b2bacac107e3d14491db94e05d5a61acf17b92ceb0"
+    },
+    {
+      "file": "Daily_SP500_A.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "b3bf202af146fb92d5c3a77e72af13dd876b34b1b4e7566c74126f65afa76827",
+      "binary_sha256": "35b4961b9f320307e5e95cbd69c19e491d5791362f0491523a1850d59813178c"
+    },
+    {
+      "file": "Daily_Oil_A.mq5",
+      "family": "daily position",
+      "orders": false,
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "a5f2adb6e73a0f754fe86100788dc67c5fdc9cd9b46f51e0c141d72c9df49388",
+      "binary_sha256": "65b43af7bd56db25414efbd94a3d7b3210c1087e27ead984cc7c9a01d3c57ff6"
+    },
+    {
+      "file": "Gold_ES_Scaling.mq5",
+      "family": "gold ES scaling Python bridge",
+      "strategy_id": "gold_es_scaling",
+      "version": "2.8.0",
+      "orders": false,
+      "feed": "gold_es_scaling.tsv",
+      "source_pine_sha256": "ea0c34b51fab2b252aca4d1248b4526d5f3f2f8da2e435a6c079a4729c83be98",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "a1d394a467a14683920137b04cb59d3daf339a46a048ce8ef43b867819c4c890",
+      "binary_sha256": "a38a61c72c5536dfd1b56ebf8c1117369b39ff1efd67f72645e1ae7181996e01"
+    },
+    {
+      "file": "ITS_S1_Macro_Trend_Continuation.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s1_macro_trend_continuation",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s1_macro_trend_continuation.tsv",
+      "export_command": "python -m strategies.s1_macro_trend_continuation.mt5_export",
+      "python_source_sha256": "d8504b5a760234bd3c672c43b534e00fe4b5b163a538aad3bec20413661fe644",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "9b0ab3e2cf283c08c2fc484c73e4e9a141e2e2f47000b706d7306844ca7406d5",
+      "binary_sha256": "6edcfb9323811e9760caf19593d89e2a74d34ad57dbdc2879ce36ff76e9b6178"
+    },
+    {
+      "file": "ITS_S2_Liquidity_Sweep_Reversal.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s2_liquidity_sweep_reversal",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s2_liquidity_sweep_reversal.tsv",
+      "export_command": "python -m strategies.s2_liquidity_sweep_reversal.mt5_export",
+      "python_source_sha256": "884dc443319d0196235de404d588e4aecd6dcfc5c31e52a3aa6796946c111a72",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "e4f1927adba1c393b84f8f4fe5014d961ea53f549c958b78dcc95f44d087591c",
+      "binary_sha256": "077002363885cdb5864e60bc0cf4f356756a0a479c8e7fd89e40860e1f6430f7"
+    },
+    {
+      "file": "ITS_S3_Equity_Value_Repricing.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s3_equity_value_repricing",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s3_equity_value_repricing.tsv",
+      "export_command": "python -m strategies.s3_equity_value_repricing.mt5_export",
+      "python_source_sha256": "b6fe88776155a581f3ae76b67630a4248cc7a628737abc2cc41559c001463a78",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "df4285da5bd238b0ee7843c2c4344ac6054c4c41022c443471153591c30f2ecc",
+      "binary_sha256": "4c23e225022e86408cbae743f9ef9d670e2a7d5a9284225ed7eebc1fd5a67471"
+    },
+    {
+      "file": "ITS_S4_Volatility_Compression_Breakout.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s4_volatility_compression_breakout",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s4_volatility_compression_breakout.tsv",
+      "export_command": "python -m strategies.s4_volatility_compression_breakout.mt5_export",
+      "python_source_sha256": "f0d3dd0c008bfcc7a96791908ba2e103e39a3bc2ff19515f3d8bcdcfcf1defd5",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "41049f7766d56af622a37bd8a1f2451be2d76ebea09c683af7081c190e740c97",
+      "binary_sha256": "bbaeeccf638bacee08ddd1cf99de2812fd50966cc05948d682b93e2b602f3511"
+    },
+    {
+      "file": "ITS_S5_Positioning_Exhaustion.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s5_positioning_exhaustion",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s5_positioning_exhaustion.tsv",
+      "export_command": "python -m strategies.s5_positioning_exhaustion.mt5_export",
+      "python_source_sha256": "8ec599c2f869bc0a974110ce37ad13c3ec3bd4450c7d4a26cdcd0afecc4b722d",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "86df32d360c4a09c964109cb53bbc9ee5e036d0e771045eb03f54d42d30a2c17",
+      "binary_sha256": "e0fdf94f31eba43a5dab540f575cf89496be7fa393a21f15ce80177910b86349"
+    },
+    {
+      "file": "ITS_S6_Statistical_Mean_Reversion.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s6_statistical_mean_reversion",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s6_statistical_mean_reversion.tsv",
+      "export_command": "python -m strategies.s6_statistical_mean_reversion.mt5_export",
+      "python_source_sha256": "a2c7b7ba1898290a0b1319887bf810d57f822f803cb4f4ed1850aa52ab6c2d11",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "e2e39bf7cb230082bd0b5df09e07f034e5d069640595ec2f0ffab6723f7f0e23",
+      "binary_sha256": "c7f188470ef144e22e31a859dfad3348e77905cff62a71162e2aed9037094897"
+    },
+    {
+      "file": "ITS_S7_Options_Volatility_Screen.mq5",
+      "family": "institutional Python bridge",
+      "strategy_id": "s7_options_volatility",
+      "version": "1.0.0",
+      "orders": false,
+      "feed": "s7_options_volatility.tsv",
+      "export_command": "python -m strategies.s7_options_volatility.mt5_export",
+      "python_source_sha256": "172442194c9aa9d9e97c1e3b205ac956a8d28d6b176ab74782f5800ab9e89629",
+      "errors": 0,
+      "warnings": 0,
+      "source_sha256": "3d3dcf7fc47f7311a86eaa26b9b9799fb68293c9c1e744571f8e737b7b0b9c8d",
+      "binary_sha256": "3224a5d151a8a2c407e69d4d867fc28438b1bd662ccc44959c8ea4a5a15948b1"
+    }
+  ],
+  "source_regression": {
+    "command": "Development/.venv/Scripts/python.exe -m pytest tests/test_scalp.py tests/test_scanner.py -q -p no:cacheprovider --basetemp=mt5/validation/pytest-run-20261009",
+    "working_directory": "Development/src/Algo-Scripts-Broker-Test-1",
+    "result": "119 passed in 71.79s",
+    "purpose": "Existing Python source regression tests; does not execute generated MQL5",
+    "initial_attempt": "111 passed, 8 fixture permission errors; resolved with workspace temporary directory and approved rerun"
+  },
+  "runtime_parity_tested": false,
+  "institutional_bridge": {
+    "schema": "its-mt5-bridge-1",
+    "compiled_scripts": [
+      {
+        "file": "ITS_S1_Macro_Trend_Continuation.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s1_macro_trend_continuation",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s1_macro_trend_continuation.tsv",
+        "export_command": "python -m strategies.s1_macro_trend_continuation.mt5_export",
+        "python_source_sha256": "d8504b5a760234bd3c672c43b534e00fe4b5b163a538aad3bec20413661fe644",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "9b0ab3e2cf283c08c2fc484c73e4e9a141e2e2f47000b706d7306844ca7406d5",
+        "binary_sha256": "6edcfb9323811e9760caf19593d89e2a74d34ad57dbdc2879ce36ff76e9b6178"
+      },
+      {
+        "file": "ITS_S2_Liquidity_Sweep_Reversal.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s2_liquidity_sweep_reversal",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s2_liquidity_sweep_reversal.tsv",
+        "export_command": "python -m strategies.s2_liquidity_sweep_reversal.mt5_export",
+        "python_source_sha256": "884dc443319d0196235de404d588e4aecd6dcfc5c31e52a3aa6796946c111a72",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "e4f1927adba1c393b84f8f4fe5014d961ea53f549c958b78dcc95f44d087591c",
+        "binary_sha256": "077002363885cdb5864e60bc0cf4f356756a0a479c8e7fd89e40860e1f6430f7"
+      },
+      {
+        "file": "ITS_S3_Equity_Value_Repricing.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s3_equity_value_repricing",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s3_equity_value_repricing.tsv",
+        "export_command": "python -m strategies.s3_equity_value_repricing.mt5_export",
+        "python_source_sha256": "b6fe88776155a581f3ae76b67630a4248cc7a628737abc2cc41559c001463a78",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "df4285da5bd238b0ee7843c2c4344ac6054c4c41022c443471153591c30f2ecc",
+        "binary_sha256": "4c23e225022e86408cbae743f9ef9d670e2a7d5a9284225ed7eebc1fd5a67471"
+      },
+      {
+        "file": "ITS_S4_Volatility_Compression_Breakout.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s4_volatility_compression_breakout",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s4_volatility_compression_breakout.tsv",
+        "export_command": "python -m strategies.s4_volatility_compression_breakout.mt5_export",
+        "python_source_sha256": "f0d3dd0c008bfcc7a96791908ba2e103e39a3bc2ff19515f3d8bcdcfcf1defd5",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "41049f7766d56af622a37bd8a1f2451be2d76ebea09c683af7081c190e740c97",
+        "binary_sha256": "bbaeeccf638bacee08ddd1cf99de2812fd50966cc05948d682b93e2b602f3511"
+      },
+      {
+        "file": "ITS_S5_Positioning_Exhaustion.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s5_positioning_exhaustion",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s5_positioning_exhaustion.tsv",
+        "export_command": "python -m strategies.s5_positioning_exhaustion.mt5_export",
+        "python_source_sha256": "8ec599c2f869bc0a974110ce37ad13c3ec3bd4450c7d4a26cdcd0afecc4b722d",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "86df32d360c4a09c964109cb53bbc9ee5e036d0e771045eb03f54d42d30a2c17",
+        "binary_sha256": "e0fdf94f31eba43a5dab540f575cf89496be7fa393a21f15ce80177910b86349"
+      },
+      {
+        "file": "ITS_S6_Statistical_Mean_Reversion.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s6_statistical_mean_reversion",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s6_statistical_mean_reversion.tsv",
+        "export_command": "python -m strategies.s6_statistical_mean_reversion.mt5_export",
+        "python_source_sha256": "a2c7b7ba1898290a0b1319887bf810d57f822f803cb4f4ed1850aa52ab6c2d11",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "e2e39bf7cb230082bd0b5df09e07f034e5d069640595ec2f0ffab6723f7f0e23",
+        "binary_sha256": "c7f188470ef144e22e31a859dfad3348e77905cff62a71162e2aed9037094897"
+      },
+      {
+        "file": "ITS_S7_Options_Volatility_Screen.mq5",
+        "family": "institutional Python bridge",
+        "strategy_id": "s7_options_volatility",
+        "version": "1.0.0",
+        "orders": false,
+        "feed": "s7_options_volatility.tsv",
+        "export_command": "python -m strategies.s7_options_volatility.mt5_export",
+        "python_source_sha256": "172442194c9aa9d9e97c1e3b205ac956a8d28d6b176ab74782f5800ab9e89629",
+        "errors": 0,
+        "warnings": 0,
+        "source_sha256": "3d3dcf7fc47f7311a86eaa26b9b9799fb68293c9c1e744571f8e737b7b0b9c8d",
+        "binary_sha256": "3224a5d151a8a2c407e69d4d867fc28438b1bd662ccc44959c8ea4a5a15948b1"
+      }
+    ],
+    "python_tests": {
+      "strategy_and_bridge": "91 passed",
+      "bridge_integration": "12 passed"
+    },
+    "native_runtime_tested": false,
+    "cli_smoke": [
+      {
+        "strategy_id": "s1_macro_trend_continuation",
+        "returncode": 0,
+        "stdout": "s1_macro_trend_continuation: FLAT -> artifacts\\mt5_smoke\\s1_macro_trend_continuation.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s2_liquidity_sweep_reversal",
+        "returncode": 0,
+        "stdout": "s2_liquidity_sweep_reversal: FLAT -> artifacts\\mt5_smoke\\s2_liquidity_sweep_reversal.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s3_equity_value_repricing",
+        "returncode": 0,
+        "stdout": "s3_equity_value_repricing: FLAT -> artifacts\\mt5_smoke\\s3_equity_value_repricing.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s4_volatility_compression_breakout",
+        "returncode": 0,
+        "stdout": "s4_volatility_compression_breakout: FLAT -> artifacts\\mt5_smoke\\s4_volatility_compression_breakout.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s5_positioning_exhaustion",
+        "returncode": 0,
+        "stdout": "s5_positioning_exhaustion: FLAT -> artifacts\\mt5_smoke\\s5_positioning_exhaustion.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s6_statistical_mean_reversion",
+        "returncode": 0,
+        "stdout": "s6_statistical_mean_reversion: FLAT -> artifacts\\mt5_smoke\\s6_statistical_mean_reversion.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "strategy_id": "s7_options_volatility",
+        "returncode": 0,
+        "stdout": "s7_options_volatility: candidates; defined_risk_spread; 2 options candidates; research only -> artifacts\\mt5_smoke\\s7_options_volatility.tsv",
+        "stderr": "",
+        "synthetic": true,
+        "replay": true
+      }
+    ],
+    "orders_placed": false,
+    "implementation": "Original Python calculations with seven read-only MT5 consumers"
+  },
+  "broker_runtime_tested": false,
+  "gold_es_scaling": {
+    "strategy_id": "gold_es_scaling",
+    "source_version": "2.8.0",
+    "implementation": "Python engine plus independent read-only MT5 bridge",
+    "python_tests": "22 scaling checks; 33 including existing futures profile checks",
+    "cli_smoke": [
+      {
+        "profile": "gold",
+        "returncode": 0,
+        "entries": 1,
+        "source_kind": "BREAKOUT",
+        "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+        "synthetic": true,
+        "replay": true
+      },
+      {
+        "profile": "es",
+        "returncode": 0,
+        "entries": 1,
+        "source_kind": "BREAKOUT",
+        "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+        "synthetic": true,
+        "replay": true
+      }
+    ],
+    "compile_errors": 0,
+    "compile_warnings": 0,
+    "tradingview_runtime_parity": false,
+    "mt5_terminal_runtime_tested": false,
+    "orders_placed": false,
+    "source_pine_sha256": "ea0c34b51fab2b252aca4d1248b4526d5f3f2f8da2e435a6c079a4729c83be98",
+    "mq5_sha256": "a1d394a467a14683920137b04cb59d3daf339a46a048ce8ef43b867819c4c890",
+    "ex5_sha256": "a38a61c72c5536dfd1b56ebf8c1117369b39ff1efd67f72645e1ae7181996e01"
+  },
+  "orders_placed": false,
+  "futures_profile_regression": {
+    "command": "Development/.venv/Scripts/python.exe -m pytest mt5/tests/test_futures_profiles.py tests/test_scalp.py -q -p no:cacheprovider -k \"not test_demo_scan_runs\"",
+    "result": "28 passed, 1 deselected in 2.09s",
+    "scope": "All 8 product-profile mappings versus scanner configuration, required profile selection, individual output isolation and existing scalp unit tests; no MQL5 runtime parity",
+    "deselected": "Existing full demo integration test; not needed for unchanged Python scanner"
+  }
+}

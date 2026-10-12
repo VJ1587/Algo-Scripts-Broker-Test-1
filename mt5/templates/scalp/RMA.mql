@@ -1,0 +1,47 @@
+const bool NEEDS_M1=false;
+input double InpMinimumExtensionTicks=20;
+input double InpExtensionATR=2.0;
+input bool InpRequireBoth=false;
+input int InpLookback=48;
+input double InpClusterATR=0.25;
+input double InpATRStop=1.0;
+input double InpTargetTicks=10;
+void Scan(Frame &f,Frame &unused)
+{
+   int k=f.k;
+   if(InpLookback<1 || InpLookback>k) { Print("Invalid RMA lookback"); return; }
+   double levels[]; ArrayResize(levels,5);
+   levels[0]=f.e30[k]; levels[1]=f.e65[k]; levels[2]=f.e200[k];
+   int n=3; long current=Session(f.b[k].time),previous=-1;
+   for(int i=k;i>=0;i--) if(Session(f.b[i].time)!=current) { previous=Session(f.b[i].time); break; }
+   double ph=-DBL_MAX,pl=DBL_MAX,pc=0,pv=0,volume=0;
+   bool ticks=false;
+   for(int i=0;i<=k;i++)
+   {
+      long session=Session(f.b[i].time);
+      if(session==previous) { ph=MathMax(ph,f.b[i].high); pl=MathMin(pl,f.b[i].low); pc=f.b[i].close; }
+      if(session==current)
+      {
+         double v=InpUseRealVolume && f.b[i].real_volume>0 ? (double)f.b[i].real_volume : (double)f.b[i].tick_volume;
+         if(!(InpUseRealVolume && f.b[i].real_volume>0)) ticks=true;
+         pv+=(f.b[i].high+f.b[i].low+f.b[i].close)/3*v; volume+=v;
+      }
+   }
+   if(previous>=0 && ph>-DBL_MAX) levels[n++]=(ph+pl+pc)/3;
+   if(volume>0) levels[n++]=pv/volume;
+   ArrayResize(levels,n); ArraySort(levels);
+   double threshold=InpRequireBoth ? MathMax(InpMinimumExtensionTicks*rule_tick,InpExtensionATR*f.a[k]) : MathMin(InpMinimumExtensionTicks*rule_tick,InpExtensionATR*f.a[k]);
+   for(int start=0;start<n;)
+   {
+      int end=start; double sum=levels[start];
+      while(end+1<n && levels[end+1]-levels[end]<=InpClusterATR*f.a[k]) { end++; sum+=levels[end]; }
+      double level=sum/(end-start+1); start=end+1;
+      int side=f.b[k].close>level ? 1 : -1,j=k-1,lower=MathMax(0,k-InpLookback);
+      while(j>=lower && (side>0 ? f.b[j].low>level : f.b[j].high<level)) j--;
+      if(j<lower || j+1>=k) continue;
+      double extension=side>0 ? High(f.b,j+1,k-1)-level : level-Low(f.b,j+1,k-1);
+      if(extension<threshold) continue;
+      bool touched=side>0 ? f.b[k].low<=level : f.b[k].high>=level;
+      ScalpSignal(f,side,touched ? "AT LEVEL" : "ARMED","Limit",level,level-side*InpATRStop*f.a[k],InpTargetTicks,0,"EMA30/65/200 + prior-session pivot + VWAP clusters; VWAP volume="+(ticks ? "tick proxy" : "real"));
+   }
+}

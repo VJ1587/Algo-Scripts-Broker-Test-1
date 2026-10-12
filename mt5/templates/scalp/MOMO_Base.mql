@@ -1,0 +1,34 @@
+const bool NEEDS_M1=false;
+input int InpMinBars=3;
+input int InpMaxBars=12;
+input double InpMaxHeightATR=1.0;
+input double InpEntryTicks=2;
+input double InpTargetTicks=10;
+int Base(Frame &f,int end)
+{
+   int best=0;
+   for(int n=InpMinBars;n<=InpMaxBars;n++)
+   {
+      if(end-n+1<0 || High(f.b,end-n+1,end)-Low(f.b,end-n+1,end)>InpMaxHeightATR*f.a[f.k]) break;
+      best=n;
+   }
+   return best;
+}
+void Scan(Frame &f,Frame &unused)
+{
+   if(InpMinBars<3 || InpMaxBars<InpMinBars || InpEntryTicks<=0) { Print("Invalid base parameters"); return; }
+   int end=f.k-1,n=Base(f,end),before=count;
+   double off=InpEntryTicks*rule_tick;
+   if(n>0)
+   {
+      double hi=High(f.b,end-n+1,end),lo=Low(f.b,end-n+1,end);
+      if(f.b[f.k].high>=hi+off) ScalpSignal(f,1,"TRIGGERED","Stop Market",hi+off,lo-rule_tick,InpTargetTicks,0,"MOMO base breakout");
+      if(f.b[f.k].low<=lo-off) ScalpSignal(f,-1,"TRIGGERED","Stop Market",lo-off,hi+rule_tick,InpTargetTicks,0,"MOMO base breakout");
+      if(count>before) return;
+   }
+   end=f.k; n=Base(f,end);
+   if(n==0) return;
+   double hi=High(f.b,end-n+1,end),lo=Low(f.b,end-n+1,end);
+   ScalpSignal(f,1,"ARMED","Stop Market",hi+off,lo-rule_tick,InpTargetTicks,0,"Intact base");
+   ScalpSignal(f,-1,"ARMED","Stop Market",lo-off,hi+rule_tick,InpTargetTicks,0,"Intact base");
+}

@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+validation/pytest*/
+validation/demo/
+*.ex5
+Gold_ES_Scaling_Python_MT5.zip

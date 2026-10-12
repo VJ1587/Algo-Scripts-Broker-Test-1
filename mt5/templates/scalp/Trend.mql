@@ -1,0 +1,17 @@
+const bool NEEDS_M1=false;
+input int InpSlopeBars=3;
+input double InpMaxGapTicks=10;
+input double InpATRStop=1.0;
+input double InpTargetTicks=10;
+void Scan(Frame &f,Frame &unused)
+{
+   int k=f.k,sb=InpSlopeBars;
+   if(sb<1 || sb>k-200) { Print("Invalid slope lookback"); return; }
+   double gap=f.e9[k]-f.e15[k]; int side=0;
+   if(gap==0 || MathAbs(gap)>InpMaxGapTicks*rule_tick) return;
+   if(gap>0 && f.e9[k]>f.e9[k-sb] && f.e15[k]>f.e15[k-sb] && f.b[k].close>f.e15[k]) side=1;
+   if(gap<0 && f.e9[k]<f.e9[k-sb] && f.e15[k]<f.e15[k-sb] && f.b[k].close<f.e15[k]) side=-1;
+   if(side==0) return;
+   bool touch=side>0 ? f.b[k].low<=f.e9[k] : f.b[k].high>=f.e9[k];
+   ScalpSignal(f,side,touch ? "AT LEVEL" : "ARMED","Limit",f.e9[k],f.e15[k]-side*InpATRStop*f.a[k],InpTargetTicks,0,"9 EMA entry1 is no-stop/trailing in source rulebook; stop is a 15 EMA-based reference; displayed risk is hypothetical entry1-to-reference-stop. No execution.",f.e15[k]);
+}

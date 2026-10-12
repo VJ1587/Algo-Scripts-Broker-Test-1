@@ -1,0 +1,38 @@
+const bool NEEDS_M1=false;
+input double InpTarget1Ticks=20;
+input double InpTarget2Ticks=30;
+input int InpStopMode=0; // 0 entry candle, 1 ORB midpoint, 2 opposite edge
+void Scan(Frame &f,Frame &unused)
+{
+   datetime now=NY(TimeCurrent()); MqlDateTime d; TimeToStruct(now,d);
+   int minutes=d.hour*60+d.min;
+   if(minutes<575 || minutes>960) return;
+   d.hour=0; d.min=0; d.sec=0; datetime day=StructToTime(d);
+   if(now>day+960*60) return;
+   datetime begin=day+570*60,end=day+(minutes>=585 ? 585 : 575)*60;
+   double hi=-DBL_MAX,lo=DBL_MAX; int seen=0,last=-1,post=-1;
+   for(int i=0;i<=f.k;i++)
+   {
+      datetime t=NY(f.b[i].time);
+      if(t>=begin && t<end) { hi=MathMax(hi,f.b[i].high); lo=MathMin(lo,f.b[i].low); seen++; last=i; }
+      if(t>=end && t<=now && post<0) post=i;
+   }
+   if(seen!=(int)((end-begin)/300) || last<0 || NY(f.b[last].time)+300!=end) return;
+   double mid=(hi+lo)/2; int hit=-1,side=0;
+   for(int i=post;i>=0 && i<=f.k;i++)
+   {
+      if(f.b[i].high>hi) { hit=i; side=1; break; }
+      if(f.b[i].low<lo) { hit=i; side=-1; break; }
+   }
+   if(hit<0)
+   {
+      ScalpSignal(f,1,"ARMED","Stop Market",hi+rule_tick,mid,InpTarget1Ticks,InpTarget2Ticks,"ORB MOMO; source armed stop uses midpoint");
+      ScalpSignal(f,-1,"ARMED","Stop Market",lo-rule_tick,mid,InpTarget1Ticks,InpTarget2Ticks,"ORB MOMO; source armed stop uses midpoint"); return;
+   }
+   if(hit!=f.k) return;
+   double edge=side>0 ? hi : lo;
+   double stop=side>0 ? f.b[hit].low-rule_tick : f.b[hit].high+rule_tick;
+   if(InpStopMode==1) stop=mid;
+   if(InpStopMode==2) stop=side>0 ? lo : hi;
+   ScalpSignal(f,side,"TRIGGERED","Stop Market",edge+side*rule_tick,stop,InpTarget1Ticks,InpTarget2Ticks,"First ORB break on latest closed M5 bar; NY RTH");
+}

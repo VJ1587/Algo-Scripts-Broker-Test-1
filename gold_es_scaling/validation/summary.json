@@ -1,0 +1,34 @@
+{
+  "strategy_id": "gold_es_scaling",
+  "source_version": "2.8.0",
+  "implementation": "Python engine plus independent read-only MT5 bridge",
+  "python_tests": "22 scaling checks; 33 including existing futures profile checks",
+  "cli_smoke": [
+    {
+      "profile": "gold",
+      "returncode": 0,
+      "entries": 1,
+      "source_kind": "BREAKOUT",
+      "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+      "synthetic": true,
+      "replay": true
+    },
+    {
+      "profile": "es",
+      "returncode": 0,
+      "entries": 1,
+      "source_kind": "BREAKOUT",
+      "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+      "synthetic": true,
+      "replay": true
+    }
+  ],
+  "compile_errors": 0,
+  "compile_warnings": 0,
+  "tradingview_runtime_parity": false,
+  "mt5_terminal_runtime_tested": false,
+  "orders_placed": false,
+  "source_pine_sha256": "ea0c34b51fab2b252aca4d1248b4526d5f3f2f8da2e435a6c079a4729c83be98",
+  "mq5_sha256": "a1d394a467a14683920137b04cb59d3daf339a46a048ce8ef43b867819c4c890",
+  "ex5_sha256": "a38a61c72c5536dfd1b56ebf8c1117369b39ff1efd67f72645e1ae7181996e01"
+}

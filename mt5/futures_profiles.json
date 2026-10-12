@@ -1,0 +1,241 @@
+{
+  "source_config_version": "scalp-cfg-0.1.0",
+  "products": {
+    "ES": {
+      "tick": 0.25,
+      "price_alias": "MES"
+    },
+    "NQ": {
+      "tick": 0.25,
+      "price_alias": "MNQ"
+    },
+    "CL": {
+      "tick": 0.01,
+      "price_alias": "MCL"
+    },
+    "GC": {
+      "tick": 0.1,
+      "price_alias": "MGC"
+    }
+  },
+  "methods": {
+    "momo": {
+      "enabled": [
+        "ES",
+        "NQ",
+        "CL",
+        "GC"
+      ],
+      "min_bars": 3,
+      "max_bars": 12,
+      "max_height_atr": 1.0,
+      "entry_ticks": {
+        "ES": 2,
+        "NQ": 4,
+        "CL": 2,
+        "GC": 2
+      },
+      "targets_ticks": {
+        "ES": [
+          8,
+          12
+        ],
+        "NQ": [
+          20
+        ],
+        "CL": [
+          5
+        ],
+        "GC": [
+          10
+        ]
+      }
+    },
+    "trend": {
+      "max_gap_ticks": {
+        "ES": 10,
+        "NQ": 40,
+        "CL": 10,
+        "GC": 10
+      },
+      "slope_bars": 3,
+      "targets_ticks": {
+        "ES": [
+          8,
+          12
+        ],
+        "NQ": [
+          40
+        ],
+        "CL": [
+          10
+        ],
+        "GC": [
+          10
+        ]
+      }
+    },
+    "rma": {
+      "levels": [
+        "ema30",
+        "ema65",
+        "ema200",
+        "pivot",
+        "vwap"
+      ],
+      "min_ext_ticks": {
+        "ES": 40,
+        "NQ": 160,
+        "CL": 25,
+        "GC": 20
+      },
+      "ext_atr_mult": 2.0,
+      "ext_mode": "either",
+      "lookback_bars": 48,
+      "confluence_atr": 0.25,
+      "targets_ticks": {
+        "ES": [
+          8,
+          12
+        ],
+        "NQ": [
+          40
+        ],
+        "CL": [
+          10
+        ],
+        "GC": [
+          10
+        ]
+      }
+    },
+    "ffma": {
+      "ref_ema": 9,
+      "min_dist_ticks": {
+        "ES": 40,
+        "NQ": 160,
+        "CL": 25,
+        "GC": 20
+      },
+      "rsi_short": 80,
+      "rsi_long": 20,
+      "signal_bars": 3,
+      "fresh_1m_bars": 2,
+      "targets_ticks": {
+        "ES": [
+          8,
+          12
+        ],
+        "NQ": [
+          20,
+          40
+        ],
+        "CL": [
+          10
+        ],
+        "GC": [
+          10
+        ]
+      }
+    },
+    "dbdt": {
+      "min_move_ticks": {
+        "ES": 40,
+        "NQ": 120,
+        "CL": 20,
+        "GC": 30
+      },
+      "pivot_width": 2,
+      "lookback_bars": 60,
+      "prior_lookback_bars": 24,
+      "min_bounce_atr": 1.0,
+      "tolerance_atr": 0.25,
+      "targets_ticks": {
+        "ES": [
+          8,
+          12
+        ],
+        "NQ": [
+          40
+        ],
+        "CL": [
+          10
+        ],
+        "GC": [
+          10
+        ]
+      }
+    },
+    "orb": {
+      "switch_to_15m": "09:45",
+      "momo_stop": "entry_candle",
+      "momo_targets_ticks": {
+        "ES": [
+          8,
+          16
+        ],
+        "NQ": [
+          20,
+          40
+        ],
+        "CL": [
+          10
+        ],
+        "GC": [
+          20,
+          30
+        ]
+      },
+      "trend_ext_ticks": {
+        "ES": 40,
+        "NQ": 160,
+        "CL": 25,
+        "GC": 20
+      },
+      "trend_ext_atr_mult": {
+        "ES": 2.0
+      },
+      "trend_stop_ticks": {
+        "ES": 16,
+        "NQ": 40,
+        "CL": 10,
+        "GC": 20
+      },
+      "trend_targets_ticks": {
+        "ES": [
+          8,
+          16
+        ],
+        "NQ": [
+          20,
+          40
+        ],
+        "CL": [
+          10,
+          20
+        ],
+        "GC": [
+          20,
+          30
+        ]
+      }
+    },
+    "range_break": {
+      "min_bars": 3,
+      "max_bars": 15,
+      "flat_ticks": 2,
+      "max_depth": {
+        "ES": 5.0,
+        "NQ": 5.0,
+        "CL": 0.5,
+        "GC": 5.0
+      },
+      "rsi_slope_bars": 3,
+      "near_ema_atr": 1.0,
+      "targets_r": [
+        1,
+        2
+      ]
+    }
+  }
+}

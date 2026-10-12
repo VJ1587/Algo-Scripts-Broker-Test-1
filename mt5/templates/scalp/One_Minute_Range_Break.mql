@@ -1,0 +1,38 @@
+const bool NEEDS_M1=true;
+input int InpMinBars=3;
+input int InpMaxBars=15;
+input double InpFlatTicks=2;
+input double InpMaxDepth=5.0;
+input int InpRSISlopeBars=3;
+int Coil(Frame &f,int side,int end)
+{
+   int best=0;
+   for(int n=InpMinBars;n<=InpMaxBars;n++)
+   {
+      int first=end-n+1; if(first<0) break;
+      double hi=-DBL_MAX,lo=DBL_MAX;
+      for(int i=first;i<=end;i++) { double v=side>0 ? f.b[i].high : f.b[i].low; hi=MathMax(hi,v); lo=MathMin(lo,v); }
+      if(hi-lo>InpFlatTicks*rule_tick+1e-9 || High(f.b,first,end)-Low(f.b,first,end)>InpMaxDepth) break;
+      best=n;
+   }
+   return best;
+}
+void Scan(Frame &f,Frame &m)
+{
+   int k=f.k,q=m.k,sb=InpRSISlopeBars;
+   if(InpMinBars<3 || InpMaxBars<InpMinBars || sb<1 || sb>k-14) { Print("Invalid range parameters"); return; }
+   for(int side=1;side>=-1;side-=2)
+   {
+      if(side*(f.b[k].close-f.e9[k])<=0 || side*(f.b[k].close-f.e15[k])<=0 || side*(f.e9[k]-f.e15[k])<=0 || side*(f.r[k]-50)<=0 || side*(f.r[k]-f.r[k-sb])<=0) continue;
+      for(int end=q-1;end<=q;end++)
+      {
+         int n=Coil(m,side,end); if(n==0) continue;
+         if(side*(m.b[end].close-m.e9[end])<=0 || side*(m.b[end].close-m.e15[end])<=0 || side*(m.r[end]-50)<=0) continue;
+         double hi=High(m.b,end-n+1,end),lo=Low(m.b,end-n+1,end);
+         double entry=side>0 ? hi+rule_tick : lo-rule_tick,stop=side>0 ? lo-rule_tick : hi+rule_tick;
+         if(end==q-1 && !(side>0 ? m.b[q].high>=entry : m.b[q].low<=entry)) continue;
+         double risk=MathAbs(entry-stop)/rule_tick;
+         ScalpSignal(m,side,end==q-1 ? "TRIGGERED" : "ARMED",side>0 ? "Buy Stop Limit" : "Sell Stop Limit",entry,stop,risk,2*risk,"M5/M1 trend with flat M1 coil; targets 1R/2R [IMPL]"); break;
+      }
+   }
+}

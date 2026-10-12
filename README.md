@@ -11,6 +11,26 @@ Scripts and research packages with separate jobs:
 | `trade_gate.py` | **The hold.** The only path from a scanned setup to an order. Asks the owner before anything happens. | Only after the owner types CONFIRM, and only where algo orders are allowed. |
 | `scalping_system/` | **Adaptive scalping research.** Five independent methods with causal instrument/session profiles, bounded ATR distances, risk sizing and execution simulation. | No. Synthetic demonstrations and research simulation only; no broker adapter. |
 
+## Separate MT5 strategy scripts
+
+[`mt5/`](mt5/README.md) contains 23 individual MT5 files: the independent owner-supplied Gold / ES scaling strategy, seven institutional S1-S7 Python signal readers, seven
+Daily position-confluence methods and eight Futures scalp entry methods with ES/MES, NQ/MNQ, CL/MCL and GC/MGC profiles. Each MT5 reader/scanner has its own file. Institutional readers require their Python feed; daily/futures scanners calculate within MT5. Each `.mq5`
+is standalone, with its own compiled `.ex5`; ORB MOMO and ORB Trend are separated.
+See the installation guide for broker symbol/timezone inputs, source rule mappings
+and the external overlays not included in this technical conversion. Local delivery:
+`mt5/MT5_Separate_Strategies.zip`. Compilation passed; broker runtime validation
+and cross-language signal parity remain pending. No orders are placed.
+
+## Gold / ES scaling strategy (Pine v2.8.0 conversion)
+
+[`gold_es_scaling/`](gold_es_scaling/README.md) is the actual owner-supplied scaling
+indicator converted into an independent Python strategy and read-only MT5 feed
+reader (`Gold_ES_Scaling.ex5`). S/A/B retain their shared instrument book, scaling,
+risk tiers and New York numbering. It is separate from the futures scalp methods.
+See the guide for five-timeframe inputs and the bridge workflow. Local standalone
+delivery: `gold_es_scaling/Gold_ES_Scaling_Python_MT5.zip`; also included in the
+combined MT5 ZIP. No broker orders or position management are enabled.
+
 ## Instrument-adaptive scalping system
 
 The complete implementation is in [`scalping_system/`](scalping_system/README.md),
@@ -205,7 +225,7 @@ Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 
 **Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.13.0, config `cfg-0.13.0`.
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
-COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
+COT overlay and a headline sentiment overlay (each capped at Â±2), and writes an HTML dashboard of the
 top 5 setups (A, then B, then developing) plus every developing setup. It places no orders and
 sizes no positions.
 
@@ -221,7 +241,7 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 | Check | Name | Passes when |
 |---|---|---|
 | C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold, S&P and oil: Weekly = bias, Daily = confirmation, no 4H (see Weekly and Daily). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold every 100 ±10 and every 50 (mid) ±8; S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), Â±15 pips; JPY pairs every 5.00 and 2.50, Â±0.15; gold every 100 Â±10 and every 50 (mid) Â±8; S&P every 100 and 50, Â±20; oil every 5.00 and 2.50, Â±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
@@ -383,6 +403,12 @@ config). Nothing in the scanner sends, changes or closes orders.
 - `output/scan_<UTC stamp>_<run>.html`: self contained dashboard (header with versions and data
   freshness, top 5 table, all candidates, every instrument with its rejection reason)
 - `output/scan_<UTC stamp>_<run>.json` and `.csv`: every row, for later backtest comparison
+- Trade plans (cfg-0.14.0, `trade_plan.py`): every A, B and developing setup gets an entry range (FX 10 pips,
+  JPY 0.10, gold $2, S&P 5 points = 20 ES ticks, oil $1), a stop beyond the Fib 78.6% or the last swing, and
+  TP1 = nearest of Fib -27%, last opposing swing, next key level. R:R on TP1 from the worst entry is graded
+  A 3:1+, B 2:1+, C 1:1+; below 1:1 is not a trade. Separate from the confluence grade; never changes rank.
+  Dashboard section "Trade plans"; JSON `trade_plan`; CSV `entry_low, entry_high, stop, tp1, rr, rr_grade`.
+  Spec: `Development/planning/specs/trade-plan-rr-grade_spec.md`
 - The dashboard also shows MT5 open positions and broker bid, ask and spread for the 28 pairs
 - `output/journal.html`: account balance, equity and margin; a balance snapshot per run; every MT5
   position (from deal history, `journal.history_days`) with open and close time, prices, net P/L, and
@@ -403,13 +429,13 @@ config). Nothing in the scanner sends, changes or closes orders.
 
 | Spec item | Where |
 | --- | --- |
-| Completed bars only, 250 bar checks, OHLC sanity (v1.0 §2) | `completed`, `check_bars` |
-| EMA seeded with SMA, Wilder ATR14 (v1.0 §2) | `ema`, `atr` |
-| Strict 2 bar pivots, confirm at k+2, alternation (v1.0 §2) | `find_pivots`, `add_alternating` |
+| Completed bars only, 250 bar checks, OHLC sanity (v1.0 Â§2) | `completed`, `check_bars` |
+| EMA seeded with SMA, Wilder ATR14 (v1.0 Â§2) | `ema`, `atr` |
+| Strict 2 bar pivots, confirm at k+2, alternation (v1.0 Â§2) | `find_pivots`, `add_alternating` |
 | Daily bias D01, 4H agreement D02 | `daily_bias`, `structure` |
-| Impulse I01 (6 bar recency, 3 to 30 bars, 2×ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
+| Impulse I01 (6 bar recency, 3 to 30 bars, 2Ã—ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
 | Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `structure_holding`, `grade_setup`, `score_instrument` |
-| COT index, pair mapping, ±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
+| COT index, pair mapping, Â±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
 | Sentiment S, themes, direction rules (Add 6.3, 7) | `SentimentEngine` |
 | Calendar countdown and event risk (Add 6.4) | `next_event` |
 | Sections and ranking (Add 8) | `score_instrument`, `rank` |
@@ -422,7 +448,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    scanner rebuilds 2H and 4H from 1H bars on a UTC grid (`intraday_mode: resample_1h`). Daily bars
    stay native because 5,000 1H bars cannot make 250 Daily bars, so Daily follows TradingView's
    session (for FX I believe this is 17:00 New York; please verify). This is a documented deviation
-   from v1.0 §2.
+   from v1.0 Â§2.
 2. **Pre NY Daily freeze.** The pre NY run uses only Daily bars complete at that day's 00:05 UTC.
 3. **Bias re-arm guard.** After invalidation a bias cannot reinitialize while the close is already
    beyond the new invalidation level (otherwise the broken bias re-arms on the same bar).
@@ -432,7 +458,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 at majors (XAUUSD
    and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
    grid). Gold mid levels (every $50) use a tighter $8 zone (`mid_zone_half_width`, cfg-0.11.0): a mid is a
-   weaker level, and at ±$20 the gold zones covered 80% of all prices, so C2 barely filtered. Majors narrowed to ±$10 (cfg-0.12.0): coverage is now 36%. Gold chart pattern
+   weaker level, and at Â±$20 the gold zones covered 80% of all prices, so C2 barely filtered. Majors narrowed to Â±$10 (cfg-0.12.0): coverage is now 36%. Gold chart pattern
    sizes stay on the old $20 basis (`pattern_half_width`) so only the key level filter changed.
    C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
    to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
@@ -478,7 +504,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    the release bar. Group shrinkage uses the statistic computed on the group's pooled observations. The v1.0
    scoring keeps a 400 bar Daily window while the layer reads 1,300 (decision record of October 8, 2026).
 
-## Open items before treating output as validated (Addendum §10)
+## Open items before treating output as validated (Addendum Â§10)
 
 - [ ] Choose headline feeds and confirm each allows scripted access (`sentiment.feeds` is empty, so
       sentiment scores 0 with "thin news" until you add feeds)
@@ -509,4 +535,9 @@ tone; its output says nothing about markets.
   UTC. Its `n_bars` maximum is 5,000.
 
 Governance: change any threshold, weight, spacing or cap by bumping `config_version` and adding a
-`changelog` line in the config (v1.0 §12).
+`changelog` line in the config (v1.0 Â§12).
+
+
+### COT distribution, code 0.13.1 (2026-10-10)
+
+The COT loader merges `cot.distributed_csv_path` with API pulls, preserves newer API weeks, and uses the distributed official release for matching dates. Local history remains subject to the existing publication and stale-data checks. October 6 positions and 162 weeks of history are in `data/cot/cot_distributed.csv`. The full report archive and distribution guide are in `../cot_reports/README.md`.

@@ -30,7 +30,7 @@ from .journal import FORECAST_FIELDS, Journal, resolve_forecasts
 from .levels import (Zone, build_map, distance_units, forward_excursions, outcome_base_rates, touch_probability,
                      touch_probability_formula, vacuum_between, zone_edge_ok)
 from .pairs import carry_appeal, dominance, incentive_gap, predicted_pair_beta, predicted_pair_energy
-from .players import merge_profiles, merge_scorecard, alignment_scores, cycle_staleness, incentive_weights, parse_ledger
+from .players import merge_external, merge_profiles, merge_scorecard, alignment_scores, cycle_staleness, incentive_weights, parse_ledger
 from .push import efficiency_ratio, push_score, push_signals
 from .regimes import REGIME_TEXT, regime_faces, regime_frame, relationship_status
 from .stories import (DIR, alignment_cell, ev_entry, exposure_check, gate_results, grade, likelihood,
@@ -79,7 +79,8 @@ def build_context(cfg_path: Path, asof: Optional[pd.Timestamp], run_type: str, d
     base = cfg_path.parent
     ledger_path = base / cfg["paths"]["ledger"]
     raw_ledger = merge_scorecard(load_yaml(ledger_path), base / cfg["paths"].get("cycle_scorecard", "ledger/cycle_scorecard.yaml"))
-    ledger = parse_ledger(merge_profiles(raw_ledger, base / cfg["paths"].get("profiles", "ledger/personality_profiles.yaml")))
+    raw_ledger = merge_profiles(raw_ledger, base / cfg["paths"].get("profiles", "ledger/personality_profiles.yaml"))
+    ledger = parse_ledger(merge_external(raw_ledger, [base / p for p in cfg["paths"].get("external_feeds") or []]))
     state = base / cfg["paths"]["state_dir"]
     if demo:
         state = state / "demo"
@@ -274,8 +275,9 @@ def window_view(ctx: Ctx, archive: pd.DataFrame, inst: Inst) -> dict:
 def events_step(ctx: Ctx, archive: pd.DataFrame) -> dict:
     ecfg = ctx.cfg.get("events", {})
     ev_path = ctx.base / ctx.cfg["paths"]["events"]
-    owner = load_owner_events((load_yaml(ev_path) or {}).get("events", []) if ev_path.exists() else [])
-    cal = load_calendar_events(archive[archive["impact"] == "High"] if not archive.empty else archive,
+    owner_raw = (load_yaml(ev_path) or {}).get("events", []) if ev_path.exists() else []
+    owner = load_owner_events(list(owner_raw) + list(ctx.ledger.raw.get("external_events") or []))
+    cal =load_calendar_events(archive[archive["impact"] == "High"] if not archive.empty else archive,
                                bool(ecfg.get("auto_confirm_scheduled", True)))
     events = pd.concat([x for x in (owner, cal) if not x.empty], ignore_index=True) if (not owner.empty or not cal.empty) else owner
     if not events.empty:

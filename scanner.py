@@ -120,13 +120,14 @@ import pandas as pd
 
 import dynamics as dyn
 import news as newsmod
+import trade_plan as tplan
 
 try:
     import yaml
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.13.0"
+SCANNER_CODE_VERSION = "0.13.1"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -1350,7 +1351,24 @@ class CotSource:
             return {}
         if src == "csv":
             return self._load_csv()
-        return self._load_api()
+        remote = self._load_api()
+        # A distributed release supplies complete local history while API refreshes continue.
+        snapshot_path = self.base / self.cfg.get("distributed_csv_path", "data/cot/cot_distributed.csv")
+        if snapshot_path.exists():
+            local_cfg = {"cot": {**self.cfg, "csv_path": str(snapshot_path)}}
+            local = CotSource(local_cfg, self.base)._load_csv()
+            for market, series in local.items():
+                latest = remote.get(market)
+                if latest is None:
+                    remote[market] = series
+                    continue
+                if latest.family != series.family:
+                    raise ValueError(f"COT report family mismatch for {market}")
+                # Matching dates use the distributed official release; future API weeks survive.
+                frame = pd.concat([latest.frame, series.frame], ignore_index=True)
+                frame = frame.drop_duplicates("report_date", keep="last").sort_values("report_date").reset_index(drop=True)
+                remote[market] = CotSeries(market, latest.family, frame, latest.market_name)
+        return remote
 
     def _load_api(self) -> dict[str, CotSeries]:
         import requests
@@ -1914,6 +1932,7 @@ class Row:
     h4_struct: str = ""            # 4H structure for this direction: intact | broken | none
     dxy: str = ""                  # gold: DXY Daily bias and what it means for this direction
     plan: dict = field(default_factory=dict)   # stop 78.6/89 %, TP1 -27 %, TP2 -61.8 % from the impulse
+    trade_plan: dict = field(default_factory=dict)   # cfg-0.14.0: entry range, stop, TP1, R:R grade
     cot_points: int = 0
     sentiment_points: int = 0
     total: int = 0
@@ -2028,6 +2047,27 @@ def fib_plan(imp_dict: Optional[dict], f: dict) -> dict:
     return out
 
 
+def trade_plan_for(r: "Row", inst: Instrument, tcfg: dict, swing_seq: list[Pivot], swing_tf: str) -> dict:
+    """[OWNER cfg-0.14.0] Entry range, stop, TP1 and R:R grade for one setup. See trade_plan.py."""
+    key = tplan.width_key(inst.asset, inst.quote)
+    width, buffer = float(tcfg["entry_width"][key]), float(tcfg["stop_buffer"][key])
+    sgn = 1 if r.direction == LONG else -1
+    best = r.ref_price - sgn * width
+    own, opp = ("L", "H") if r.direction == LONG else ("H", "L")
+    stops = [("Fib 78.6%", r.plan.get("stop_786")),
+             (f"{swing_tf} swing", tplan.last_swing(swing_seq, own, best, -sgn))]
+    # [OWNER cfg-0.14.1] TP1 follows the trade's purpose: trend pullback = Fib -27% extension first (the
+    # cfg-0.8.0 target), then the swing the trend should retake, then the next level; reversal = nearest level
+    targets = [("Fib -27%", r.plan.get("tp1")),
+               (f"{swing_tf} swing", tplan.last_swing(swing_seq, opp, r.ref_price, sgn)),
+               ("key level", tplan.next_grid_level(r.ref_price, r.direction, inst.grid_mid))]
+    ttype = tplan.scanner_trade_type(r.direction, r.c1, r.daily_bias)
+    plan = tplan.build(r.direction, r.ref_price, width, buffer, stops, targets,
+                       tp_rule="first" if ttype == tplan.TREND_PULLBACK else "nearest")
+    plan["trade_type"] = ttype
+    return plan
+
+
 def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict, cot_reading: CotReading,
                      sent: dict, cal: dict, sent_engine: SentimentEngine, dxy: Optional[str] = None) -> list[Row]:
     """dxy: DXY Daily bias ('long', 'short' or None when unavailable), used for gold only."""
@@ -2051,6 +2091,9 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
     s4 = structure(alternating_upto(piv_4, len(df4) - 1))
     sd_struct = structure(alternating_upto(piv_d, len(dfd) - 1))
     P = float(c2h[-1])
+    # [OWNER cfg-0.14.0] trade plan swings: Daily for gold, S&P and oil (their C6 is Daily), 4H otherwise
+    swing_tf = TF_D if weekly_read else TF_4H
+    swing_seq = (alternating_upto(piv_d, len(dfd) - 1) if weekly_read else alternating_upto(piv_4, len(df4) - 1))
     rows = []
     for direction in (LONG, SHORT):
         r = Row(inst.symbol, inst.group, direction)
@@ -2146,6 +2189,8 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.total = r.technical + r.cot_points + r.sentiment_points
         # Section and grade [OWNER cfg-0.8.0]
         r.section, r.grade, r.grade_note = grade_setup(r, skind)
+        if r.section in ("qualified", "developing"):
+            r.trade_plan = trade_plan_for(r, inst, cfg["trade_plan"], swing_seq, swing_tf)
         if skind == "gold" and r.dxy and r.section != "not shown":
             r.grade_note = (r.grade_note.rstrip(".") + ". " if r.grade_note else "") + r.dxy + "."
         # v1.0 short experiment flag for gold and S&P [Add 3]
@@ -2256,6 +2301,43 @@ def _plan_html(r: "Row") -> str:
     if r.grade_note:
         out += f"<br>{e(r.grade_note)}"
     return out
+
+
+RR_ORDER = {"A": 0, "B": 1, "C": 2, tplan.FAIL: 3, "": 4}
+
+
+def render_trade_plans(rows: list["Row"]) -> str:
+    """[OWNER cfg-0.14.0] One line per qualified or developing setup: entry range, SL, TP1, R:R grade."""
+    e = html.escape
+    plans = [r for r in rows if r.trade_plan]
+    plans.sort(key=lambda r: (RR_ORDER.get(r.trade_plan.get("rr_grade", ""), 4), -(r.trade_plan.get("rr") or 0),
+                              {"A": 0, "B": 1}.get(r.grade, 2), r.symbol, r.direction))
+    out = (f"<h2>Trade plans ({len(plans)})</h2><p class='muted'>Every A, B and developing setup. Entry range from the "
+           "latest 2H close (FX 10 pips, gold $2, S&amp;P 5 points, oil $1). TP1 follows the trade type: trend pullback = "
+           "Fib -27% extension, else the swing to retake, else the next level; key level reversal = nearest level. "
+           "R:R is TP1 reward over risk from the "
+           "worst entry in the range. R:R grade: A 3:1+ (lowest risk), B 2:1+, C 1:1+ (minimum); below 1:1 is not a "
+           "trade. Separate from the confluence grade. Reference levels to check before execution, not orders.</p>")
+    if not plans:
+        return out + "<p class='muted'>No setups to plan.</p>"
+    out += ("<div class='wrap'><table><tr><th>Instrument</th><th>Dir</th><th>Setup</th><th>Entry range</th>"
+            "<th>Stop loss</th><th>TP1</th><th class='num'>Risk</th><th class='num'>Reward</th>"
+            "<th class='num'>R:R</th><th>R:R grade</th><th>Note</th></tr>")
+    for r in plans:
+        p = r.trade_plan
+        g = p.get("rr_grade", "")
+        gcls = {"A": "long", "B": "long", "C": "warn", tplan.FAIL: "short"}.get(g, "muted")
+        rr = f"{p['rr']:.2f}:1" if p.get("rr") is not None else "–"
+        stop = f"{_fmt(p['stop'], 6)}<br><span class='muted'>{e(p['stop_source'])}</span>" if p.get("stop") is not None else "–"
+        tp1 = f"{_fmt(p['tp1'], 6)}<br><span class='muted'>{e(p['tp1_source'])}</span>" if p.get("tp1") is not None else "–"
+        out += (f"<tr class='{'q' if r.section == 'qualified' else 'd'}'><td><b>{e(r.symbol)}</b></td>"
+                f"<td class='{r.direction}'>{r.direction}</td><td>{e(section_label(r))}<br>"
+                f"<span class='muted'>{e(p.get('trade_type', ''))}</span></td>"
+                f"<td>{_fmt(p['entry_low'], 6)} to {_fmt(p['entry_high'], 6)}</td><td>{stop}</td><td>{tp1}</td>"
+                f"<td class='num'>{_fmt(p.get('risk'), 4)}</td><td class='num'>{_fmt(p.get('reward'), 4)}</td>"
+                f"<td class='num'><b>{rr}</b></td><td class='{gcls}'><b>{e(g or '–')}</b></td>"
+                f"<td class='wrapc'>{e(p.get('note', ''))}</td></tr>")
+    return out + "</table></div>"
 
 
 def _structure_html(p: dict) -> str:
@@ -2464,6 +2546,7 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
                      f"<td>{cal_txt}</td><td class='wrapc'>{''.join(f'<span class=tag>{e(x)}</span>' for x in flags)}</td>"
                      + (f"<td class='wrapc'>{dyn.html_block(r.dynamics, e)}</td>" if dyn_on else "") + "</tr>")
         body += "</table></div>"
+    body += render_trade_plans(all_rows)
     body += render_broker(broker)
     if news_view:
         body += render_news(news_view, ZoneInfo(news_view.get("tz", "America/Chicago")))
@@ -2505,6 +2588,10 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
             f"<title>Scanner {e(meta['asof_utc'])}</title><style>{css}</style></head><body><main>{head}{body}</main></body></html>")
 
 
+# cfg-0.14.0: after the flags column and before the optional dyn_ columns, so both layouts stay a stable prefix
+TRADE_PLAN_CSV_KEYS = ["entry_low", "entry_high", "stop", "tp1", "rr", "rr_grade", "trade_type"]
+
+
 def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row], footer: list[dict],
                   broker: Optional[dict] = None, news_view: Optional[dict] = None) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -2524,12 +2611,13 @@ def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row]
         wr = csv.writer(fh)
         wr.writerow(["run_utc", "run_type", "config_version"] + flat_keys + ["cot_index", "cot_status", "sentiment_S",
                                                                          "thin_news", "next_event", "event_risk", "flags"]
-                    + (dyn.DYN_CSV_KEYS if dyn_on else []))
+                    + TRADE_PLAN_CSV_KEYS + (dyn.DYN_CSV_KEYS if dyn_on else []))
         for r in all_rows:
             d = asdict(r)
             wr.writerow([meta["asof_utc"], meta["run_type"], meta["config_version"]] + [d[k] for k in flat_keys]
                         + [r.cot.get("index"), r.cot.get("status"), r.sentiment.get("S"), r.sentiment.get("thin"),
                            r.calendar.get("event"), r.calendar.get("event_risk"), "; ".join(r.flags)]
+                        + [r.trade_plan.get(k) for k in TRADE_PLAN_CSV_KEYS]
                         + (dyn.csv_values(r.dynamics) if dyn_on else []))
     return paths
 

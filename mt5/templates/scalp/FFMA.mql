@@ -1,0 +1,31 @@
+const bool NEEDS_M1=true;
+input double InpMinDistanceTicks=20;
+input double InpRSIHigh=80;
+input double InpRSILow=20;
+input int InpSignalBars=3;
+input int InpFreshM1Bars=2;
+input double InpTargetTicks=10;
+void Scan(Frame &f,Frame &m)
+{
+   if(InpSignalBars<1 || InpSignalBars>f.k-14 || InpFreshM1Bars<1) { Print("Invalid FFMA lookback"); return; }
+   int s=-1,side=0;
+   for(int i=f.k;i>MathMax(f.k-InpSignalBars,0);i--)
+   {
+      if(f.r[i]>=InpRSIHigh && f.b[i].close-f.e9[i]>=InpMinDistanceTicks*rule_tick) { s=i; side=-1; break; }
+      if(f.r[i]<=InpRSILow && f.e9[i]-f.b[i].close>=InpMinDistanceTicks*rule_tick) { s=i; side=1; break; }
+   }
+   if(s<0) return;
+   for(int i=s+1;i<=f.k;i++)
+      if(side>0 ? f.b[i].high>=f.e9[i] : f.b[i].low<=f.e9[i]) return;
+   double stop=side>0 ? f.b[s].low-rule_tick : f.b[s].high+rule_tick;
+   for(int i=1;i<=m.k;i++)
+   {
+      if(m.b[i].time<f.b[s].time+300) continue;
+      if(side*(m.b[i].close-m.b[i-1].close)>0 && side*(m.b[i].close-m.b[i].open)>0)
+      {
+         if(i<m.k-InpFreshM1Bars+1) return;
+         ScalpSignal(m,side,"TRIGGERED","Market",m.b[i].close,stop,InpTargetTicks,0,"First fresh M1 turn after M5 RSI extreme",0,i); return;
+      }
+   }
+   ScalpSignal(f,side,"WATCH","Market",f.b[f.k].close,stop,InpTargetTicks,0,"Wait for first M1 turn",0,s);
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "profile": "gold",
+    "returncode": 0,
+    "entries": 1,
+    "source_kind": "BREAKOUT",
+    "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+    "synthetic": true,
+    "replay": true
+  },
+  {
+    "profile": "es",
+    "returncode": 0,
+    "entries": 1,
+    "source_kind": "BREAKOUT",
+    "stdout": "gold_es_scaling v2.8.0: 4 closed chart bars, 1 tracked entries; latest New York 2026-10-07T20:00:00-04:00; ENTRY B #1",
+    "synthetic": true,
+    "replay": true
+  }
+]

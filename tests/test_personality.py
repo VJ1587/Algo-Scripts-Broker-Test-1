@@ -531,3 +531,19 @@ def test_human_profiles_merge_into_the_ledger_with_their_label(tmp_path):
     assert raw["human_label"] == "human judgement / bias"
     assert raw["human_profiles"]["XAUUSD"]["factors"]["central_bank_buying"]["direction"] == "up"
     assert merge_profiles({"players": {}}, tmp_path / "missing.yaml") == {"players": {}}
+
+
+def test_merge_external_adds_feed_hypotheses_and_unconfirmed_events(tmp_path):
+    from empire.events import load_owner_events
+    from empire.players import merge_external
+    feed = tmp_path / "crown_macro.yaml"
+    feed.write_text("hypotheses:\n  - {id: H-CRN-DXY-XAUUSD-NEG, subject: DXY, metric: 'corr:XAUUSD', expect: '<0', text: x}\n"
+                    "events:\n  - {id: CRN-2026-10-01-01, date: '2026-10-01', headline: SPR release, tier: 3, confirmed: false, type: war_supply}\n",
+                    encoding="utf-8")
+    raw = merge_external({"players": {}, "hypotheses": [{"id": "H-OWN"}]}, [feed, tmp_path / "missing.yaml"])
+    assert [h["id"] for h in raw["hypotheses"]] == ["H-OWN", "H-CRN-DXY-XAUUSD-NEG"]
+    ev = load_owner_events(raw["external_events"])
+    assert len(ev) == 1 and not bool(ev.iloc[0]["confirmed"])          # tier 3 stays unconfirmed: no pressure
+    with pytest.raises(ValueError, match="already in the ledger"):
+        merge_external({"hypotheses": [{"id": "H-CRN-DXY-XAUUSD-NEG"}]}, [feed])
+

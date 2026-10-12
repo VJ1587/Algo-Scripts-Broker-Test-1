@@ -1,0 +1,156 @@
+[
+  {
+    "file": "Futures_Scalp_Double_Bottom_Top.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_FFMA.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_MOMO_Base.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_One_Minute_Range_Break.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_ORB_MOMO.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_ORB_Trend.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_RMA.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Futures_Scalp_Trend.mq5",
+    "family": "futures scalp",
+    "orders": false
+  },
+  {
+    "file": "Daily_FX_Major_A.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_FX_Major_B.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_FX_Cross_A.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_Gold_A.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_Gold_B.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_SP500_A.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Daily_Oil_A.mq5",
+    "family": "daily position",
+    "orders": false
+  },
+  {
+    "file": "Gold_ES_Scaling.mq5",
+    "family": "gold ES scaling Python bridge",
+    "strategy_id": "gold_es_scaling",
+    "version": "2.8.0",
+    "orders": false,
+    "feed": "gold_es_scaling.tsv",
+    "source_pine_sha256": "ea0c34b51fab2b252aca4d1248b4526d5f3f2f8da2e435a6c079a4729c83be98"
+  },
+  {
+    "file": "ITS_S1_Macro_Trend_Continuation.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s1_macro_trend_continuation",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s1_macro_trend_continuation.tsv",
+    "export_command": "python -m strategies.s1_macro_trend_continuation.mt5_export",
+    "python_source_sha256": "d8504b5a760234bd3c672c43b534e00fe4b5b163a538aad3bec20413661fe644"
+  },
+  {
+    "file": "ITS_S2_Liquidity_Sweep_Reversal.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s2_liquidity_sweep_reversal",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s2_liquidity_sweep_reversal.tsv",
+    "export_command": "python -m strategies.s2_liquidity_sweep_reversal.mt5_export",
+    "python_source_sha256": "884dc443319d0196235de404d588e4aecd6dcfc5c31e52a3aa6796946c111a72"
+  },
+  {
+    "file": "ITS_S3_Equity_Value_Repricing.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s3_equity_value_repricing",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s3_equity_value_repricing.tsv",
+    "export_command": "python -m strategies.s3_equity_value_repricing.mt5_export",
+    "python_source_sha256": "b6fe88776155a581f3ae76b67630a4248cc7a628737abc2cc41559c001463a78"
+  },
+  {
+    "file": "ITS_S4_Volatility_Compression_Breakout.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s4_volatility_compression_breakout",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s4_volatility_compression_breakout.tsv",
+    "export_command": "python -m strategies.s4_volatility_compression_breakout.mt5_export",
+    "python_source_sha256": "f0d3dd0c008bfcc7a96791908ba2e103e39a3bc2ff19515f3d8bcdcfcf1defd5"
+  },
+  {
+    "file": "ITS_S5_Positioning_Exhaustion.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s5_positioning_exhaustion",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s5_positioning_exhaustion.tsv",
+    "export_command": "python -m strategies.s5_positioning_exhaustion.mt5_export",
+    "python_source_sha256": "8ec599c2f869bc0a974110ce37ad13c3ec3bd4450c7d4a26cdcd0afecc4b722d"
+  },
+  {
+    "file": "ITS_S6_Statistical_Mean_Reversion.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s6_statistical_mean_reversion",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s6_statistical_mean_reversion.tsv",
+    "export_command": "python -m strategies.s6_statistical_mean_reversion.mt5_export",
+    "python_source_sha256": "a2c7b7ba1898290a0b1319887bf810d57f822f803cb4f4ed1850aa52ab6c2d11"
+  },
+  {
+    "file": "ITS_S7_Options_Volatility_Screen.mq5",
+    "family": "institutional Python bridge",
+    "strategy_id": "s7_options_volatility",
+    "version": "1.0.0",
+    "orders": false,
+    "feed": "s7_options_volatility.tsv",
+    "export_command": "python -m strategies.s7_options_volatility.mt5_export",
+    "python_source_sha256": "172442194c9aa9d9e97c1e3b205ac956a8d28d6b176ab74782f5800ab9e89629"
+  }
+]

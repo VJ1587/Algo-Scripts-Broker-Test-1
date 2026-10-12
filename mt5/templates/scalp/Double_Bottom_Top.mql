@@ -1,0 +1,40 @@
+const bool NEEDS_M1=false;
+input int InpPivotWidth=2;
+input int InpLookback=60;
+input int InpPriorLookback=24;
+input double InpMinimumMoveTicks=30;
+input double InpBounceATR=1.0;
+input double InpToleranceATR=0.25;
+input double InpATRStop=1.0;
+input double InpTargetTicks=10;
+void Scan(Frame &f,Frame &unused)
+{
+   int k=f.k,w=InpPivotWidth;
+   if(w<1 || w>k/2 || InpLookback<1 || InpPriorLookback<1) { Print("Invalid pivot parameters"); return; }
+   for(int side=1;side>=-1;side-=2)
+   {
+      int pivot=-1;
+      for(int i=MathMax(w,k-InpLookback);i<k-w+1;i++)
+      {
+         bool ok=true;
+         double level=side>0 ? f.b[i].low : f.b[i].high;
+         for(int j=i-w;j<=i+w;j++)
+         {
+            double other=side>0 ? f.b[j].low : f.b[j].high;
+            if(side>0 ? level>other : level<other) ok=false;
+            if(j<i && level==other) ok=false;
+         }
+         if(ok) pivot=i;
+      }
+      if(pivot<0 || pivot+1>=k) continue;
+      double level=side>0 ? f.b[pivot].low : f.b[pivot].high;
+      double move=side>0 ? High(f.b,pivot-InpPriorLookback,pivot-1)-level : level-Low(f.b,pivot-InpPriorLookback,pivot-1);
+      double bounce=side>0 ? High(f.b,pivot+1,k-1)-level : level-Low(f.b,pivot+1,k-1);
+      if(move<InpMinimumMoveTicks*rule_tick || bounce<InpBounceATR*f.a[k]) continue;
+      bool broken=false; double tol=InpToleranceATR*f.a[k];
+      for(int i=pivot+1;i<=k;i++) if(side*(f.b[i].close-level)<-tol) broken=true;
+      if(broken) continue;
+      bool at=side>0 ? f.b[k].low<=level+tol : f.b[k].high>=level-tol;
+      ScalpSignal(f,side,at ? "AT LEVEL" : "ARMED","Limit",level,level-side*InpATRStop*f.a[k],InpTargetTicks,0,side>0 ? "Double bottom" : "Double top");
+   }
+}

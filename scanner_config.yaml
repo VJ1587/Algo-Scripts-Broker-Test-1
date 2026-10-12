@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.13.0"
+config_version: "cfg-0.14.1"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -25,6 +25,8 @@ changelog:
   - {version: "cfg-0.11.0", date: "2026-10-08", change: "Gold (XAUUSD and GC) mid levels (every $50) get a +/-$8 zone via grids.gold.mid_zone_half_width; majors (every $100) stay +/-$20. Zone coverage of all gold prices drops from 80% to 56%", reason: "Owner: a $50 mid is a weaker level and was triggering C2 too often; tighten it so the filter screens more"}
   - {version: "cfg-0.12.0", date: "2026-10-08", change: "Gold (XAUUSD and GC) major levels (every $100) zone narrowed from +/-$20 to +/-$10; mids stay +/-$8. Zone coverage of all gold prices drops from 56% to 36%. New grids.gold.pattern_half_width: 20 keeps double top/bottom and head and shoulders sizes on the old $20 basis", reason: "Owner: quality setups only; filter out setups that are off the key levels"}
   - {version: "cfg-0.13.0", date: "2026-10-08", change: "Dynamic Structure and Personality Layer v0.1 (dynamics.py), logged only: volatility scaled swings and structure score on 4H/Daily/Weekly, timeframe ladder, pullback location, break significance, maturity and coil flags, weekly personality traits (energy, noise, wickiness, swing rhythm, retracement profile, break follow through, dollar tie; shared per underlying), scaled parameters T1-T6, four zone widths logged in c2_rejections.csv, dollar basket + DXY + breadth + correlation break + context points. Daily pull 400 -> 1,300 bars (bars.n_bars_daily); the v1.0 scoring keeps its 400 bar window (bars.n_bars_daily_scoring); Weekly minimum 150 bars; new block dynamics", reason: "Owner build instructions, October 8, 2026: side by side rollout, nothing switched on; Daily bias is path dependent so the scoring window is unchanged (planning/decisions/2026-10-08-dynamics-layer-side-by-side.md)"}
+  - {version: "cfg-0.14.0", date: "2026-10-11", change: "Trade plan on every A, B and developing setup: entry range (FX 10 pips, JPY 0.10, gold $2, S&P 5 points = 20 ES ticks, oil $1) from the latest 2H close, stop beyond the Fib 78.6% or the last swing plus a buffer, TP1 = nearest of Fib -27%, last opposing swing, next key level; R:R graded on TP1 from the worst entry (A 3:1+, B 2:1+, C 1:1+, below 1:1 not a trade). Shown separately; does not change the confluence grade or rank", reason: "Owner request 2026-10-11: clear entry, SL and TP ranges with a minimum 1:1 R:R to check before execution"}
+  - {version: "cfg-0.14.1", date: "2026-10-11", change: "TP1 follows the trade type: trend pullback (C1 or Daily bias with the trade) takes the Fib -27% extension first, then the last opposing swing, then the next key level; key level reversal keeps the nearest level. Trade type shown on the dashboard and in the CSV", reason: "Owner 2026-10-11: TP1 should align with the purpose of the trade"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -177,6 +179,12 @@ features:
 # levels only (cfg-0.11.0); left out = mids use zone_half_width. Optional pattern_half_width (cfg-0.12.0) sizes
 # chart patterns (features.chart_patterns) instead of zone_half_width. null = not set by owner yet: that instrument keeps
 # the ATR width (max(2 ticks, 0.10 x 4H ATR)) and every row carries a "zone width not set" flag.
+# ---------------------------------------------------------------- trade plan (cfg-0.14.0)
+# Spec: Development/planning/specs/trade-plan-rr-grade_spec.md. Keys: fx, jpy (JPY pairs), gold, spx, oil.
+trade_plan:
+  entry_width: {fx: 0.0010, jpy: 0.10, gold: 2.00, spx: 5.00, oil: 1.00}   # [OWNER] 10 pips FX, $2 gold, 20 ES ticks, $1 oil (oil: confirm)
+  stop_buffer: {fx: 0.0003, jpy: 0.03, gold: 1.00, spx: 1.00, oil: 0.10}   # [IMPL] beyond the swing or Fib stop; owner to confirm
+
 grids:
   fx:   {major: 0.0500, mid: 0.0250, zone_half_width: 0.0015}
   jpy:  {major: 5.00,   mid: 2.50,   zone_half_width: 0.15}
@@ -213,6 +221,7 @@ roll_rules:
 cot:
   source: cftc_api            # cftc_api | csv | off
   csv_path: data/cot/cot.csv  # columns: market,report_date,publication_ts(optional),long,short,open_interest,report_family
+  distributed_csv_path: data/cot/cot_distributed.csv  # official local history merged with API releases
   api_base: https://publicreporting.cftc.gov/resource
   datasets:
     TFF: gpe5-46if            # Traders in Financial Futures, futures only

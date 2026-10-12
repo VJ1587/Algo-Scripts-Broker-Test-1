@@ -1,0 +1,7 @@
+{
+  "command": "Development/.venv/Scripts/python.exe -m pytest tests/test_scalp.py tests/test_scanner.py -q -p no:cacheprovider --basetemp=mt5/validation/pytest-run-20261009",
+  "working_directory": "Development/src/Algo-Scripts-Broker-Test-1",
+  "result": "119 passed in 71.79s",
+  "purpose": "Existing Python source regression tests; does not execute generated MQL5",
+  "initial_attempt": "111 passed, 8 fixture permission errors; resolved with workspace temporary directory and approved rerun"
+}

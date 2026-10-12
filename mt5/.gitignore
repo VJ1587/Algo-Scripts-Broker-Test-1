@@ -1,0 +1,10 @@
+# Local generated binary delivery; sources/templates remain versioned.
+Scripts/*.ex5
+MT5_Separate_Strategies.zip
+__pycache__/
+
+# Superseded GC-only outputs preserved locally; excluded from corrected delivery.
+legacy_gold_only/
+
+# Pytest temp output copied in during validation.
+validation/pytest-run-*/
