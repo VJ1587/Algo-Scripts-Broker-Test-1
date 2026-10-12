@@ -402,9 +402,9 @@ Names only; never put values in this repo.
 | `TV_PASSWORD` | same as `TV_USERNAME` | Password for that login |
 | `FRED_CACHE_DIR` | `empire/data.py` (`FredDaily`) | Shared FRED cache folder, `Development\data\fred`, filled by `Development/src/services/fred_cache`. Set as a Windows User environment variable. When unset or a series is missing, the engine downloads from FRED directly. |
 
+These are the only `os.environ` reads in this repo's Python code (grep, 2026-10-12). The full list of
 variables across `Development` and the scanner daemon setup are in `Development/.env.example` and
 `Development/ops/deploy/scheduled-jobs_runbook.md`.
-existed when this section was written.
 
 ## Run
 
