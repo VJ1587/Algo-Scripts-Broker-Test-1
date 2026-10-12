@@ -37,18 +37,38 @@ copy/feed per instrument. Gold and ES both work through their explicit profiles.
 
 ## Install Python
 
-The standalone ZIP contains `Python/gold_es_scaling/` and `Scripts/`.
-From the extracted `Python` folder:
+**In this repo** there is no `.venv` at the repo root. Use `Development\.venv`
+(Python 3.14.7, NumPy 2.5.2, pandas 3.0.6; checked 2026-10-12, so nothing extra to
+install). Run every command below from `Development/src/Algo-Scripts-Broker-Test-1`
+after setting:
+
+```powershell
+$py = "..\..\.venv\Scripts\python.exe"        # Development\.venv
+```
+
+**From the standalone ZIP** (contains `Python/gold_es_scaling/` and `Scripts/`),
+create an environment in the extracted `Python` folder and run from there:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r gold_es_scaling/requirements-lock.txt
+$py = ".\.venv\Scripts\python.exe"
+& $py -m pip install -r gold_es_scaling/requirements-lock.txt
 ```
 
-Tested locally with Python 3.14.7, NumPy 2.5.2 and pandas 3.0.6. The lock file records
-runtime dependencies; no broker SDK, credentials, API subscription or network data
-provider is required by this strategy. Existing project environments can run it
-from `Development/src/Algo-Scripts-Broker-Test-1` with the same module command.
+The lock file records runtime dependencies; no broker SDK, credentials, API
+subscription or network data provider is required by this strategy.
+
+Entry scripts:
+
+- `python -m gold_es_scaling` runs `cli.py` (via `__main__.py`): the standalone
+  strategy CLI and optional read-only MT5 feed (`--mt5-feed`). No broker SDK.
+- `python -m gold_es_scaling.demo --output <folder>` writes synthetic fixtures for
+  both profiles.
+- `python gold_es_scaling/package_delivery.py` checks the MetaEditor compile log
+  (0 errors, 0 warnings), that the `.ex5` is newer than the `.mq5`, that the `.mq5`
+  has no `OrderSend(` or `#include`, and that both CLI smoke runs in
+  `validation/cli_smoke.json` succeeded. It then rewrites `validation/summary.json`
+  and rebuilds `Gold_ES_Scaling_Python_MT5.zip`.
 
 ## Supply bars and run
 
@@ -76,7 +96,7 @@ server clock values as UTC; normalize them with the broker's historical clock ru
 Example command (replace paths with your actual files/data folder):
 
 ```powershell
-.\.venv\Scripts\python.exe -m gold_es_scaling --chart data/XAUUSD_15m.csv --a data/XAUUSD_2H.csv --s data/XAUUSD_4H.csv --daily data/XAUUSD_D.csv --weekly data/XAUUSD_W.csv --profile Gold --broker-symbol XAUUSD --output output/scaling.json --mt5-feed 'C:\YOUR_MT5_DATA_FOLDER\MQL5\Files\gold_es_scaling.tsv'
+& $py -m gold_es_scaling --chart data/XAUUSD_15m.csv --a data/XAUUSD_2H.csv --s data/XAUUSD_4H.csv --daily data/XAUUSD_D.csv --weekly data/XAUUSD_W.csv --profile Gold --broker-symbol XAUUSD --output output/scaling.json --mt5-feed 'C:\YOUR_MT5_DATA_FOLDER\MQL5\Files\gold_es_scaling.tsv'
 ```
 
 For ES, use its five histories, `--profile ES` and its exact executable broker
@@ -169,10 +189,10 @@ run passed **33 tests**. The new reader compiled with **0 errors and 0 warnings*
 Gold and ES CLI smoke runs each produced one synthetic breakout limit. These are
 engineering checks, not trading-performance evidence.
 
-From the extracted Python folder:
+With `$py` set as in Install Python:
 
 ```powershell
-.\.venv\Scripts\python.exe -m gold_es_scaling.demo --output demo
+& $py -m gold_es_scaling.demo --output demo
 ```
 
 This writes five clearly synthetic CSVs and a manual-bias demo config for each
@@ -182,4 +202,4 @@ diagnostic mode. The shipped `validation/cli_smoke.json` records the executed ru
 
 The separate key-level/Fibonacci indicator conversion is still awaiting its source.
 
-Pine HTF timing reference: [TradingView repainting documentation](https://www.tradingview.com/pine-script-docs/concepts/repainting/).
+Pine HTF timing reference: [TradingView repainting documentation](https://www.tradingview.com/pine-script-docs/concepts/repainting/).

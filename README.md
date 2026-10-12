@@ -42,16 +42,16 @@ The build validation recorded **107 modern tests**, **4 legacy tests**,
 **15 cross-asset smoke runs** and **6 engineering comparison variants**. These are
 synthetic engineering checks; real-data performance validation remains pending.
 
-Run independently from the package folder:
+Run from the package folder with `Development\.venv` (see Install). The editable install is needed for
+the CLI and for 6 of the 107 tests; it has not been run in `Development\.venv` (checked 2026-10-12):
 
 ```powershell
 cd scalping_system
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e '.[dev]'
-python examples/generate_synthetic_data.py --output examples/generated --seed 42
-python -m scalping.cli run --strategy trend --data examples/generated/stock_bars.csv --instrument configs/instruments/DEMO_STOCK.yaml --mode adaptive --synthetic --output results
-python -m pytest -q
+$py = "..\..\..\.venv\Scripts\python.exe"     # Development\.venv
+& $py -m pip install -e '.[dev]'
+& $py examples/generate_synthetic_data.py --output examples/generated --seed 42
+& $py -m scalping.cli run --strategy trend --data examples/generated/stock_bars.csv --instrument configs/instruments/DEMO_STOCK.yaml --mode adaptive --synthetic --output results
+& $py -m pytest -q
 ```
 
 See the [project README](scalping_system/README.md) for all five methods and modes,
@@ -222,10 +222,11 @@ See the script header for the CSV format used by `--data-dir` and `--news`.
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.13.0, config `cfg-0.13.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.13.1 (`SCANNER_CODE_VERSION` in `scanner.py`), config `cfg-0.14.1`
+(`config_version` in `scanner_config.yaml`).
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
-COT overlay and a headline sentiment overlay (each capped at Â±2), and writes an HTML dashboard of the
+COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
 top 5 setups (A, then B, then developing) plus every developing setup. It places no orders and
 sizes no positions.
 
@@ -241,7 +242,7 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 | Check | Name | Passes when |
 |---|---|---|
 | C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold, S&P and oil: Weekly = bias, Daily = confirmation, no 4H (see Weekly and Daily). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), Â±15 pips; JPY pairs every 5.00 and 2.50, Â±0.15; gold every 100 Â±10 and every 50 (mid) Â±8; S&P every 100 and 50, Â±20; oil every 5.00 and 2.50, Â±1.00. |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold every 100 ±10 and every 50 (mid) ±8; S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
@@ -317,6 +318,28 @@ extra width columns in `logs/c2_rejections.csv` (the pre existing log is kept as
 Before anything is switched on: the Section 9 evidence (E1 to E6) on at least 100 closed ideas, then a
 config version bump with the reason. P7 (conviction, level respect) waits for the empire modules.
 
+## Branches and worktrees
+
+Checked 2026-10-12.
+
+- **`Scanner` is the working branch.** GitHub's default branch is `main`, which is behind it:
+  `git rev-list --left-right --count main...Scanner` gives `0 16` (main has nothing Scanner lacks;
+  Scanner has 16 commits main lacks). Local `Scanner` matches `origin/Scanner` as last fetched (no fetch was run for this check).
+- **Two sibling worktrees,** kept by owner decision:
+
+  | Folder | Branch | State vs `Scanner` |
+  | --- | --- | --- |
+  | `../Algo-Scalp` | `claude/pensive-hamilton-jicnv6` | Fully merged (0 commits not in Scanner) |
+  | `../Algo-Personality` | `claude/laughing-lovelace-6ghrqm` | Merged on 2026-10-08 (`35aa106`), later commit `1db0995` (2026-10-12) is not merged as a commit, but its changes are already in Scanner (checked with a reverse-apply). Nothing would be lost by removing this worktree. |
+
+- **Warning: `Algo-Personality\data` and `Algo-Personality\output` are directory junctions** to this
+  repo's `data` and `output`. Running any script in that worktree writes into this repo's live journal,
+  personality data and dashboards. `Development/src/cot_reports/distribute_cot.py` also writes
+  `data/cot/cot_distributed.csv` for both `Algo-Scripts-Broker-Test-1` and `Algo-Personality`, using
+  each folder's own `scanner_config.yaml`. Through the junction, the second write lands in this repo's
+  `data/cot/` and replaces the first. Today both configs list the same 10 COT markets; if they ever
+  differ, this repo ends up with Algo-Personality's set.
+
 ## Files
 
 | File | Purpose |
@@ -326,24 +349,62 @@ config version bump with the reason. P7 (conviction, level respect) waits for th
 | `scanner_config.yaml` | Versioned parameters: universe, grids, COT codes, theme weights, keywords, the `dynamics` block |
 | `tests/test_scanner.py` | Unit tests (pivots, bias, impulse, zones, candles, COT, sentiment, ranking, MT5 time and routing, journal) |
 | `tests/test_dynamics.py` | The ten build tests of the dynamics instructions plus the S2, X4 and X5 check values |
-| `requirements.txt` | Dependencies |
+| `trade_plan.py` | Entry range, stop, TP1 and R:R grade for each A, B and developing setup (cfg-0.14.0). Pure functions; no orders, no sizes |
+| `personality.py` | Empire Game Market Personality engine entry point (daily, monthly, quarterly, annual reviews) |
+| `empire/` | Personality engine package: one module per layer (data, traits, regimes, pairs, levels, push, players, events, stories, journal, review, report, monitor, evolution, config) |
+| `personality_config.yaml`, `personality_ledger.yaml`, `personality_events.yaml` | Personality engine config, ledger and event list |
+| `ledger/` | Personality ledger files: `politics.yaml`, `cycle_scorecard.yaml`, `personality_profiles.yaml`, `crown_macro.yaml` |
+| `news.py` | Forex Factory red-folder calendar for the scanner, the trade gate and the backtest |
+| `trade_gate.py` | Owner approval hold between a scanned setup and any order |
+| `accounts.example.yaml` | Template for the git-ignored `accounts.yaml` used by the trade gate |
+| `futures_scalp_scanner.py` | Futures scalp scanner (ES, NQ, CL, GC; seven WSGTA Futures Rule Book setups) |
+| `scalp_config.yaml` | Futures scalp scanner settings |
+| `broker_v11_algo.py` | BROKER-v1.1 research and backtest script |
+| `mt5/` | 23 standalone MT5 scripts, their templates, `build_scripts.py` and `validate_delivery.py` |
+| `gold_es_scaling/` | Gold / ES scaling strategy (Pine v2.8.0 conversion) in Python plus a read-only MT5 feed reader |
+| `scalping_system/` | Instrument-adaptive scalping research package (five methods, synthetic data only) |
+| `scalping_system_delivery.zip` | Source delivery ZIP of `scalping_system/` |
+| `tests/` | Root tests: scanner, dynamics, trade plan, trade gate, news, personality, futures scalp, shared FRED cache |
+| `requirements.txt` | Dependencies for the root scripts |
 
 ## Install
 
+One interpreter: `Development\.venv` (Python 3.14.7, checked 2026-10-12). The scanner daemon also runs
+from it. There is no `.venv` inside this repo.
+
+This repo has its own `requirements.txt` (pandas, numpy, PyYAML, requests, pytest, MetaTrader5 on
+Windows). `Development/requirements.txt` belongs to the supply chain digital twin and does not cover
+MetaTrader5, requests or tvdatafeed, so use this one. From this folder:
+
+```powershell
+$py = "..\..\.venv\Scripts\python.exe"        # Development\.venv
+& $py -m pip install -r requirements.txt       # includes MetaTrader5 on Windows
+& $py -m pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
+& $py -m pip install transformers torch        # only if you want FinBERT sentiment now
 ```
-python -m venv .venv
-.venv\Scripts\activate            # Windows   (macOS/Linux: source .venv/bin/activate)
-pip install -r requirements.txt  # includes MetaTrader5 on Windows
-pip install --upgrade git+https://github.com/rongardF/tvdatafeed.git
-pip install transformers torch    # only if you want FinBERT sentiment now
-```
+
+Installed in `Development\.venv` on 2026-10-12: pandas 3.0.6, numpy 2.5.2, PyYAML 6.0.3, requests
+2.34.2, pytest 9.1.1, MetaTrader5 5.0.6231, tvdatafeed 2.1.0. `transformers` and `torch` are not
+installed, so FinBERT sentiment is off. The command examples below write `python`; run them with
+`Development\.venv\Scripts\python.exe`.
 
 MetaTrader 5 needs Windows and the MT5 desktop terminal installed, open and logged in to the broker
 account. Without it (or with `mt5.enabled: false`) every instrument uses TradingView and the
 dashboard and journal note that MT5 is unavailable.
 
-Optional TradingView login (more history, fewer limits): set `TV_USERNAME` and `TV_PASSWORD`
-environment variables. Without them the library runs in anonymous mode.
+### Environment variables
+
+Names only; never put values in this repo.
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `TV_USERNAME` | `scanner.py`, `futures_scalp_scanner.py`, `empire/data.py` | Optional TradingView login (more history, fewer limits). Without it tvdatafeed runs anonymous and may serve delayed bars. |
+| `TV_PASSWORD` | same as `TV_USERNAME` | Password for that login |
+| `FRED_CACHE_DIR` | `empire/data.py` (`FredDaily`) | Shared FRED cache folder, `Development\data\fred`, filled by `Development/src/services/fred_cache`. Set as a Windows User environment variable. When unset or a series is missing, the engine downloads from FRED directly. |
+
+variables across `Development` and the scanner daemon setup are in `Development/.env.example` and
+`Development/ops/deploy/scheduled-jobs_runbook.md`.
+existed when this section was written.
 
 ## Run
 
@@ -355,8 +416,26 @@ python scanner.py --run intraday                 # one run between the two main 
 python scanner.py --daemon                       # stays running; every 2 hours at :05 UTC
 python scanner.py --journal                      # rebuild only the journal and balance page from MT5
 python scanner.py --source csv --asof 2026-10-02T12:05Z   # point in time from your own CSV bars
-python -m pytest -q                              # tests
 ```
+
+### Tests
+
+There is no pytest config at the repo root, so `python -m pytest -q` from here collects every
+subfolder and stops with 4 collection errors (checked 2026-10-12 with `Development\.venv`): three
+access-denied scratch folders under `gold_es_scaling/validation/` and `scalping_system/tests`
+(`No module named 'scalping'`). Run each suite on its own:
+
+| Command (from this folder unless noted) | Result 2026-10-12, `Development\.venv` |
+| --- | --- |
+| `python -m pytest tests -q` | 232 passed, 1 warning, about 8 minutes |
+| `python -m pytest gold_es_scaling/tests -q` | 22 passed |
+| `python -m pytest mt5/tests -q` | 11 passed |
+| `cd scalping_system; python -m pytest -q` | 101 passed, 6 failed |
+
+The 6 `scalping_system` failures are tests that start a new Python process and import `scalping`
+(`test_strategy_isolation.py` and a CLI test). Its `pyproject.toml` adds `src` to the path only
+inside pytest, so these pass only after `python -m pip install -e ".[dev]"` from `scalping_system`.
+That package is not installed in `Development\.venv`.
 
 `--run auto` (the default) picks evening before 06:00 or after 18:00 UTC, pre NY otherwise.
 
@@ -429,13 +508,13 @@ config). Nothing in the scanner sends, changes or closes orders.
 
 | Spec item | Where |
 | --- | --- |
-| Completed bars only, 250 bar checks, OHLC sanity (v1.0 Â§2) | `completed`, `check_bars` |
-| EMA seeded with SMA, Wilder ATR14 (v1.0 Â§2) | `ema`, `atr` |
-| Strict 2 bar pivots, confirm at k+2, alternation (v1.0 Â§2) | `find_pivots`, `add_alternating` |
+| Completed bars only, 250 bar checks, OHLC sanity (v1.0 §2) | `completed`, `check_bars` |
+| EMA seeded with SMA, Wilder ATR14 (v1.0 §2) | `ema`, `atr` |
+| Strict 2 bar pivots, confirm at k+2, alternation (v1.0 §2) | `find_pivots`, `add_alternating` |
 | Daily bias D01, 4H agreement D02 | `daily_bias`, `structure` |
-| Impulse I01 (6 bar recency, 3 to 30 bars, 2Ã—ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
+| Impulse I01 (6 bar recency, 3 to 30 bars, 2×ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
 | Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `structure_holding`, `grade_setup`, `score_instrument` |
-| COT index, pair mapping, Â±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
+| COT index, pair mapping, ±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
 | Sentiment S, themes, direction rules (Add 6.3, 7) | `SentimentEngine` |
 | Calendar countdown and event risk (Add 6.4) | `next_event` |
 | Sections and ranking (Add 8) | `score_instrument`, `rank` |
@@ -448,7 +527,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    scanner rebuilds 2H and 4H from 1H bars on a UTC grid (`intraday_mode: resample_1h`). Daily bars
    stay native because 5,000 1H bars cannot make 250 Daily bars, so Daily follows TradingView's
    session (for FX I believe this is 17:00 New York; please verify). This is a documented deviation
-   from v1.0 Â§2.
+   from v1.0 §2.
 2. **Pre NY Daily freeze.** The pre NY run uses only Daily bars complete at that day's 00:05 UTC.
 3. **Bias re-arm guard.** After invalidation a bias cannot reinitialize while the close is already
    beyond the new invalidation level (otherwise the broken bias re-arms on the same bar).
@@ -458,7 +537,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $10 at majors (XAUUSD
    and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
    grid). Gold mid levels (every $50) use a tighter $8 zone (`mid_zone_half_width`, cfg-0.11.0): a mid is a
-   weaker level, and at Â±$20 the gold zones covered 80% of all prices, so C2 barely filtered. Majors narrowed to Â±$10 (cfg-0.12.0): coverage is now 36%. Gold chart pattern
+   weaker level, and at ±$20 the gold zones covered 80% of all prices, so C2 barely filtered. Majors narrowed to ±$10 (cfg-0.12.0): coverage is now 36%. Gold chart pattern
    sizes stay on the old $20 basis (`pattern_half_width`) so only the key level filter changed.
    C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
    to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
@@ -504,7 +583,7 @@ config). Nothing in the scanner sends, changes or closes orders.
    the release bar. Group shrinkage uses the statistic computed on the group's pooled observations. The v1.0
    scoring keeps a 400 bar Daily window while the layer reads 1,300 (decision record of October 8, 2026).
 
-## Open items before treating output as validated (Addendum Â§10)
+## Open items before treating output as validated (Addendum §10)
 
 - [ ] Choose headline feeds and confirm each allows scripted access (`sentiment.feeds` is empty, so
       sentiment scores 0 with "thin news" until you add feeds)
@@ -535,7 +614,7 @@ tone; its output says nothing about markets.
   UTC. Its `n_bars` maximum is 5,000.
 
 Governance: change any threshold, weight, spacing or cap by bumping `config_version` and adding a
-`changelog` line in the config (v1.0 Â§12).
+`changelog` line in the config (v1.0 §12).
 
 
 ### COT distribution, code 0.13.1 (2026-10-10)
