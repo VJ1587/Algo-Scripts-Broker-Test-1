@@ -332,13 +332,10 @@ Checked 2026-10-12.
   | `../Algo-Scalp` | `claude/pensive-hamilton-jicnv6` | Fully merged (0 commits not in Scanner) |
   | `../Algo-Personality` | `claude/laughing-lovelace-6ghrqm` | Merged on 2026-10-08 (`35aa106`), later commit `1db0995` (2026-10-12) is not merged as a commit, but its changes are already in Scanner (checked with a reverse-apply). Nothing would be lost by removing this worktree. |
 
-- **Warning: `Algo-Personality\data` and `Algo-Personality\output` are directory junctions** to this
-  repo's `data` and `output`. Running any script in that worktree writes into this repo's live journal,
-  personality data and dashboards. `Development/src/cot_reports/distribute_cot.py` also writes
-  `data/cot/cot_distributed.csv` for both `Algo-Scripts-Broker-Test-1` and `Algo-Personality`, using
-  each folder's own `scanner_config.yaml`. Through the junction, the second write lands in this repo's
-  `data/cot/` and replaces the first. Today both configs list the same 10 COT markets; if they ever
-  differ, this repo ends up with Algo-Personality's set.
+- **This repo's `data` and `output` are the one live journal.** The junctions that linked
+  `Algo-Personality\data` and `\output` here were removed on 2026-10-12, and
+  `Development/src/cot_reports/distribute_cot.py` writes `data/cot/cot_distributed.csv` only to this repo,
+  using this repo's `scanner_config.yaml`.
 
 ## Files
 
@@ -430,12 +427,11 @@ access-denied scratch folders under `gold_es_scaling/validation/` and `scalping_
 | `python -m pytest tests -q` | 232 passed, 1 warning, about 8 minutes |
 | `python -m pytest gold_es_scaling/tests -q` | 22 passed |
 | `python -m pytest mt5/tests -q` | 11 passed |
-| `cd scalping_system; python -m pytest -q` | 101 passed, 6 failed |
+| `cd scalping_system; python -m pytest -q` | 107 passed (2026-10-12) |
 
-The 6 `scalping_system` failures are tests that start a new Python process and import `scalping`
-(`test_strategy_isolation.py` and a CLI test). Its `pyproject.toml` adds `src` to the path only
-inside pytest, so these pass only after `python -m pip install -e ".[dev]"` from `scalping_system`.
-That package is not installed in `Development\.venv`.
+`scalping_system` is installed in `Development\.venv` as an editable package
+(`python -m pip install -e ".[dev]"` from `scalping_system`, done 2026-10-12). Six of its tests start a
+new Python process and import `scalping`, so they fail on any interpreter without that install.
 
 `--run auto` (the default) picks evening before 06:00 or after 18:00 UTC, pre NY otherwise.
 
