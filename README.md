@@ -477,3 +477,8 @@ tone; its output says nothing about markets.
 
 Governance: change any threshold, weight, spacing or cap by bumping `config_version` and adding a
 `changelog` line in the config (v1.0 §12).
+
+
+### COT distribution, code 0.13.1 (2026-10-10)
+
+The COT loader merges `cot.distributed_csv_path` with API pulls, preserves newer API weeks, and uses the distributed official release for matching dates. Local history remains subject to the existing publication and stale-data checks. October 6 positions and 162 weeks of history are in `data/cot/cot_distributed.csv`. The full report archive and distribution guide are in `../cot_reports/README.md`.

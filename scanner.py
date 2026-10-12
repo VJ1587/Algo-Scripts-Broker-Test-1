@@ -126,7 +126,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-SCANNER_CODE_VERSION = "0.13.0"
+SCANNER_CODE_VERSION = "0.13.1"
 UTC = timezone.utc
 ET_TZ = ZoneInfo("America/New_York")
 LOG = logging.getLogger("scanner")
@@ -1350,7 +1350,24 @@ class CotSource:
             return {}
         if src == "csv":
             return self._load_csv()
-        return self._load_api()
+        remote = self._load_api()
+        # A distributed release supplies complete local history while API refreshes continue.
+        snapshot_path = self.base / self.cfg.get("distributed_csv_path", "data/cot/cot_distributed.csv")
+        if snapshot_path.exists():
+            local_cfg = {"cot": {**self.cfg, "csv_path": str(snapshot_path)}}
+            local = CotSource(local_cfg, self.base)._load_csv()
+            for market, series in local.items():
+                latest = remote.get(market)
+                if latest is None:
+                    remote[market] = series
+                    continue
+                if latest.family != series.family:
+                    raise ValueError(f"COT report family mismatch for {market}")
+                # Matching dates use the distributed official release; future API weeks survive.
+                frame = pd.concat([latest.frame, series.frame], ignore_index=True)
+                frame = frame.drop_duplicates("report_date", keep="last").sort_values("report_date").reset_index(drop=True)
+                remote[market] = CotSeries(market, latest.family, frame, latest.market_name)
+        return remote
 
     def _load_api(self) -> dict[str, CotSeries]:
         import requests

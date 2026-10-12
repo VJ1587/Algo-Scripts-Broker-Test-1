@@ -213,6 +213,7 @@ roll_rules:
 cot:
   source: cftc_api            # cftc_api | csv | off
   csv_path: data/cot/cot.csv  # columns: market,report_date,publication_ts(optional),long,short,open_interest,report_family
+  distributed_csv_path: data/cot/cot_distributed.csv  # official local history merged with API releases
   api_base: https://publicreporting.cftc.gov/resource
   datasets:
     TFF: gpe5-46if            # Traders in Financial Futures, futures only

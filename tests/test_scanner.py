@@ -830,3 +830,35 @@ def test_demo_weekly_instruments_use_weekly_daily_and_daily_c6(tmp_path):
     assert all(r["c6"] == (r["daily_struct"] == "intact") for r in wk)
     fx = [r for r in rows if r["group"].startswith("FX")]
     assert all(not r["weekly"] and r["c6"] == (r["h4_struct"] == "intact") for r in fx)
+
+
+@pytest.mark.parametrize("remote_newer", [False, True])
+def test_distributed_cot_keeps_history_and_future_api_weeks(tmp_path, monkeypatch, remote_newer):
+    path = tmp_path / "data/cot/cot_distributed.csv"
+    path.parent.mkdir(parents=True)
+    path.write_text("market,report_family,report_date,publication_ts,long,short,open_interest\n"
+                    "EUR,TFF,2026-09-29,2026-10-02T19:30:00Z,20,5,100\n"
+                    "EUR,TFF,2026-10-06,2026-10-09T19:30:00Z,30,5,100\n")
+    dates = ["2026-10-06"] + (["2026-10-13"] if remote_newer else [])
+    frame = pd.DataFrame({"report_date": pd.to_datetime(dates),
+                          "publication_ts": pd.to_datetime(["2026-10-09T19:30Z"] + (["2026-10-16T19:30Z"] if remote_newer else [])),
+                          "net": [999] + ([40] if remote_newer else []),
+                          "open_interest": [100] * len(dates)})
+    monkeypatch.setattr(sc.CotSource, "_load_api", lambda self: {"EUR": sc.CotSeries("EUR", "TFF", frame, "Euro FX")})
+    result = sc.CotSource(CFG, tmp_path).load()["EUR"]
+    assert len(result.frame) == (3 if remote_newer else 2)
+    assert result.frame.loc[result.frame.report_date == pd.Timestamp("2026-10-06"), "net"].iloc[0] == 25
+    assert result.frame.net.iloc[-1] == (40 if remote_newer else 25)
+    assert result.market_name == "Euro FX"
+
+
+def test_distributed_cot_works_when_api_returns_no_markets(tmp_path, monkeypatch):
+    path = tmp_path / "data/cot/cot_distributed.csv"
+    path.parent.mkdir(parents=True)
+    path.write_text("market,report_family,report_date,publication_ts,long,short,open_interest\n"
+                    "EUR,TFF,2026-10-06,2026-10-09T19:30:00Z,30,5,100\n")
+    monkeypatch.setattr(sc.CotSource, "_load_api", lambda self: {})
+    series = sc.CotSource(CFG, tmp_path).load()["EUR"]
+    assert series.frame.net.iloc[-1] == 25
+    asof = pd.Timestamp("2026-10-21T00:00Z")
+    assert sc.cot_for_instrument(UNIVERSE["EURUSD"], {"EUR": series}, asof, CFG["cot"]).status in ("unavailable", "stale")
