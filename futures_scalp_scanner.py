@@ -27,6 +27,7 @@ Usage
     python futures_scalp_scanner.py --demo                 # offline, synthetic bars
     python futures_scalp_scanner.py                        # one live scan (TradingView)
     python futures_scalp_scanner.py --loop                 # rescan every minute, alert on new signals
+    python futures_scalp_scanner.py --loop --until 16:00   # stop the loop at 16:00 New York time (scheduled task)
     python futures_scalp_scanner.py --symbols ES NQ --setups orb momo
     python futures_scalp_scanner.py --source csv --asof 2026-10-08T14:10Z
 
@@ -842,6 +843,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--asof", default=None, help="scan time, e.g. 2026-10-08T14:10Z (default: now)")
     ap.add_argument("--demo", action="store_true", help="synthetic data, no network")
     ap.add_argument("--loop", action="store_true", help="rescan every loop.interval_sec; alert on new signals")
+    ap.add_argument("--until", default=None, help="with --loop: stop at this time in the config timezone, e.g. 16:00")
     ap.add_argument("--symbols", nargs="*", default=None)
     ap.add_argument("--setups", nargs="*", default=None, choices=SETUP_KEYS)
     ap.add_argument("--out-dir", default=None)
@@ -874,6 +876,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.demo:
         LOG.warning("DEMO DATA: synthetic bars, not market prices. Do not trade from this output.")
 
+    stop_at = None
+    if args.until:
+        if not args.loop:
+            ap.error("--until needs --loop")
+        hh, mm = (int(x) for x in args.until.split(":"))
+        stop_at = pd.Timestamp.now(tz=cfg["timezone"]).normalize() + pd.Timedelta(hours=hh, minutes=mm)
+        LOG.info("loop stops at %s", stop_at)
+
     seen: set = set()
     while True:
         asof = asof_fixed or (pd.Timestamp("2026-10-08T15:10Z") if args.demo else pd.Timestamp.now(tz=UTC))
@@ -884,7 +894,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         p = write_outputs(sigs, errs, asof, out_dir, {"code_version": SCALP_CODE_VERSION, "config": cfg["version"],
                                                        "source": src.name})
         LOG.info("wrote %s", p)
-        if not args.loop:
+        if not args.loop or (stop_at is not None and pd.Timestamp.now(tz=cfg["timezone"]) >= stop_at):
             return 0
         fresh = [s for s in sigs if s.status in ("TRIGGERED", "AT LEVEL") and s.key() not in seen]
         seen |= {s.key() for s in sigs}
