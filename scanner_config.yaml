@@ -3,7 +3,7 @@
 # Governance (v1.0 Section 12): any change to a threshold, weight, spacing or cap requires a new
 # config_version and a one line reason in CHANGELOG below. Every scan logs the config_version it used.
 
-config_version: "cfg-0.12.0"
+config_version: "cfg-0.13.0"
 addendum_version: "v0.1"
 display_timezone: "America/Chicago"
 
@@ -24,6 +24,7 @@ changelog:
   - {version: "cfg-0.10.0", date: "2026-10-08", change: "Gold zone half-width $20 -> $10 (XAUUSD and GC); S&P stays at 20 points", reason: "Owner: gold box is +/-$10 ($1 = 10 pips on XAUUSD, so $20 was a 200 pip box each side)"}
   - {version: "cfg-0.11.0", date: "2026-10-08", change: "S&P zone half-width 20 -> 10 points; new grids.*.pattern_zone_half_width keeps gold and S&P chart-pattern tolerances on the old 20 basis (Daily match $133 / head margin $67)", reason: "Owner: S&P +/-10 points; keep gold chart pattern detection unchanged until the data shows it needs to move"}
   - {version: "cfg-0.12.0", date: "2026-10-08", change: "FX zone half-width 15 -> 10 pips (JPY 0.15 -> 0.10); near_zone_width 10 pips: a 2H close up to 10 pips outside the zone lists the setup as developing (never graded, C2 stays false); FX chart-pattern tolerances keep the 15 pip basis", reason: "Owner: FX boxes +/-10 pips to match the setup document; flag setups within 10 pips of the box as developing; pattern detection unchanged until the data says otherwise"}
+  - {version: "cfg-0.13.0", date: "2026-10-15", change: "Market structure: swings for trend, C1, C6, the Weekly read and the Daily POI need 3 bars each side + a 1.5 x ATR reaction (impulses, chart patterns and the trend line keep pivot_width 2); C1 = Daily trend only (4H no longer required; gold stays Weekly + Daily); C6 = 4H health (fails only on a 4H close beyond the last Daily higher low / lower high); Weekly agreeing adds 1 to the ranking total; Daily POI (last HL / LH +/- zone, clustered within 0.5 x Daily ATR) shown and flagged; stops unchanged (78.6/89 dashboard, 89.3 trade gate)", reason: "Owner market structure philosophy approved October 15: 4H pullback is the setup forming, swings must react meaningfully, Weekly is conviction, POI = last Daily HL / LH; owner: keep the stop at 89"}
 
 # DXY context for gold (cfg-0.8.0): TradingView Daily bars, Daily bias only. Never grades or blocks.
 dxy:
@@ -81,7 +82,11 @@ journal:
 
 # ---------------------------------------------------------------- features (v1.0 values)
 features:
-  pivot_width: 2
+  pivot_width: 2               # impulses, chart patterns and the trend line
+  structure:                   # cfg-0.13.0: trend, C1, C6, Weekly and Daily POI
+    pivot_width: 3             # bars each side that do not exceed the swing
+    reaction_atr: 1.5          # price must move this many ATRs away before the swing counts
+    poi_atr: 0.5               # POI clustering radius, x Daily ATR
   ema_daily: [20, 50]
   ema_2h: [8, 14]
   atr_period: 14

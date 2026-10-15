@@ -101,7 +101,7 @@ Zones match the scanner: FX ±10 pips (cfg-0.12.0), gold ±$10 and S&P ±10 poin
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.9.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.13.0` (market structure rules, see 5f).
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
@@ -119,12 +119,12 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 
 | Check | Name | Passes when |
 |---|---|---|
-| C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
+| C1 | Trend alignment | The Daily trend points in the trade direction: the last 2 swing highs and the last 2 swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and no Daily close has broken the last swing. Daily ranging = no trade. Gold uses Weekly and Daily. A Weekly trend that agrees lifts the ranking. |
 | C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±10 pips; JPY pairs every 5.00 and 2.50, ±0.10; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
-| C6 | Market structure | 4H structure holds at entry: the latest 4H swing low is a higher low (a lower high for a short) and no 2H close has broken it since. A close through it means structure is compromised: skip. |
+| C6 | 4H health | The 4H has not closed beyond the last Daily higher low (lower high for a short). A 4H pullback against the Daily is the setup forming and passes; a 4H close beyond that level means the Daily trend is being challenged. |
 
 ### Setup rules
 
@@ -254,7 +254,7 @@ config). Nothing in the scanner sends, changes or closes orders.
 | Completed bars only, 250 bar checks, OHLC sanity (v1.0 §2) | `completed`, `check_bars` |
 | EMA seeded with SMA, Wilder ATR14 (v1.0 §2) | `ema`, `atr` |
 | Strict 2 bar pivots, confirm at k+2, alternation (v1.0 §2) | `find_pivots`, `add_alternating` |
-| Daily bias D01, 4H agreement D02 | `daily_bias`, `structure` |
+| Daily bias D01 (cfg-0.13.0 swings), 4H health C6 | `find_swings`, `daily_bias`, `structure`, `structure_health` |
 | Impulse I01 (6 bar recency, 3 to 30 bars, 2×ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
 | Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `structure_holding`, `grade_setup`, `score_instrument` |
 | COT index, pair mapping, ±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
@@ -308,6 +308,14 @@ config). Nothing in the scanner sends, changes or closes orders.
 5e. **Grades (cfg-0.8.0).** A, B and developing as in Setup rules above. cfg-0.4.0 required C4 for every
    qualified setup; an A setup no longer does. On equal totals a Daily confirmation ranks above 4H, and
    4H above 2H.
+5f. **Market structure (cfg-0.13.0).** Swings used for trend, C1, C6, the Weekly read and the Daily POI need
+   3 bars each side and a 1.5 x ATR reaction before they count (`features.structure`); impulses, chart
+   patterns and the trend line keep `pivot_width: 2`, so pattern detection is unchanged. C1 is the Daily
+   trend alone (gold stays Weekly + Daily). C6 is a 4H health check: a 4H pullback passes; a 4H close
+   beyond the last Daily higher low / lower high fails it. A Weekly trend that agrees adds 1 to the ranking
+   total. The Daily POI (last HL / LH +/- the zone, widened to earlier Daily swings and key boxes within
+   0.5 x Daily ATR) is shown under the plan and in the flags. Stops are unchanged: 78.6 / 89 on the
+   dashboard, 89.3 in the trade gate.
 6. **COT publication time.** Assumed position date + 3 days at 15:30 Eastern; holiday delays not
    modelled. Live, the CFTC API only returns published data, so this matters mainly for CSV
    backtests. Cross pair "weekly change" is the change in the rescaled cross index.
