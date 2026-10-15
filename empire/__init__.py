@@ -19,4 +19,4 @@ framework's data model:
 Nothing here places orders. It is an analytical framework, not investment advice.
 """
 
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.2.0"

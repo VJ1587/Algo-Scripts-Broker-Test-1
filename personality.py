@@ -95,6 +95,7 @@ def run_once(cfg_path: Path, asof: Optional[pd.Timestamp], run: str, demo: bool)
         kinds = [k for k in ("monthly", "quarterly", "annual") if review_due(ctx, k)]
     for k in kinds:
         rv = run_review(ctx, k, daily)
+        rv['research_context'] = daily.get('research_context', {})
         stem = f"{k}_{rv['meta']['period']}"
         write_json(od / f"{stem}.json", rv)
         (od / f"{stem}.html").write_text(render_review(rv), encoding="utf-8")

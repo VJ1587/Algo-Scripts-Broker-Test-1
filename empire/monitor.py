@@ -60,6 +60,7 @@ class Ctx:
     rets: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
     scanner_cfg: dict = field(default_factory=dict)
+    decision_time: Optional[pd.Timestamp] = None
 
     def p(self, key: str, default=None):
         return self.params["values"].get(key, default)
@@ -96,7 +97,8 @@ def build_context(cfg_path: Path, asof: Optional[pd.Timestamp], run_type: str, d
     if sc_path.exists():
         scfg = load_yaml(sc_path)
     return Ctx(cfg, base, asof_date, now.strftime("%Y%m%dT%H%MZ"), run_type, demo, build_instruments(cfg), ledger,
-               ledger_path, j, params, scanner_cfg=scfg)
+               ledger_path, j, params, scanner_cfg=scfg,
+               decision_time=now if asof is None else asof_date.tz_localize('America/New_York') + pd.Timedelta(hours=17))
 
 
 # =============================================================================
@@ -717,6 +719,7 @@ def pair_view(ctx: Ctx, inst: Inst, r: pd.Series, traits: pd.DataFrame) -> dict:
     w = int(ctx.cfg["traits"].get("long_window", 250))
     D_A = dominance(c[inst.base], r, N, w)
     out: dict[str, Any] = {"dominance_base": None if D_A is None else round(D_A, 3)}
+    out["funding_carry"] = getattr(ctx, "external_models", {}).get(inst.symbol, {}).get("funding_carry")
     if D_A is not None:
         lead = inst.base if D_A >= 0.65 else inst.quote if D_A <= 0.35 else None
         out["driver"] = f"{lead} runs the pair: read {lead}'s players first" if lead else "shared: both sides matter"
@@ -1120,6 +1123,13 @@ def run_daily(ctx: Ctx) -> dict:
     ctx.gap_hist = {}  # type: ignore[attr-defined]
     led = ctx.journal.ledger_snapshot(ctx.ledger.raw, ctx.ledger_path, str(ctx.asof.date()))
     data_status = load_data(ctx)
+    from .enrichment import research_context
+    external = research_context(
+        [s for s, inst in ctx.insts.items() if inst.profile],
+        {s: v.close for s, v in ctx.series.items()},
+        ctx.decision_time if ctx.decision_time is not None else ctx.asof.tz_localize('UTC'),
+    ) if not ctx.demo else {'instruments': {}, 'models': {}, 'gaps': [{'reason': 'disabled for synthetic demo'}]}
+    ctx.external_models = external.get('models', {})
     regime = regime_step(ctx)
     scoreboard = scoreboard_step(ctx)
     archive = calendar_archive(ctx)
@@ -1165,6 +1175,8 @@ def run_daily(ctx: Ctx) -> dict:
                                      "config_version": ctx.cfg["config_version"], "ledger_version": ctx.ledger.version,
                                      "params_version": ctx.params["version"], "cards": len(cards), "forecasts": n_fc,
                                      "resolved": len(resolved), "regime": regime.get("regime"), "demo": ctx.demo}])
+    report['research_context'] = external
+    report['model_features'] = ctx.external_models
     return report
 
 

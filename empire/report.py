@@ -101,6 +101,17 @@ def render_daily(rep: dict) -> str:
         out.append('<div class="banner">DEMO DATA: synthetic prices. Plumbing check only, never a basis for decisions.</div>')
     if m.get("ledger_changed"):
         out.append('<p class="warn">Ledger edited since the last run: ' + e("; ".join(m["ledger_changed"][:12])) + "</p>")
+    research=rep.get('research_context',{})
+    if research:
+        models = research.get('models', {})
+        out.append('<h2>External model features</h2><p>Current funding, economic and participation inputs. Reference carry excludes broker swaps and costs.</p>')
+        out.append(table(['Instrument','Available features','Unavailable','Funding gap (percentage points)','Volatility adjusted funding carry'],
+            [[e(s),str(v['available']),str(v['unavailable']),f((v.get('funding_carry') or {}).get('differential_pct_points')),f((v.get('funding_carry') or {}).get('vol_adjusted'))] for s,v in models.items()]))
+        out.append('<h2>Macro and funding context</h2><p>Retrospective associations use revised history. These inputs do not change trade grades.</p>')
+        out.append(table(['Instrument','Source','Status','Last period','Value','Unit','Change','Correlation','Overlaps'],
+            [[e(s),e(r['series']),e(r['status']),e(r.get('last_observed','')),f(r.get('value')),e(r['unit']),f(r.get('change')),f(r.get('correlation')),str(r.get('n',0))]
+             for s,rows in research.get('instruments',{}).items() for r in rows]))
+        if research.get('gaps'): out.append('<p class="warn">Collection gaps: '+e(str(research['gaps']))+'</p>')
     # 1-2 regime and scoreboard
     r = rep["regime"]
     sb = rep["scoreboard"]
@@ -325,6 +336,9 @@ def render_review(rv: dict) -> str:
            f'<p class="mut small">{e(m["start"])} to {e(m["end"])} · run {e(m["date"])} · config {e(m["config_version"])} · ledger {e(m["ledger_version"])}</p>']
     if m.get("demo"):
         out.append('<div class="banner">DEMO DATA: synthetic prices. Plumbing check only.</div>')
+    if rv.get('research_context'):
+        out.append('<h2>Current macro and funding context</h2><p>This is context at the run decision time, not reconstructed historical release data for the review period.</p>')
+        out.append(table(['Instrument','Source','Status','Last period','Value','Unit'], [[e(s),e(r['series']),e(r['status']),e(r.get('last_observed','')),f(r.get('value')),e(r['unit'])] for s,rows in rv['research_context'].get('instruments',{}).items() for r in rows]))
     if rv.get("evolution"):
         out.append(f'<p><a href="evolution_{e(m["period"])}.html"><b>Personality evolution page</b></a>: phases year by year and '
                    f'quarter by quarter next to elections, changes of control, policy regimes and market regimes.</p>')
