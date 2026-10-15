@@ -101,7 +101,7 @@ Zones match the scanner: FX ±10 pips (cfg-0.12.0), gold ±$10 and S&P ±10 poin
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.13.0` (market structure rules, see 5f).
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.13.1` (market structure rules, see 5f).
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
@@ -119,7 +119,7 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 
 | Check | Name | Passes when |
 |---|---|---|
-| C1 | Trend alignment | The Daily trend points in the trade direction: the last 2 swing highs and the last 2 swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and no Daily close has broken the last swing. Daily ranging = no trade. Gold uses Weekly and Daily. A Weekly trend that agrees lifts the ranking. |
+| C1 | Trend alignment | The Daily trend points in the trade direction: the last 2 swing highs and the last 2 swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and no Daily close has broken the last swing. Daily ranging = no trade. A Weekly trend that agrees lifts the ranking. |
 | C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±10 pips; JPY pairs every 5.00 and 2.50, ±0.10; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
@@ -137,13 +137,13 @@ These live in `SETUP_RULES` and `grade_setup` in `scanner.py`. A and B setups ca
 | B setup | C1 + (C2 or C3 at 50%/61.8%) + one of C4, C5, C6 (3). Smaller size; a limit order is still valid if C1 + C3 are clean. |
 | Minor pairs | FX crosses: only a strong A setup with a closed C4 reversal candle counts. Do not rely on limit orders alone; size smaller than on majors. |
 | S&P and oil | SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing. |
-| Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
+| Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is the Daily trend; a Weekly that agrees lifts the ranking. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
 | Stop and targets | Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to breakeven. |
 | Developing | Any 2 or more of C1-C6 that do not make a B setup, or an FX close up to 10 pips outside a key level zone plus one other check ("near zone", cfg-0.12.0). Watch only. |
 
 Owner decisions (October 7, 2026): majors are the 7 USD majors in the config (EURUSD, GBPUSD, USDJPY,
-USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 is Weekly + Daily without the
-4H; S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
+USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 was Weekly + Daily without the
+4H (Daily only since cfg-0.13.1); S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
 every candle and chart pattern counts only at a key level zone; chart patterns name the level they
 formed at. The trade gate already uses the system's targets (TP1 -27 %, TP2 -61.8 %) and the 89.3 %
 stop for FX; it does not yet move the stop to breakeven after TP1.
@@ -311,7 +311,7 @@ config). Nothing in the scanner sends, changes or closes orders.
 5f. **Market structure (cfg-0.13.0).** Swings used for trend, C1, C6, the Weekly read and the Daily POI need
    3 bars each side and a 1.5 x ATR reaction before they count (`features.structure`); impulses, chart
    patterns and the trend line keep `pivot_width: 2`, so pattern detection is unchanged. C1 is the Daily
-   trend alone (gold stays Weekly + Daily). C6 is a 4H health check: a 4H pullback passes; a 4H close
+   trend alone (gold too since cfg-0.13.1). C6 is a 4H health check: a 4H pullback passes; a 4H close
    beyond the last Daily higher low / lower high fails it. A Weekly trend that agrees adds 1 to the ranking
    total. The Daily POI (last HL / LH +/- the zone, widened to earlier Daily swings and key boxes within
    0.5 x Daily ATR) is shown under the plan and in the flags. Stops are unchanged: 78.6 / 89 on the

@@ -51,7 +51,7 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
        B setup    = C1 + (C2 or C3 at 50/61.8) + one of C4, C5, C6.
        FX crosses = only an A setup with a closed C4 counts.
        S&P, oil   = only an A setup counts.
-       Gold       = C1 is Weekly + Daily (no 4H); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
+       Gold       = C1 is the Daily trend (cfg-0.13.1; Weekly is context like the rest); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
        Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0), or an FX close up to 10 pips
        outside a key level zone plus one other check (near zone, cfg-0.12.0).
        C6 = 4H market structure holding (higher low / lower high not closed through).  structure_holding
@@ -944,8 +944,8 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 CONFLUENCES = {
     "c1": ("Trend alignment", "The Daily trend points in the trade direction: the last 2 swing highs and the last 2 "
                               "swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and "
-                              "no Daily close has broken the last swing. Daily ranging = no trade. Gold uses Weekly "
-                              "and Daily. A Weekly trend that agrees lifts the ranking."),
+                              "no Daily close has broken the last swing. Daily ranging = no trade. A Weekly trend "
+                              "that agrees lifts the ranking."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
                              "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-10 "
                              "pips; JPY pairs every 5.00 and 2.50, +/-0.10; gold and S&P every 100 and 50, +/-10; "
@@ -975,7 +975,7 @@ SETUP_RULES = (
                     "orders alone; size smaller than on majors."),
     ("S&P and oil", "SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing."),
     ("Gold", "B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close "
-             "(morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for "
+             "(morning star or bullish engulfing preferred). C1 is the Daily trend; a Weekly that agrees lifts the ranking. DXY falling is extra conviction for "
              "longs; check the Fed and safe-haven news."),
     ("Stop and targets", "Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. "
                          "TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to "
@@ -1846,7 +1846,7 @@ class Row:
     c3_levels: str = ""            # retracements hit, e.g. "50.0 61.8"
     c3_golden: bool = False        # 50% or 61.8% hit
     stacked: bool = False          # a hit 50%/61.8% level sits inside the C2 zone
-    weekly: str = ""               # Weekly structure (gold C1; context and +1 rank for the rest, cfg-0.13.0)
+    weekly: str = ""               # Weekly structure: context and +1 rank when it agrees (cfg-0.13.0)
     weekly_points: int = 0         # 1 when the Weekly trend agrees with this direction (ranking only)
     poi_low: Optional[float] = None    # Daily POI zone (cfg-0.13.0), only when the Daily trends this way
     poi_high: Optional[float] = None
@@ -2017,8 +2017,7 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.c1 = bias.bias == direction
         r.weekly = s_wk or "mixed"
         r.weekly_points = int(s_wk == direction)   # [OWNER cfg-0.13.0] Weekly agreeing lifts the ranking
-        if skind == "gold":
-            r.c1 = bias.bias == direction and s_wk == direction   # [OWNER cfg-0.8.0] Weekly + Daily, no 4H
+        if skind == "gold":   # [OWNER cfg-0.13.1] gold C1 is the Daily trend too; DXY stays context
             r.dxy = ("unavailable" if dxy is None else
                      f"DXY {'falling' if dxy == SHORT else 'rising'}: "
                      + ("extra conviction" if (dxy == SHORT) == (direction == LONG) else "against this trade")
@@ -2135,8 +2134,6 @@ def rejection_reason(rows: list[Row]) -> str:
     if bias == "neutral":
         return "Daily bias neutral"
     r = next(x for x in rows if x.direction == bias)
-    if r.dxy and r.weekly != bias:   # gold: Weekly + Daily (only gold carries a DXY note)
-        return "Weekly disagrees (gold)"
     if not r.c6:
         return f"4H {r.trendline}"
     if not r.c2 and not r.c3:

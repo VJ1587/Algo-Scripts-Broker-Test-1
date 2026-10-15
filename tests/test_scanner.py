@@ -543,8 +543,9 @@ def test_demo_end_to_end(tmp_path):
     # gold rules apply to both directions (the zone lookup once overwrote the instrument kind)
     gold = [r for r in rows if r["symbol"] in ("XAUUSD", "GC")]
     assert gold and all(r["weekly"] for r in gold)
-    # gold C1 = Weekly + Daily; the 4H is ignored
-    assert all(r["c1"] == (r["daily_bias"] == r["direction"] == r["weekly"]) for r in gold)
+    # gold C1 = the Daily trend alone (cfg-0.13.1); the Weekly only adds a ranking point
+    assert all(r["c1"] == (r["daily_bias"] == r["direction"]) for r in gold)
+    assert all(r["weekly_points"] == int(r["weekly"] == r["direction"]) for r in gold)
     assert not any(r["grade"] == "B" for r in rows if r["symbol"] in ("SPX500", "ES", "WTI", "CL"))
     assert all(r["grade"] in ("A", "B") for r in rows if r["section"] == "qualified")
     assert all(r["grade"] == "A" and r["c4"] for r in rows if r["group"] == "FX cross" and r["section"] == "qualified")
