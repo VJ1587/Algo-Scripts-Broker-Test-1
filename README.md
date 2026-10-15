@@ -76,6 +76,10 @@ python broker_v11_algo.py --data-dir ./quotes --route L --news news.csv --out re
 
 See the script header for the CSV format used by `--data-dir` and `--news`.
 
+## Market structure reference (`structure/`)
+
+The owner's market structure rules (swings, HH / HL / LH / LL, trend, Weekly / Daily / 4H read, Daily POI) in three matching versions: Python (`structure/python/market_structure.py`), MQL5 (`structure/mql5/MarketStructure.mqh` + chart indicator `MarketStructure.mq5`) and Pine (`structure/pine/market_structure.pine`). Rules, defaults and known differences: [`structure/README.md`](structure/README.md).
+
 ## TradingView indicator (`tradingview/kl_fib_confluence_setup.pine`)
 
 A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pine Editor, *Add to chart*, and use it on the **2H** chart (the table warns if you're on another timeframe). It draws and checks the nine checklist items:

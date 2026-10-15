@@ -1,0 +1,183 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//
+// KL Market Structure: reference implementation (Pine Script v6)
+// One of three matching implementations of the owner's market structure rules (October 2026):
+//   structure/python/market_structure.py
+//   structure/mql5/MarketStructure.mqh + MarketStructure.mq5
+//   structure/pine/market_structure.pine   (this file)
+// Rules and defaults: structure/README.md. Change all three together. The same f_swings logic runs inside
+// tradingview/kl_fib_confluence_setup.pine.
+//
+// Swing : pivot with `len` bars each side, counted only once price moves `react` x ATR away; a higher pivot
+//         high replaces a high still waiting for its reaction (lows mirror).
+// Trend : last 2 swing highs AND last 2 swing lows step the same way, and the close has not broken the last
+//         swing low (uptrend) / high (downtrend).
+// POI   : last HL (uptrend) / LH (downtrend) +/- the key box half-width, widened to earlier Daily swings and key
+//         level boxes within poiAtr x Daily ATR.
+// Health: a 4H close beyond the last Daily HL / LH = challenged; a pullback inside it is healthy.
+
+//@version=6
+indicator("KL Market Structure", shorttitle = "KL Structure", overlay = true, max_labels_count = 500, max_boxes_count = 50)
+
+grp = "Market structure"
+tfMacro   = input.timeframe("W", "Macro timeframe (context)", display = display.none, group = grp)
+tfBias    = input.timeframe("D", "Bias timeframe (direction + POI)", display = display.none, group = grp)
+tfConf    = input.timeframe("240", "Health-check timeframe", display = display.none, group = grp)
+structLen = input.int(3, "Swing: candles each side", minval = 2, display = display.none, group = grp)
+reactAtr  = input.float(1.5, "Swing: min reaction (x ATR 14)", minval = 0, step = 0.1, display = display.none, group = grp)
+poiAtr    = input.float(0.5, "POI clustering radius (x Daily ATR)", minval = 0, step = 0.1, display = display.none, group = grp)
+boxIn     = input.float(0, "Key box half-width (price, 0 = auto)", minval = 0, display = display.none, group = grp,
+     tooltip = "Auto: FX 10 pips (JPY 0.10), gold $10, S&P 10 points.")
+stepIn    = input.float(0, "Key level grid step (price, 0 = auto)", minval = 0, display = display.none, group = grp,
+     tooltip = "Auto: FX 250 pips (JPY 2.50), gold $50, S&P 50 points.")
+showSw    = input.bool(true, "Label swings (HH / HL / LH / LL)", display = display.none, group = grp)
+maxLbl    = input.int(60, "Max swing labels", minval = 4, maxval = 400, display = display.none, group = grp)
+showPOI   = input.bool(true, "Draw the Daily POI", display = display.none, group = grp)
+showTbl   = input.bool(true, "Show the structure table", display = display.none, group = grp)
+colBull   = input.color(color.teal, "Bull", display = display.none, group = grp, inline = "c")
+colBear   = input.color(color.red, "Bear", display = display.none, group = grp, inline = "c")
+
+// Key level presets (same as the KL-Fib indicator)
+isGold = str.contains(syminfo.ticker, "XAU") or str.contains(syminfo.ticker, "GOLD") or syminfo.root == "GC" or syminfo.root == "MGC"
+isSpx  = str.contains(syminfo.ticker, "SPX") or str.contains(syminfo.ticker, "US500") or syminfo.root == "ES" or syminfo.root == "MES"
+fxPip  = str.contains(syminfo.ticker, "JPY") ? 0.01 : 0.0001
+boxHalf = boxIn > 0 ? boxIn : isGold or isSpx ? 10.0 : 10 * fxPip
+midStep = stepIn > 0 ? stepIn : isGold or isSpx ? 50.0 : 250 * fxPip
+
+f_px(float p) =>
+    str.tostring(p, format.mintick)
+
+// ─────────────────────────────────────────────────────────── Swings and trend
+f_swings(int len, float react) =>
+    a   = ta.atr(14)
+    ph  = ta.pivothigh(high, len, len)
+    pl  = ta.pivotlow(low, len, len)
+    rLo = ta.lowest(low, len)
+    rHi = ta.highest(high, len)
+    var float cH  = na
+    var int   cHt = na
+    var float cL  = na
+    var int   cLt = na
+    var float h1  = na
+    var float h2  = na
+    var float h3  = na
+    var int   h1t = na
+    var float l1  = na
+    var float l2  = na
+    var float l3  = na
+    var int   l1t = na
+    bool newH = false
+    bool newL = false
+    if not na(ph) and (na(cH) or ph > cH)
+        cH  := ph
+        cHt := time[len]
+    if not na(pl) and (na(cL) or pl < cL)
+        cL  := pl
+        cLt := time[len]
+    if not na(cH) and rLo <= cH - react * a
+        h3   := h2
+        h2   := h1
+        h1   := cH
+        h1t  := cHt
+        cH   := na
+        newH := true
+    if not na(cL) and rHi >= cL + react * a
+        l3   := l2
+        l2   := l1
+        l1   := cL
+        l1t  := cLt
+        cL   := na
+        newL := true
+    int s = 0
+    if h1 > h2 and l1 > l2 and close >= l1
+        s := 1
+    else if h1 < h2 and l1 < l2 and close <= h1
+        s := -1
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, newH, newL]
+
+// Higher timeframes: values of the last CLOSED bar (no repainting with lookahead_on)
+f_macro(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    s[1]
+
+f_daily(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    [s[1], h1[1], h2[1], h3[1], l1[1], l2[1], l3[1], a[1]]
+
+f_health(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    [s[1], close[1]]
+
+wTrend = request.security(syminfo.tickerid, tfMacro, f_macro(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+[dTrend, dH1, dH2, dH3, dL1, dL2, dL3, dAtr] = request.security(syminfo.tickerid, tfBias, f_daily(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+[hTrend, hClose] = request.security(syminfo.tickerid, tfConf, f_health(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+
+challenged = dTrend == 1 ? hClose < dL1 : dTrend == -1 ? hClose > dH1 : false
+
+// ─────────────────────────────────────────────────────────── Daily POI
+poiAnchor = dTrend == 1 ? dL1 : dTrend == -1 ? dH1 : na
+float poiLo = na
+float poiHi = na
+int   poiN  = 0
+if not na(poiAnchor)
+    radius = poiAtr * dAtr
+    poiLo := poiAnchor - boxHalf
+    poiHi := poiAnchor + boxHalf
+    poiN  := 1
+    for c in array.from(dH1, dH2, dH3, dL1, dL2, dL3)
+        if not na(c) and c != poiAnchor and math.abs(c - poiAnchor) <= radius
+            poiLo := math.min(poiLo, c)
+            poiHi := math.max(poiHi, c)
+            poiN  += 1
+    kBase = math.round(poiAnchor / midStep) * midStep
+    for k = -1 to 1
+        kl = kBase + k * midStep
+        if math.abs(kl - poiAnchor) <= radius
+            poiLo := math.min(poiLo, kl - boxHalf)
+            poiHi := math.max(poiHi, kl + boxHalf)
+            poiN  += 1
+
+// ─────────────────────────────────────────────────────────── Swing labels on the chart's own timeframe
+[cTrend, cH1, cH2, cH3, cL1, cL2, cL3, cH1t, cL1t, cAtr, cNewH, cNewL] = f_swings(structLen, reactAtr)
+var array<label> lbls = array.new<label>()
+if showSw and cNewH
+    array.push(lbls, label.new(cH1t, cH1, na(cH2) ? "H" : cH1 > cH2 ? "HH" : "LH", xloc = xloc.bar_time, style = label.style_label_down,
+         color = color.new(color.white, 100), textcolor = na(cH2) or cH1 > cH2 ? colBull : colBear, size = size.small))
+if showSw and cNewL
+    array.push(lbls, label.new(cL1t, cL1, na(cL2) ? "L" : cL1 > cL2 ? "HL" : "LL", xloc = xloc.bar_time, style = label.style_label_up,
+         color = color.new(color.white, 100), textcolor = na(cL2) or cL1 > cL2 ? colBull : colBear, size = size.small))
+while array.size(lbls) > maxLbl
+    label.delete(array.shift(lbls))
+
+// ─────────────────────────────────────────────────────────── POI box and table
+var box poiBox = na
+f_trendTxt(int t) =>
+    t == 1 ? "Uptrend (HH + HL)" : t == -1 ? "Downtrend (LH + LL)" : "Ranging"
+
+var table tbl = table.new(position.bottom_left, 2, 7, bgcolor = color.new(color.black, 5), border_width = 1, border_color = color.new(color.gray, 60))
+
+f_cell(int row, string a, string b, color c) =>
+    table.cell(tbl, 0, row, a, text_color = color.white, text_size = size.small, text_halign = text.align_left)
+    table.cell(tbl, 1, row, b, text_color = c, text_size = size.small, text_halign = text.align_left)
+
+if barstate.islast
+    box.delete(poiBox)
+    if showPOI and not na(poiLo)
+        poiBox := box.new(time - 40 * timeframe.in_seconds() * 1000, poiHi, time + 20 * timeframe.in_seconds() * 1000, poiLo, xloc = xloc.bar_time,
+             border_color = color.new(color.yellow, 40), border_style = line.style_dotted, bgcolor = color.new(color.yellow, 88),
+             text = "Daily POI · " + str.tostring(poiN) + " level" + (poiN == 1 ? "" : "s"), text_color = color.yellow, text_size = size.small,
+             text_halign = text.align_left, text_valign = text.align_top)
+    if showTbl
+        dirTxt = dTrend == 1 ? "LONG only" : dTrend == -1 ? "SHORT only" : "no trade (Daily ranging)"
+        f_cell(0, "KL market structure", dirTxt, dTrend == 0 ? color.orange : dTrend == 1 ? colBull : colBear)
+        f_cell(1, "Weekly (context)", f_trendTxt(wTrend) + (dTrend != 0 and wTrend == dTrend ? " · agrees (+1)" : ""), color.silver)
+        f_cell(2, "Daily (direction)", f_trendTxt(dTrend), color.silver)
+        f_cell(3, "4H", f_trendTxt(hTrend) + (dTrend != 0 and hTrend == -dTrend ? " · pullback, setup forming" : ""), color.silver)
+        f_cell(4, "4H health", dTrend == 0 ? "-" : challenged ? "CHALLENGED: 4H closed beyond " + (dTrend == 1 ? "HL " + f_px(dL1) : "LH " + f_px(dH1)) : "healthy",
+             challenged ? color.orange : color.silver)
+        f_cell(5, "Daily POI", na(poiLo) ? "-" : f_px(poiLo) + " – " + f_px(poiHi) + " · " + str.tostring(poiN) + " level" + (poiN == 1 ? "" : "s") +
+             (close >= poiLo and close <= poiHi ? " · price AT POI" : ""), color.silver)
+        f_cell(6, "Chart timeframe", f_trendTxt(cTrend), color.silver)
+
+alertcondition(challenged and not challenged[1], "4H challenges the Daily", "KL Structure: {{ticker}} 4H closed beyond the last Daily higher low / lower high")
+alertcondition(dTrend != dTrend[1], "Daily trend changed", "KL Structure: {{ticker}} Daily trend changed")
