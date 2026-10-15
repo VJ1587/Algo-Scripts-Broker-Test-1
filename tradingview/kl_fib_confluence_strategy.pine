@@ -1,0 +1,1070 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+//
+// Key Level + Fibonacci Confluence Setup
+// Implements "The Complete Setup System" with the owner's market structure rules (October 2026):
+//   Swing point = 3 candles each side + a 1.5 x ATR reaction, same rule on every timeframe.
+//   Trend       = last 2 swing highs AND last 2 swing lows step the same way; closes confirm.
+//   Weekly      = context; agreeing with the Daily adds one confluence.
+//   Daily       = direction (ranging = no trade); POI = last higher low / lower high, clustered.
+//   4H          = health check: a pullback is the setup forming; a 4H close beyond the last Daily
+//                 higher low / lower high is a warning; a Daily close there exits.
+//   2H          = entry fib 38.2 / 50 / 61.8 (required) + a closed reversal candle (required)
+//                 + at least 1 extra (key box / POI, 2H structure shift, 8/14 EMA, Daily or 4H fib
+//                 stacking, 78.6 false break, Weekly agrees). Grade B = 3, A = 4, A+ = 5+.
+//   Stop a few pips beyond 78.6; TP1 -0.27 (partials, BE); TP2 -0.618; trail under new 4H higher lows.
+//
+// STRATEGY VERSION for the TradingView Strategy Tester (backtesting). The rules, drawings and checklist are the
+// same as tradingview/kl_fib_confluence_setup.pine; the section "Strategy: orders" at the bottom adds the orders.
+// Keep both files in step: change the indicator, then copy the change here.
+// Entry modes: a market entry at the close of the reversal candle that completes the setup (default), or the
+// 38.2 / 50 / 61.8 limit ladder placed in advance. Stop a few pips beyond the 78.6; TP1 -0.27 (partial, then
+// breakeven); TP2 -0.618; optional trail under new 4H higher lows / over new 4H lower highs; optional exit on a
+// Daily close beyond the last Daily higher low / lower high. Backtest results are not a guarantee of live results.
+
+//@version=6
+strategy("Key Level + Fib Confluence Strategy", shorttitle = "KL-Fib Strat", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500,
+     initial_capital = 10000, default_qty_type = strategy.fixed, pyramiding = 3, process_orders_on_close = true,
+     margin_long = 1, margin_short = 1)
+
+// ─────────────────────────────────────────────────────────── 1 · Key levels
+grpLv = "1 · Key levels"
+preset      = input.string("Auto", "Instrument preset", options = ["Auto", "FX", "Gold", "S&P", "Custom"], display = display.none, group = grpLv,
+     tooltip = "Auto: forex symbols use the FX grid, XAU / GC the Gold grid, SPX / ES / US500 the S&P grid, everything else Custom.")
+fxMajorPips = input.float(500, "FX major step (pips)", minval = 1, display = display.none, group = grpLv)
+fxMidPips   = input.float(250, "FX mid step (pips)", minval = 1, display = display.none, group = grpLv)
+fxHalfPips  = input.float(10, "FX box half-width (pips)", minval = 0, display = display.none, group = grpLv, tooltip = "10 pips: 1.3000 becomes a 1.2990-1.3010 box.")
+fxNearPips  = input.float(10, "FX near-box band (pips)", minval = 0, display = display.none, group = grpLv, tooltip = "A fib level up to this far outside a box is flagged NEAR (developing). It does not count as the key level confluence. Matches the scanner (cfg-0.12.0).")
+goldMajor   = input.float(100, "Gold major step ($)", minval = 1, display = display.none, group = grpLv)
+goldMid     = input.float(50, "Gold mid step ($)", minval = 1, display = display.none, group = grpLv)
+goldHalf    = input.float(10, "Gold box half-width ($)", minval = 0, display = display.none, group = grpLv, tooltip = "$1 = 10 pips on XAUUSD, so $10 is a +/-100 pip box: 3300 becomes 3290-3310.")
+goldPip     = input.float(0.10, "Gold pip size ($)", minval = 0.001, display = display.none, group = grpLv)
+spxMajor    = input.float(100, "S&P major step (points)", minval = 1, display = display.none, group = grpLv)
+spxMid      = input.float(50, "S&P mid step (points)", minval = 1, display = display.none, group = grpLv)
+spxHalf     = input.float(10, "S&P box half-width (points)", minval = 0, display = display.none, group = grpLv, tooltip = "3300 becomes 3290-3310.")
+cMajor      = input.float(100, "Custom major step (price)", minval = 0.00001, display = display.none, group = grpLv)
+cMid        = input.float(50, "Custom mid step (price)", minval = 0.00001, display = display.none, group = grpLv)
+cHalf       = input.float(1, "Custom box half-width (price)", minval = 0, display = display.none, group = grpLv)
+cPip        = input.float(0, "Custom pip size (0 = 10 ticks)", minval = 0, display = display.none, group = grpLv)
+showLevels  = input.bool(true, "Draw key level boxes", display = display.none, group = grpLv)
+levelsEach  = input.int(6, "Mid steps drawn above / below price", minval = 1, maxval = 40, display = display.none, group = grpLv)
+colMajor    = input.color(color.new(color.orange, 75), "Major box", display = display.none, group = grpLv, inline = "lc")
+colMid      = input.color(color.new(color.gray, 82), "Mid box", display = display.none, group = grpLv, inline = "lc")
+
+// ─────────────────────────────────────────────────────────── 2 · Range
+grpR = "2 · Range"
+showRange    = input.bool(true, "Detect ranges", display = display.none, group = grpR)
+rngLen       = input.int(60, "Range lookback (bars)", minval = 10, maxval = 400, display = display.none, group = grpR)
+rngMinTouch  = input.int(2, "Min touches of each boundary", minval = 1, display = display.none, group = grpR)
+rngTouchPips = input.float(10, "Touch tolerance (pips)", minval = 0, display = display.none, group = grpR, tooltip = "How close a high / low must get to the boundary to count as a touch.")
+rngNeedKey   = input.bool(true, "Boundaries must sit at key levels", display = display.none, group = grpR,
+     tooltip = "On: the range top and bottom must be inside (or within the touch tolerance of) two different key level boxes. Off: any consolidation no taller than the ATR cap below.")
+rngMaxAtr    = input.float(8, "Max range height (x ATR) when key levels are off", minval = 1, display = display.none, group = grpR)
+blockInRange = input.bool(true, "No signals while price is inside an unbroken range", display = display.none, group = grpR)
+
+// ─────────────────────────────────────────────────────────── 3-4 · Bias
+grpB = "3-4 · Market structure"
+tfMacro   = input.timeframe("W", "Macro timeframe (context)", display = display.none, group = grpB)
+tfBias    = input.timeframe("D", "Bias timeframe (direction + POI)", display = display.none, group = grpB)
+tfConf    = input.timeframe("240", "Health-check timeframe", display = display.none, group = grpB)
+structLen = input.int(3, "Swing: candles each side", minval = 2, display = display.none, group = grpB, tooltip = "A swing high needs this many candles on BOTH sides that do not exceed it.")
+reactAtr  = input.float(1.5, "Swing: min reaction (x ATR 14)", minval = 0, step = 0.1, display = display.none, group = grpB,
+     tooltip = "Price must move this far away from the swing before it counts, so tiny wiggles are ignored. Scales with each timeframe.")
+poiAtr    = input.float(0.5, "POI clustering radius (x Daily ATR)", minval = 0, step = 0.1, display = display.none, group = grpB,
+     tooltip = "Key level boxes and earlier Daily swings this close to the last higher low / lower high join the POI zone.")
+
+// ─────────────────────────────────────────────────────────── 5-6 · Impulse and Fibonacci
+grpI = "5-6 · Impulse + Fib (found on the 2H)"
+tfImp       = input.timeframe("120", "Entry fib timeframe", display = display.none, group = grpI, tooltip = "The entry A-to-B impulse is always taken from this timeframe, whatever chart you are on. Signals come from this fib.")
+showDFib    = input.bool(true, "Also draw the big-picture fib", display = display.none, group = grpI, tooltip = "Same impulse rules on the Daily. Drawn in purple for context; signals still come from the 2H fib.")
+tfImpD      = input.timeframe("D", "Big-picture fib timeframe", display = display.none, group = grpI)
+swLen       = input.int(3, "Impulse swing: candles each side", minval = 2, display = display.none, group = grpI)
+impAtr      = input.float(2.5, "Min impulse size (x ATR 14)", minval = 0.5, display = display.none, group = grpI, tooltip = "A clean, sharp push: A-to-B must be at least this many ATRs.")
+impMaxBars  = input.int(40, "Max bars from A to B", minval = 3, display = display.none, group = grpI)
+impMinBars  = input.int(3, "Min candles in the impulse", minval = 2, display = display.none, group = grpI, tooltip = "One big candle is not an impulse: it must be a series.")
+impDirPct   = input.float(60, "Min % of candles closing in the move direction", minval = 0, maxval = 100, display = display.none, group = grpI)
+impBodyPct  = input.float(50, "Min body as % of candle range (average)", minval = 0, maxval = 100, display = display.none, group = grpI, tooltip = "Real bodies, not just wicks.")
+impEffPct   = input.float(50, "Min slope cleanness (net move / path, %)", minval = 0, maxval = 100, display = display.none, group = grpI, tooltip = "100 = every candle moved the same way. Low values mean scattered candles with no clear slope.")
+preLen      = input.int(20, "Bars before A checked for a range", minval = 5, display = display.none, group = grpI)
+consolAtr   = input.float(4, "Range before A if its height is under (x ATR)", minval = 1, display = display.none, group = grpI, tooltip = "A move that starts from a tight range and escapes it is a breakout, not an impulse: no fib until the retest.")
+retestPips  = input.float(10, "Retest tolerance beyond the key box (pips)", minval = 0, display = display.none, group = grpI)
+expiryBars  = input.int(60, "Setup expires after (impulse-timeframe bars from B, no entry)", minval = 5, display = display.none, group = grpI)
+fibTolPips  = input.float(3, "Fib touch tolerance (pips)", minval = 0, display = display.none, group = grpI)
+slPips      = input.float(5, "Stop buffer beyond 78.6 (pips)", minval = 0, display = display.none, group = grpI)
+
+// ─────────────────────────────────────────────────────────── 7 · Confluence
+grpC = "7 · Confluence"
+minConf = input.int(3, "Min confluences", minval = 3, maxval = 8, display = display.none, group = grpC,
+     tooltip = "Two are required (fib level hit + reversal candle closed); the rest come from the extras. B = 3, A = 4, A+ = 5 or more.")
+emaFast = input.int(8, "EMA fast", minval = 1, display = display.none, group = grpC, inline = "ema")
+emaSlow = input.int(14, "slow", minval = 2, display = display.none, group = grpC, inline = "ema")
+emaBars = input.int(5, "EMA cross counts within (bars)", minval = 0, display = display.none, group = grpC)
+minRR   = input.float(2.0, "Min R:R to TP1 for a good setup", minval = 0.1, step = 0.1, display = display.none, group = grpC,
+     tooltip = "Shown once the minimum confluences line up. R:R = distance to the target / distance to the stop, from the estimated entry.")
+
+// ─────────────────────────────────────────────────────────── Position sizing
+grpS = "Position sizing (display only)"
+acct     = input.float(10000, "Account size", minval = 0, display = display.none, group = grpS)
+riskPct  = input.float(1.0, "Risk if all three limits fill (%)", minval = 0, display = display.none, group = grpS)
+w382     = input.float(1, "Weight 38.2 (small)", minval = 0, display = display.none, group = grpS, inline = "w")
+w50      = input.float(2, "50 (medium)", minval = 0, display = display.none, group = grpS, inline = "w")
+w618     = input.float(3, "61.8 (large)", minval = 0, display = display.none, group = grpS, inline = "w")
+contract = input.float(0, "Contract size (0 = auto: FX 100k, gold 100 oz, custom 1)", minval = 0, display = display.none, group = grpS)
+
+// ─────────────────────────────────────────────────────────── Display
+grpD = "Display"
+showTable = input.bool(true, "Show checklist table", display = display.none, group = grpD, tooltip = "Untick to hide the checklist box completely.")
+tablePos  = input.string("Bottom left", "Table position", options = ["Top right", "Bottom right", "Top left", "Bottom left"], display = display.none, group = grpD)
+tableSize = input.string("Small", "Table text size", options = ["Tiny", "Small", "Normal"], display = display.none, group = grpD)
+tableDetail = input.bool(true, "Show detail column", display = display.none, group = grpD, tooltip = "Untick for a narrow table with only the checklist and ticks.")
+showSwings = input.bool(true, "Label swings on the chart (HH / HL / LH / LL)", display = display.none, group = grpD,
+     tooltip = "Uses the swing rule on the chart's own timeframe. Switch the chart to Daily or 4H to check those swings.")
+maxSwLbl  = input.int(60, "Max swing labels", minval = 4, maxval = 200, display = display.none, group = grpD)
+showPOI   = input.bool(true, "Draw the Daily POI zone", display = display.none, group = grpD)
+colBull   = input.color(color.teal, "Bull", display = display.none, group = grpD, inline = "dc")
+colBear   = input.color(color.red, "Bear", display = display.none, group = grpD, inline = "dc")
+
+// ─────────────────────────────────────────────────────────── Instrument resolution
+isGoldSym = str.contains(syminfo.ticker, "XAU") or str.contains(syminfo.ticker, "GOLD") or syminfo.root == "GC" or syminfo.root == "MGC"
+isFxSym   = syminfo.type == "forex"
+isSpxSym  = str.contains(syminfo.ticker, "SPX") or str.contains(syminfo.ticker, "US500") or syminfo.root == "ES" or syminfo.root == "MES"
+mode      = preset == "Auto" ? (isGoldSym ? "Gold" : isSpxSym ? "S&P" : isFxSym ? "FX" : "Custom") : preset
+fxPip     = str.contains(syminfo.ticker, "JPY") ? 0.01 : 0.0001
+pip       = mode == "FX" ? fxPip : mode == "Gold" ? goldPip : mode == "S&P" ? 1.0 : (cPip > 0 ? cPip : syminfo.mintick * 10)
+majorStep = mode == "FX" ? fxMajorPips * fxPip : mode == "Gold" ? goldMajor : mode == "S&P" ? spxMajor : cMajor
+midStep   = mode == "FX" ? fxMidPips * fxPip : mode == "Gold" ? goldMid : mode == "S&P" ? spxMid : cMid
+half      = mode == "FX" ? fxHalfPips * fxPip : mode == "Gold" ? goldHalf : mode == "S&P" ? spxHalf : cHalf
+nearW     = mode == "FX" ? fxNearPips * fxPip : 0.0
+unitTxt   = mode == "S&P" ? "pts" : "pips"
+ctSize    = contract > 0 ? contract : mode == "FX" ? 100000.0 : mode == "Gold" ? 100.0 : 1.0
+
+f_nearest(float p) =>
+    math.round(p / midStep) * midStep
+
+f_inKeyBox(float p) =>
+    not na(p) and math.abs(p - f_nearest(p)) <= half
+
+f_nearKeyBox(float p) =>
+    not na(p) and nearW > 0 and not f_inKeyBox(p) and math.abs(p - f_nearest(p)) <= half + nearW
+
+f_isMajor(float lvl) =>
+    math.abs(lvl / majorStep - math.round(lvl / majorStep)) < 0.001
+
+f_pips(float d) =>
+    str.tostring(d / pip, "#.#")
+
+f_px(float p) =>
+    str.tostring(p, format.mintick)
+
+f_mark(bool b) =>
+    b ? "✅" : "❌"
+
+atr = ta.atr(14)
+
+// ─────────────────────────────────────────────────────────── 1 · Draw key level boxes
+var array<box>   keyBoxes  = array.new<box>()
+var array<label> keyLabels = array.new<label>()
+
+if barstate.islast and showLevels
+    for b in keyBoxes
+        box.delete(b)
+    for l in keyLabels
+        label.delete(l)
+    array.clear(keyBoxes)
+    array.clear(keyLabels)
+    base = f_nearest(close)
+    for i = -levelsEach to levelsEach
+        lvl   = base + i * midStep
+        major = f_isMajor(lvl)
+        c     = major ? colMajor : colMid
+        array.push(keyBoxes, box.new(bar_index - 1, lvl + half, bar_index, lvl - half, border_color = color.new(c, 40),
+             bgcolor = c, extend = extend.both))
+        array.push(keyLabels, label.new(bar_index + 3, lvl, (major ? "MAJOR " : "mid ") + f_px(lvl),
+             style = label.style_none, textcolor = color.new(c, 0), size = size.small))
+
+// ─────────────────────────────────────────────────────────── 2 · Range + breakout target
+candTop  = ta.highest(high, rngLen)[1]
+candBot  = ta.lowest(low, rngLen)[1]
+touchTol = rngTouchPips * pip
+
+var int   rState  = 0      // 0 none, 1 active range, 2 broke up, -2 broke down
+var float rTop    = na
+var float rBot    = na
+var int   rL      = na
+var int   rR      = na
+var int   rBrkBar = na
+var box   rBox    = na
+var float rTarget = na
+bool rangeBrokeUp = false
+bool rangeBrokeDn = false
+
+if showRange
+    if rState == 1
+        h = rTop - rBot
+        if close > rTop + half
+            rState       := 2
+            rBrkBar      := bar_index
+            rTarget      := rTop + h
+            rangeBrokeUp := true
+            box.set_border_color(rBox, colBull)
+            box.new(bar_index, rTop + h, bar_index + math.min(rR - rL, 450), rTop, border_color = colBull, border_style = line.style_dashed,
+                 bgcolor = color.new(colBull, 90), text = "Target +" + f_pips(h) + " " + unitTxt + "  " + f_px(rTop + h), text_color = colBull,
+                 text_size = size.small, text_valign = text.align_top)
+        else if close < rBot - half
+            rState       := -2
+            rBrkBar      := bar_index
+            rTarget      := rBot - h
+            rangeBrokeDn := true
+            box.set_border_color(rBox, colBear)
+            box.new(bar_index, rBot, bar_index + math.min(rR - rL, 450), rBot - h, border_color = colBear, border_style = line.style_dashed,
+                 bgcolor = color.new(colBear, 90), text = "Target -" + f_pips(h) + " " + unitTxt + "  " + f_px(rBot - h), text_color = colBear,
+                 text_size = size.small, text_valign = text.align_bottom)
+        else
+            rR := bar_index
+            box.set_right(rBox, bar_index)
+    else if (rState == 0 or bar_index - rBrkBar >= rngLen) and not na(candTop) and close <= candTop + half and close >= candBot - half
+        // count separate touches of each boundary, oldest bar first
+        int  tTop   = 0
+        int  tBot   = 0
+        bool wasTop = false
+        bool wasBot = false
+        for i = rngLen to 1   // counts down: Pine steps -1 when from > to
+            hiT = high[i] >= candTop - touchTol
+            loT = low[i] <= candBot + touchTol
+            if hiT and not wasTop
+                tTop += 1
+            if loT and not wasBot
+                tBot += 1
+            wasTop := hiT
+            wasBot := loT
+        topLvl = f_nearest(candTop)
+        botLvl = f_nearest(candBot)
+        keyOk  = not rngNeedKey or (math.abs(candTop - topLvl) <= half + touchTol and math.abs(candBot - botLvl) <= half + touchTol and topLvl > botLvl)
+        sizeOk = rngNeedKey or candTop - candBot <= rngMaxAtr * atr
+        if tTop >= rngMinTouch and tBot >= rngMinTouch and keyOk and sizeOk and candTop > candBot
+            rState  := 1
+            rTop    := candTop
+            rBot    := candBot
+            rL      := bar_index - rngLen
+            rR      := bar_index
+            rTarget := na
+            rBox    := box.new(rL, rTop, rR, rBot, border_color = color.new(color.blue, 30), bgcolor = color.new(color.blue, 92),
+                 text = "Range " + f_pips(rTop - rBot) + " " + unitTxt + "", text_color = color.blue, text_size = size.small, text_valign = text.align_top)
+
+inRange = rState == 1
+
+// ─────────────────────────────────────────────────────────── 3-4 · Market structure
+// Swing high: `len` candles on each side that do not exceed it (a pivot), and price must then move at least
+// `react` x ATR below it before it counts. While a swing waits for its reaction, a higher pivot high
+// replaces it. Swing lows mirror this. Trend: the last 2 swing highs AND the last 2 swing lows step the
+// same way, and the latest close has not broken the last swing low (uptrend) / high (downtrend).
+f_swings(int len, float react) =>
+    a   = ta.atr(14)
+    ph  = ta.pivothigh(high, len, len)
+    pl  = ta.pivotlow(low, len, len)
+    rLo = ta.lowest(low, len)
+    rHi = ta.highest(high, len)
+    var float cH  = na
+    var int   cHt = na
+    var float cL  = na
+    var int   cLt = na
+    var float h1  = na
+    var float h2  = na
+    var float h3  = na
+    var int   h1t = na
+    var float l1  = na
+    var float l2  = na
+    var float l3  = na
+    var int   l1t = na
+    bool newH = false
+    bool newL = false
+    if not na(ph) and (na(cH) or ph > cH)
+        cH  := ph
+        cHt := time[len]
+    if not na(pl) and (na(cL) or pl < cL)
+        cL  := pl
+        cLt := time[len]
+    if not na(cH) and rLo <= cH - react * a
+        h3   := h2
+        h2   := h1
+        h1   := cH
+        h1t  := cHt
+        cH   := na
+        newH := true
+    if not na(cL) and rHi >= cL + react * a
+        l3   := l2
+        l2   := l1
+        l1   := cL
+        l1t  := cLt
+        cL   := na
+        newL := true
+    int s = 0
+    if h1 > h2 and l1 > l2 and close >= l1
+        s := 1
+    else if h1 < h2 and l1 < l2 and close <= h1
+        s := -1
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, newH, newL]
+
+// Reversal candles: names of the bullish / bearish pattern that closed on this bar, "" if none
+f_revs() =>
+    b  = math.abs(close - open)
+    r  = high - low
+    uw = high - math.max(open, close)
+    lw = math.min(open, close) - low
+    bE = close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and b > b[1]
+    sE = close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and b > b[1]
+    hm = r > 0 and lw >= 2 * b and lw >= 0.6 * r and uw <= 0.25 * r
+    ss = r > 0 and uw >= 2 * b and uw >= 0.6 * r and lw <= 0.25 * r
+    ms = close[2] < open[2] and b[2] >= 0.5 * r[2] and b[1] <= 0.3 * b[2] and close > open and close >= (open[2] + close[2]) / 2
+    es = close[2] > open[2] and b[2] >= 0.5 * r[2] and b[1] <= 0.3 * b[2] and close < open and close <= (open[2] + close[2]) / 2
+    [bE ? "Bullish engulfing" : ms ? "Morning star" : hm ? "Hammer" : "", sE ? "Bearish engulfing" : es ? "Evening star" : ss ? "Shooting star" : ""]
+
+// Higher-timeframe wrappers: values of the last CLOSED bar (no repainting with lookahead_on)
+f_macro(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    s[1]
+
+f_daily(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    [s[1], h1[1], h2[1], h3[1], l1[1], l2[1], l3[1], a[1], close[1]]
+
+f_health(int len, float react) =>
+    [s, h1, h2, h3, l1, l2, l3, h1t, l1t, a, nH, nL] = f_swings(len, react)
+    [bN, sN] = f_revs()
+    [s[1], h1[1], l1[1], h1t[1], l1t[1], close[1], bN[1], sN[1]]
+
+wTrend = request.security(syminfo.tickerid, tfMacro, f_macro(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+[dTrend, dH1, dH2, dH3, dL1, dL2, dL3, dAtr, dClose] = request.security(syminfo.tickerid, tfBias, f_daily(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+[hTrend, hH1, hL1, hH1t, hL1t, hClose, hBullRev, hBearRev] = request.security(syminfo.tickerid, tfConf, f_health(structLen, reactAtr), lookahead = barmerge.lookahead_on)
+biasDir = dTrend   // the Daily alone sets direction; Daily ranging = no trade
+
+// 4H health: a pullback against the Daily is the setup forming; a 4H close beyond the last Daily
+// higher low (uptrend) / lower high (downtrend) is a warning
+hChallenged = biasDir == 1 ? hClose < dL1 : biasDir == -1 ? hClose > dH1 : false
+
+// Daily POI: last higher low (uptrend) / lower high (downtrend) +/- the box width, widened to take in
+// earlier Daily swings and key level boxes within poiAtr x Daily ATR
+poiAnchor = biasDir == 1 ? dL1 : biasDir == -1 ? dH1 : na
+float poiLo = na
+float poiHi = na
+int   poiN  = 0
+if not na(poiAnchor)
+    radius = poiAtr * dAtr
+    poiLo := poiAnchor - half
+    poiHi := poiAnchor + half
+    poiN  := 1
+    for c in array.from(dH1, dH2, dH3, dL1, dL2, dL3)
+        if not na(c) and c != poiAnchor and math.abs(c - poiAnchor) <= radius
+            poiLo := math.min(poiLo, c)
+            poiHi := math.max(poiHi, c)
+            poiN  += 1
+    kBase = f_nearest(poiAnchor)
+    for k = -1 to 1
+        kl = kBase + k * midStep
+        if math.abs(kl - poiAnchor) <= radius
+            poiLo := math.min(poiLo, kl - half)
+            poiHi := math.max(poiHi, kl + half)
+            poiN  += 1
+f_inPOI(float p) =>
+    not na(p) and not na(poiLo) and p >= poiLo and p <= poiHi
+
+// Swing labels on the chart's own timeframe (to check the rule by eye)
+[cTrend, cH1, cH2, cH3, cL1, cL2, cL3, cH1t, cL1t, cAtr, cNewH, cNewL] = f_swings(structLen, reactAtr)
+var array<label> swLbls = array.new<label>()
+if showSwings and cNewH
+    array.push(swLbls, label.new(cH1t, cH1, na(cH2) ? "H" : cH1 > cH2 ? "HH" : "LH", xloc = xloc.bar_time, style = label.style_label_down,
+         color = color.new(color.white, 100), textcolor = na(cH2) or cH1 > cH2 ? colBull : colBear, size = size.small))
+if showSwings and cNewL
+    array.push(swLbls, label.new(cL1t, cL1, na(cL2) ? "L" : cL1 > cL2 ? "HL" : "LL", xloc = xloc.bar_time, style = label.style_label_up,
+         color = color.new(color.white, 100), textcolor = na(cL2) or cL1 > cL2 ? colBull : colBear, size = size.small))
+while array.size(swLbls) > maxSwLbl
+    label.delete(array.shift(swLbls))
+
+// ─────────────────────────────────────────────────────────── 5 · Impulse (A -> B) on the 2H
+// Impulse  = a series of candles in one direction inside an existing trend: enough candles, most closing
+//            beyond the one before, real bodies, a clean slope. Fib it.
+// Breakout = the move starts from a tight range and escapes it, or blows through a MAJOR key level box.
+//            No fib on the breakout. Wait for price to come back and retest the broken level; then the
+//            fib goes from the retest low (high) to the breakout high (low).
+// Kind: 1 = impulse in trend, 2 = retest after a breakout.
+f_impulses(int len, float mult, int maxBars, int minBars, float dirPct, float bodyPct, float effPct, int pre, float consMult,
+     float mjStep, float hw, float rtTol) =>
+    ph = ta.pivothigh(high, len, len)
+    pl = ta.pivotlow(low, len, len)
+    a  = ta.atr(14)
+    var float pHp = na
+    var int   pHt = na
+    var int   pHi = na
+    var float pLp = na
+    var int   pLt = na
+    var int   pLi = na
+    var float uA  = na
+    var float uB  = na
+    var int   uAt = na
+    var int   uBt = na
+    var int   uK  = 0
+    var float dA  = na
+    var float dB  = na
+    var int   dAt = na
+    var int   dBt = na
+    var int   dK  = 0
+    var float ubLvl = na    // bullish breakout: level to retest from above
+    var float ubX   = na    // breakout high so far
+    var int   ubXt  = na
+    var int   ubXi  = na
+    var float dbLvl = na    // bearish breakout: level to retest from below
+    var float dbX   = na
+    var int   dbXt  = na
+    var int   dbXi  = na
+    // follow a pending breakout: extend its extreme, cancel it on a close back inside
+    if not na(ubLvl)
+        if high > ubX
+            ubX  := high
+            ubXt := time
+            ubXi := bar_index
+        if close < ubLvl - hw
+            ubLvl := na
+    if not na(dbLvl)
+        if low < dbX
+            dbX  := low
+            dbXt := time
+            dbXi := bar_index
+        if close > dbLvl + hw
+            dbLvl := na
+    // swing low: bullish retest, then the bearish impulse into it
+    if not na(pl)
+        pb = bar_index - len
+        if not na(ubLvl) and ubXi < pb and math.abs(pl - ubLvl) <= rtTol
+            uA    := pl
+            uAt   := time[len]
+            uB    := ubX
+            uBt   := ubXt
+            uK    := 2
+            ubLvl := na
+        if not na(pHp) and pHi < pb and pHp - pl >= mult * a[len] and pb - pHi <= maxBars and pb - pHi >= minBars
+            offA = bar_index - pHi
+            int   n = offA - len
+            int   dn = 0
+            float bodies = 0.0
+            float ranges = 0.0
+            float path   = 0.0
+            for k = len to offA - 1
+                if close[k] < close[k + 1]
+                    dn += 1
+                bodies += math.abs(close[k] - open[k])
+                ranges += high[k] - low[k]
+                path   += math.abs(close[k] - close[k + 1])
+            eff = path > 0 ? (close[offA] - close[len]) / path : 0.0
+            if dn >= dirPct / 100 * n and ranges > 0 and bodies / ranges >= bodyPct / 100 and eff >= effPct / 100
+                float preHi = high[offA + 1]
+                float preLo = low[offA + 1]
+                for k = offA + 1 to offA + pre
+                    preHi := math.max(preHi, high[k])
+                    preLo := math.min(preLo, low[k])
+                consol = preHi - preLo <= consMult * a[offA] and pl < preLo
+                mj     = math.floor(pHp / mjStep) * mjStep        // highest major at or under A
+                thruMj = mj < pHp - hw and pl < mj - hw            // the move blew through a major box
+                if consol or thruMj
+                    dbLvl := consol ? preLo : mj
+                    dbX   := pl
+                    dbXt  := time[len]
+                    dbXi  := pb
+                else
+                    dA  := pHp
+                    dAt := pHt
+                    dB  := pl
+                    dBt := time[len]
+                    dK  := 1
+        pLp := pl
+        pLt := time[len]
+        pLi := pb
+    // swing high: bearish retest, then the bullish impulse into it
+    if not na(ph)
+        pb = bar_index - len
+        if not na(dbLvl) and dbXi < pb and math.abs(ph - dbLvl) <= rtTol
+            dA    := ph
+            dAt   := time[len]
+            dB    := dbX
+            dBt   := dbXt
+            dK    := 2
+            dbLvl := na
+        if not na(pLp) and pLi < pb and ph - pLp >= mult * a[len] and pb - pLi <= maxBars and pb - pLi >= minBars
+            offA = bar_index - pLi
+            int   n = offA - len
+            int   up = 0
+            float bodies = 0.0
+            float ranges = 0.0
+            float path   = 0.0
+            for k = len to offA - 1
+                if close[k] > close[k + 1]
+                    up += 1
+                bodies += math.abs(close[k] - open[k])
+                ranges += high[k] - low[k]
+                path   += math.abs(close[k] - close[k + 1])
+            eff = path > 0 ? (close[len] - close[offA]) / path : 0.0
+            if up >= dirPct / 100 * n and ranges > 0 and bodies / ranges >= bodyPct / 100 and eff >= effPct / 100
+                float preHi = high[offA + 1]
+                float preLo = low[offA + 1]
+                for k = offA + 1 to offA + pre
+                    preHi := math.max(preHi, high[k])
+                    preLo := math.min(preLo, low[k])
+                consol = preHi - preLo <= consMult * a[offA] and ph > preHi
+                mj     = math.ceil(pLp / mjStep) * mjStep         // lowest major at or above A
+                thruMj = mj > pLp + hw and ph > mj + hw
+                if consol or thruMj
+                    ubLvl := consol ? preHi : mj
+                    ubX   := ph
+                    ubXt  := time[len]
+                    ubXi  := pb
+                else
+                    uA  := pLp
+                    uAt := pLt
+                    uB  := ph
+                    uBt := time[len]
+                    uK  := 1
+        pHp := ph
+        pHt := time[len]
+        pHi := pb
+    [uA[1], uB[1], uAt[1], uBt[1], uK[1], ubLvl[1], dA[1], dB[1], dAt[1], dBt[1], dK[1], dbLvl[1]]   // last closed bar: no repainting
+
+[uA, uB, uAt, uBt, uK, ubWait, dA, dB, dAt, dBt, dK, dbWait] = request.security(syminfo.tickerid, tfImp,
+     f_impulses(swLen, impAtr, impMaxBars, impMinBars, impDirPct, impBodyPct, impEffPct, preLen, consolAtr, majorStep, half, half + retestPips * pip),
+     lookahead = barmerge.lookahead_on)
+impMs = timeframe.in_seconds(tfImp) * 1000
+
+// Big-picture fib (Daily) and the 4H fib: the same impulse rules, in the Daily direction
+[duA, duB, duAt, duBt, duK, duW, ddA, ddB, ddAt, ddBt, ddK, ddW] = request.security(syminfo.tickerid, tfImpD,
+     f_impulses(swLen, impAtr, impMaxBars, impMinBars, impDirPct, impBodyPct, impEffPct, preLen, consolAtr, majorStep, half, half + retestPips * pip),
+     lookahead = barmerge.lookahead_on)
+[huA, huB, huAt, huBt, huK, huW, hdA, hdB, hdAt, hdBt, hdK, hdW] = request.security(syminfo.tickerid, tfConf,
+     f_impulses(swLen, impAtr, impMaxBars, impMinBars, impDirPct, impBodyPct, impEffPct, preLen, consolAtr, majorStep, half, half + retestPips * pip),
+     lookahead = barmerge.lookahead_on)
+gA  = biasDir == 1 ? duA : biasDir == -1 ? ddA : na
+gB  = biasDir == 1 ? duB : biasDir == -1 ? ddB : na
+gAt = biasDir == 1 ? duAt : biasDir == -1 ? ddAt : na
+gBt = biasDir == 1 ? duBt : biasDir == -1 ? ddBt : na
+var int  gSeenBt = na
+var bool gDead   = false
+if na(gSeenBt) or gBt != gSeenBt
+    gSeenBt := gBt
+    gDead   := false
+g786 = gB - 0.786 * (gB - gA)
+if barstate.isconfirmed and not na(gB) and (biasDir == 1 ? (close < g786 or close > gB) : (close > g786 or close < gB))
+    gDead := true    // closed beyond 78.6 (dead) or beyond B (move extended)
+gLive = biasDir != 0 and not na(gB) and not gDead
+hA  = biasDir == 1 ? huA : biasDir == -1 ? hdA : na
+hB  = biasDir == 1 ? huB : biasDir == -1 ? hdB : na
+h786 = hB - 0.786 * (hB - hA)
+hLive = biasDir != 0 and not na(hB) and (biasDir == 1 ? close >= h786 and close <= hB : close <= h786 and close >= hB)
+
+// price inside the 38.2-61.8 band of a fib (A, B), with a small tolerance
+f_inBand(float p, float a, float b, float t) =>
+    lo = math.min(b - 0.382 * (b - a), b - 0.618 * (b - a))
+    hi = math.max(b - 0.382 * (b - a), b - 0.618 * (b - a))
+    not na(p) and not na(a) and p >= lo - t and p <= hi + t
+
+// ─────────────────────────────────────────────────────────── 6 · Fibonacci setup state
+// Daily ranging = no fib. Daily trending = fib on the most recent clean 2H impulse in the Daily direction.
+var int    fDir    = 0       // 1 long, -1 short
+var float  fA      = na
+var float  fB      = na
+var int    fAt     = na      // bar time of A
+var int    fBt     = na      // bar time of B
+var int    fState  = 0       // 0 waiting, 1 in zone, 2 entered, 3 TP1 hit, 4 TP2 hit, 5 closed at trail / BE, 6 structure exit, -1 invalid, -2 stopped, -3 expired, -4 beyond B, -5 Daily trend lost
+var bool   fZone   = false
+var float  fDeep   = 0.0
+var bool   fFalse  = false   // 78.6 false break seen
+var float  fPbExt  = na      // last 2H lower high (long) / higher low (short) of the pullback
+var float  fEntry  = na
+var int    fEntryT = na
+var float  fTrail  = na
+var string fCandle = ""
+var int    fConf   = 0
+var string fExtras = ""
+var int    fK      = 0       // 1 impulse in trend, 2 retest after breakout
+
+tradeLive = fState == 2 or fState == 3
+wA  = biasDir == 1 ? uA : biasDir == -1 ? dA : na
+wB  = biasDir == 1 ? uB : biasDir == -1 ? dB : na
+wAt = biasDir == 1 ? uAt : biasDir == -1 ? dAt : na
+wBt = biasDir == 1 ? uBt : biasDir == -1 ? dBt : na
+wK  = biasDir == 1 ? uK : biasDir == -1 ? dK : 0
+brkWait = biasDir == 1 ? ubWait : biasDir == -1 ? dbWait : na   // broken level still waiting for its retest
+
+// Daily trend lost before entry: the setup is dropped
+if not tradeLive and (fState == 0 or fState == 1) and fDir != 0 and biasDir != fDir
+    fState := -5
+
+if not tradeLive and biasDir != 0 and not na(wBt) and (na(fBt) or wBt != fBt or fDir != biasDir or fState == -5)
+    fDir    := biasDir
+    fA      := wA
+    fB      := wB
+    fAt     := wAt
+    fBt     := wBt
+    fK      := wK
+    fState  := 0
+    fZone   := false
+    fDeep   := 0.0
+    fFalse  := false
+    fPbExt  := na
+    fEntry  := na
+    fEntryT := na
+    fTrail  := na
+    fCandle := ""
+    fConf   := 0
+    fExtras := ""
+
+f_lv(float r) =>
+    fB - r * (fB - fA)
+
+L382 = f_lv(0.382)
+L50  = f_lv(0.5)
+L618 = f_lv(0.618)
+L786 = f_lv(0.786)
+TP1  = f_lv(-0.27)
+TP2  = f_lv(-0.618)
+SL   = L786 - fDir * slPips * pip   // stop a few pips beyond the 78.6
+tol  = fibTolPips * pip
+
+// Risk to reward: distance to target / distance to stop, from an entry price
+f_rr(float entry, float tp) =>
+    risk = math.abs(entry - SL)
+    risk > 0 ? math.abs(tp - entry) / risk : na
+
+f_rrTxt(float entry) =>
+    str.tostring(f_rr(entry, TP1), "#.#") + "R / " + str.tostring(f_rr(entry, TP2), "#.#") + "R"
+
+key382  = f_inKeyBox(L382)
+key50   = f_inKeyBox(L50)
+key618  = f_inKeyBox(L618)
+near382 = f_nearKeyBox(L382)
+near50  = f_nearKeyBox(L50)
+near618 = f_nearKeyBox(L618)
+
+// ─────────────────────────────────────────────────────────── 7 · Entry-timeframe signals (chart = 2H)
+[bullName, bearName] = f_revs()
+lo3 = ta.lowest(low, 3)
+hi3 = ta.highest(high, 3)
+spl = ta.pivotlow(low, 2, 1)    // micro swing low one bar back
+sph = ta.pivothigh(high, 2, 1)  // micro swing high one bar back
+eF  = ta.ema(close, emaFast)
+eS  = ta.ema(close, emaSlow)
+upX = ta.barssince(ta.crossover(eF, eS))
+dnX = ta.barssince(ta.crossunder(eF, eS))
+newHtfBar = ta.change(time(tfConf)) != 0
+newH4High = ta.change(hH1t) != 0   // a new 4H swing high was confirmed
+newH4Low  = ta.change(hL1t) != 0   // a new 4H swing low was confirmed
+
+// ─────────────────────────────────────────────────────────── State machine
+bool longSig   = false
+bool shortSig  = false
+bool zoneEntry = false
+bool tp1Event  = false
+bool invEvent  = false
+bool stopEvent = false
+bool exitEvent = false
+bool trailEvent = false
+bool partEvent = false
+bool doneEvent = false
+var float partLvl = na
+bool rqFib  = false
+bool rqCdl  = false
+bool xKey   = false
+bool xShift = false
+bool xEma   = false
+bool xStack = false
+bool xFalse = false
+bool xWeek  = false
+int  cnt    = 0
+string candleNow = ""
+float  lvlP = na
+
+if fDir != 0 and barstate.isconfirmed
+    isLong = fDir == 1
+    // trade management first, so the signal bar itself is not scored as a stop or target
+    if tradeLive
+        // trail: after each new 4H higher high (lower low), stop goes just beyond the 4H higher low (lower high)
+        if isLong and newH4High and hH1t > fEntryT and not na(hL1t) and hL1t > fEntryT
+            nt = hL1 - slPips * pip
+            if na(fTrail) or nt > fTrail
+                fTrail     := nt
+                trailEvent := true
+        if not isLong and newH4Low and hL1t > fEntryT and not na(hH1t) and hH1t > fEntryT
+            nt = hH1 + slPips * pip
+            if na(fTrail) or nt < fTrail
+                fTrail     := nt
+                trailEvent := true
+        base    = fState == 3 ? fEntry : SL
+        stopLvl = na(fTrail) ? base : isLong ? math.max(base, fTrail) : math.min(base, fTrail)
+        stopHit = isLong ? low <= stopLvl : high >= stopLvl
+        tp1Hit  = isLong ? high >= TP1 : low <= TP1
+        tp2Hit  = isLong ? high >= TP2 : low <= TP2
+        if isLong ? dClose < dL1 : dClose > dH1
+            fState    := 6          // Daily close beyond the last Daily higher low / lower high
+            exitEvent := true
+        else if fState == 2
+            if stopHit
+                fState    := stopLvl == SL ? -2 : 5
+                stopEvent := true
+            else if tp1Hit
+                fState   := tp2Hit ? 4 : 3
+                tp1Event := true
+        else if fState == 3
+            if tp2Hit
+                fState := 4
+            else if stopHit
+                fState := 5
+        if fState == 2 or fState == 3
+            // partials: a key level box between entry and TP1
+            kl = f_nearest(isLong ? high : low)
+            atKey = isLong ? high >= kl - half and kl > fEntry + half and kl < TP1 : low <= kl + half and kl < fEntry - half and kl > TP1
+            if fState == 2 and atKey and (na(partLvl) or kl != partLvl)
+                partLvl   := kl
+                partEvent := true
+            // market may be done: at a key level or past TP1, and a reversal candle closed (2H, or 4H on its close)
+            far    = isLong ? (high >= TP1 or (f_inKeyBox(high) and high > fEntry + half)) : (low <= TP1 or (f_inKeyBox(low) and low < fEntry - half))
+            revNow = isLong ? bearName != "" or (newHtfBar and hBearRev != "") : bullName != "" or (newHtfBar and hBullRev != "")
+            doneEvent := far and revNow
+    else if fState == 0 or fState == 1
+        beyond786 = isLong ? close < L786 : close > L786
+        beyondB   = isLong ? close > fB : close < fB
+        if beyond786
+            fState   := -1
+            invEvent := true
+        else if beyondB
+            fState := -4      // impulse extended past B: wait for the next swing to set a new A-to-B
+        else if time - math.max(fAt, fBt) > expiryBars * impMs
+            fState := -3      // too old: no entry within the expiry window (counted in impulse-timeframe bars)
+        else
+            t382 = isLong ? low <= L382 + tol : high >= L382 - tol
+            t50  = isLong ? low <= L50 + tol : high >= L50 - tol
+            t618 = isLong ? low <= L618 + tol : high >= L618 - tol
+            if t382
+                if not fZone
+                    zoneEntry := true
+                fZone  := true
+                fState := 1
+            fDeep := t618 ? math.max(fDeep, 0.618) : t50 ? math.max(fDeep, 0.5) : t382 ? math.max(fDeep, 0.382) : fDeep
+            // 78.6 false break: wick beyond the 78.6, close back inside
+            if isLong ? low < L786 and close >= L786 : high > L786 and close <= L786
+                fFalse := true
+            // pullback structure on the 2H: latest lower high (long) / higher low (short) after B
+            if time > fBt and isLong and not na(sph)
+                fPbExt := sph
+            if time > fBt and not isLong and not na(spl)
+                fPbExt := spl
+            lvlP      := fDeep >= 0.618 ? L618 : fDeep >= 0.5 ? L50 : fDeep >= 0.382 ? L382 : na
+            candleNow := isLong ? bullName : bearName
+            patInZone  = isLong ? lo3 <= L382 + tol and lo3 > L786 - slPips * pip : hi3 >= L382 - tol and hi3 < L786 + slPips * pip
+            rqFib  := fZone
+            rqCdl  := candleNow != "" and patInZone
+            xKey   := fZone and (f_inKeyBox(lvlP) or f_inPOI(lvlP))
+            xShift := fZone and not na(fPbExt) and (isLong ? close > fPbExt : close < fPbExt)
+            xEma   := isLong ? eF > eS or upX <= emaBars : eF < eS or dnX <= emaBars
+            xStack := fZone and ((gLive and f_inBand(lvlP, gA, gB, tol)) or (hLive and f_inBand(lvlP, hA, hB, tol)))
+            xFalse := fFalse
+            xWeek  := wTrend == fDir
+            cnt    := (rqFib ? 1 : 0) + (rqCdl ? 1 : 0) + (xKey ? 1 : 0) + (xShift ? 1 : 0) + (xEma ? 1 : 0) + (xStack ? 1 : 0) + (xFalse ? 1 : 0) + (xWeek ? 1 : 0)
+            rangeOk = not (blockInRange and inRange)
+            stopOk  = isLong ? close > SL : close < SL
+            if rqFib and rqCdl and cnt >= minConf and biasDir == fDir and rangeOk and stopOk
+                fState  := 2
+                fEntry  := close
+                fEntryT := time
+                fCandle := candleNow
+                fConf   := cnt
+                fExtras := (xKey ? "key/POI " : "") + (xShift ? "shift " : "") + (xEma ? "EMA " : "") + (xStack ? "stack " : "") + (xFalse ? "78.6FB " : "") + (xWeek ? "weekly" : "")
+                longSig  := isLong
+                shortSig := not isLong
+                lvlTxt = fDeep >= 0.618 ? "61.8" : fDeep >= 0.5 ? "50" : "38.2"
+                grade  = cnt >= 5 ? "A+" : cnt == 4 ? "A" : "B"
+                label.new(bar_index, isLong ? low : high,
+                     (isLong ? "LONG " : "SHORT ") + grade + " " + str.tostring(cnt) + "\n" + candleNow + " @ " + lvlTxt + "\n+ " + fExtras +
+                     "\nSL " + f_px(SL) + "  TP1 " + f_px(TP1) + "  TP2 " + f_px(TP2) + "\nR:R " + f_rrTxt(close) + " (TP1 / TP2)",
+                     style = isLong ? label.style_label_up : label.style_label_down,
+                     color = isLong ? colBull : colBear, textcolor = color.white, size = size.small)
+
+plotshape(longSig, "Long signal", shape.triangleup, location.belowbar, colBull, size = size.small, display = display.pane)
+plotshape(shortSig, "Short signal", shape.triangledown, location.abovebar, colBear, size = size.small, display = display.pane)
+
+// ─────────────────────────────────────────────────────────── 6 · Draw the fibs, POI and entry ladder
+var array<line>  fibLines  = array.new<line>()
+var array<label> fibLabels = array.new<label>()
+var box fibZoneBox = na
+var box poiBox     = na
+
+f_size(float entry, float w) =>
+    wSum = w382 + w50 + w618
+    dist = math.abs(entry - SL)
+    dist > 0 and wSum > 0 ? acct * riskPct / 100 * w / wSum / dist / ctSize : na
+
+f_stateText(int s) =>
+    switch s
+        0  => "Waiting for retrace"
+        1  => "In fib zone, waiting for confluence"
+        2  => "ENTERED"
+        3  => "TP1 hit, SL at breakeven"
+        4  => "TP2 hit, done"
+        5  => "Closed at trailing stop / breakeven"
+        6  => "STRUCTURE EXIT: Daily closed beyond the last Daily " + (fDir == 1 ? "higher low" : "lower high")
+        -1 => "INVALID (closed beyond 78.6)"
+        -2 => "Stopped out"
+        -3 => "Expired: no entry within " + str.tostring(expiryBars) + " bars of B"
+        -4 => "Closed beyond B: waiting for a new impulse"
+        -5 => "Daily trend lost: setup dropped"
+        => "-"
+
+var array<line>  gLines  = array.new<line>()
+var array<label> gLabels = array.new<label>()
+if barstate.islast
+    for l in gLines
+        line.delete(l)
+    for l in gLabels
+        label.delete(l)
+    array.clear(gLines)
+    array.clear(gLabels)
+    box.delete(poiBox)
+    if showPOI and not na(poiLo)
+        poiBox := box.new(time - 40 * timeframe.in_seconds() * 1000, poiHi, time + 30 * timeframe.in_seconds() * 1000, poiLo, xloc = xloc.bar_time,
+             border_color = color.new(color.yellow, 40), border_style = line.style_dotted, bgcolor = color.new(color.yellow, 88),
+             text = "Daily POI · " + str.tostring(poiN) + " level" + (poiN == 1 ? "" : "s"), text_color = color.new(color.yellow, 0), text_size = size.small,
+             text_halign = text.align_left, text_valign = text.align_top)
+    if showDFib and gLive
+        gc     = color.new(color.purple, 0)
+        gRight = time + 30 * timeframe.in_seconds() * 1000
+        array.push(gLines, line.new(gAt, gA, gBt, gB, xloc = xloc.bar_time, color = color.new(gc, 40), width = 2, style = line.style_dotted))
+        for r in array.from(0.0, 0.382, 0.5, 0.618, 0.786, 1.0)
+            p = gB - r * (gB - gA)
+            array.push(gLines, line.new(gBt, p, gRight, p, xloc = xloc.bar_time, color = color.new(gc, r == 0.786 ? 60 : 30),
+                 style = line.style_dashed, width = 1))
+            array.push(gLabels, label.new(gBt, p, "D " + (r == 0.0 ? "B" : r == 1.0 ? "A" : str.tostring(r * 100, "#.#")) + "  " + f_px(p),
+                 xloc = xloc.bar_time, style = label.style_label_right, color = color.new(gc, 85), textcolor = gc, size = size.small))
+
+if barstate.islast
+    for l in fibLines
+        line.delete(l)
+    for l in fibLabels
+        label.delete(l)
+    array.clear(fibLines)
+    array.clear(fibLabels)
+    box.delete(fibZoneBox)
+    if fDir != 0 and fState >= 0 and fState <= 3
+        isLong = fDir == 1
+        dc     = isLong ? colBull : colBear
+        right  = time + 15 * timeframe.in_seconds() * 1000
+        side   = isLong ? "Buy limit" : "Sell limit"
+        array.push(fibLines, line.new(fAt, fA, fBt, fB, xloc = xloc.bar_time, color = color.new(dc, 30), width = 2, style = line.style_dotted))
+        fibZoneBox := box.new(fBt, L382, right, L618, xloc = xloc.bar_time, border_color = color.new(dc, 100), bgcolor = color.new(dc, 88))
+        levels = array.from(0.0, 0.382, 0.5, 0.618, 0.786, 1.0, -0.27, -0.618)
+        for r in levels
+            p = f_lv(r)
+            string txt = ""
+            if r == 0.0
+                txt := "B  " + f_px(p)
+            else if r == 1.0
+                txt := "A  " + f_px(p)
+            else if r == 0.382
+                txt := "38.2  " + f_px(p) + "  " + side + " · starter, small " + str.tostring(f_size(p, w382), "#.##") + " lots · " + f_rrTxt(p) + (key382 ? "  [KEY BOX]" : near382 ? "  [NEAR BOX]" : "") + (f_inPOI(p) ? "  [POI]" : "")
+            else if r == 0.5
+                txt := "50  " + f_px(p) + "  " + side + " · medium " + str.tostring(f_size(p, w50), "#.##") + " lots · " + f_rrTxt(p) + (key50 ? "  [KEY BOX]" : near50 ? "  [NEAR BOX]" : "") + (f_inPOI(p) ? "  [POI]" : "")
+            else if r == 0.618
+                txt := "61.8  " + f_px(p) + "  " + side + " · large " + str.tostring(f_size(p, w618), "#.##") + " lots · " + f_rrTxt(p) + (key618 ? "  [KEY BOX]" : near618 ? "  [NEAR BOX]" : "") + (f_inPOI(p) ? "  [POI]" : "")
+            else if r == 0.786
+                txt := "78.6  " + f_px(p) + "  close beyond = invalid"
+            else if r == -0.27
+                txt := "TP1 -0.27  " + f_px(p) + "  partials, SL to BE"
+            else
+                txt := "TP2 -0.618  " + f_px(p)
+            lc = r == 0.786 ? color.gray : r < 0 ? color.new(color.green, 0) : color.new(dc, 0)
+            array.push(fibLines, line.new(fBt, p, right, p, xloc = xloc.bar_time, color = lc, width = (r == 0.618 ? 2 : 1),
+                 style = (r == 0.786 or r < 0) ? line.style_dashed : line.style_solid))
+            array.push(fibLabels, label.new(right, p, txt, xloc = xloc.bar_time, style = label.style_label_left, color = color.new(lc, 85),
+                 textcolor = lc, size = size.small))
+        array.push(fibLines, line.new(fBt, SL, right, SL, xloc = xloc.bar_time, color = color.red, width = 2))
+        array.push(fibLabels, label.new(right, SL, xloc = xloc.bar_time, text = "SL  " + f_px(SL) + "  (" + f_pips(slPips * pip) + " " + unitTxt + " beyond 78.6)",
+             style = label.style_label_left, color = color.new(color.red, 85), textcolor = color.red, size = size.small))
+        if not na(fTrail) and fState >= 2
+            array.push(fibLines, line.new(fEntryT, fTrail, right, fTrail, xloc = xloc.bar_time, color = color.orange, width = 2, style = line.style_dashed))
+            array.push(fibLabels, label.new(right, fTrail, xloc = xloc.bar_time, text = "Trail stop  " + f_px(fTrail) + "  (under the last 4H " + (isLong ? "higher low)" : "lower high)"),
+                 style = label.style_label_left, color = color.new(color.orange, 85), textcolor = color.orange, size = size.small))
+
+// ─────────────────────────────────────────────────────────── Checklist table
+f_trendTxt(int b) =>
+    b == 1 ? "Uptrend (HH + HL)" : b == -1 ? "Downtrend (LH + LL)" : "Ranging / not confirmed"
+
+var table tbl = table.new(tablePos == "Top right" ? position.top_right : tablePos == "Bottom right" ? position.bottom_right :
+     tablePos == "Top left" ? position.top_left : position.bottom_left, 3, 18, bgcolor = color.new(color.black, 5),
+     border_width = 1, border_color = color.new(color.gray, 60))
+
+tSize = tableSize == "Tiny" ? size.tiny : tableSize == "Normal" ? size.normal : size.small
+
+f_row(int row, string item, bool ok, string detail) =>
+    table.cell(tbl, 0, row, item, text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, row, f_mark(ok), text_size = tSize)
+    table.cell(tbl, 2, row, tableDetail ? detail : "", text_color = color.silver, text_size = tSize, text_halign = text.align_left)
+
+f_info(int row, string item, string detail, color c) =>
+    table.cell(tbl, 0, row, item, text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, row, "")
+    table.cell(tbl, 2, row, detail, text_color = c, text_size = tSize, text_halign = text.align_left)
+
+if barstate.islast and showTable
+    tfWarn = timeframe.period == tfImp ? "" : "  (entries: use the 2H chart)"
+    hasFib = fDir != 0 and fState >= 0 and fState <= 3
+    isLong = fDir == 1
+    ent    = hasFib and fState >= 2
+    rangeTxt = rState == 1 ? "Inside range " + f_pips(rTop - rBot) + " " + unitTxt + ", wait for break" :
+         rState == 2 ? "Broke UP, target " + f_px(rTarget) : rState == -2 ? "Broke DOWN, target " + f_px(rTarget) : "No range on this timeframe"
+    healthTxt = biasDir == 0 ? "-" : hChallenged ? "CHALLENGED: 4H closed beyond the last Daily " + (biasDir == 1 ? "HL " + f_px(dL1) : "LH " + f_px(dH1)) :
+         hTrend == biasDir ? "Aligned with the Daily" : hTrend == -biasDir ? "Pulling back: setup forming" : "Mixed: pulling back"
+    poiTxt = na(poiLo) ? "-" : f_px(poiLo) + " – " + f_px(poiHi) + " · " + str.tostring(poiN) + " level" + (poiN == 1 ? "" : "s") +
+         (close >= poiLo and close <= poiHi ? " · price AT POI" : " · " + f_pips(close > poiHi ? close - poiHi : poiLo - close) + " " + unitTxt + " away")
+    confNow = ent ? fConf : hasFib ? cnt : 0
+    grade   = confNow >= 5 ? "A+" : confNow == 4 ? "A" : confNow == 3 ? "B" : "-"
+    liveC   = isLong ? bullName : bearName
+    candTxt = ent ? fCandle : (rqCdl ? candleNow : liveC != "" ? liveC + " (not at zone)" : "waiting for a close")
+    lvlNow  = fDeep >= 0.618 ? "61.8" : fDeep >= 0.5 ? "50" : fDeep >= 0.382 ? "38.2" : "not reached"
+    extrasTxt = ent ? fExtras : (f_mark(xKey) + " key/POI " + f_mark(xShift) + " shift " + f_mark(xEma) + " EMA " + f_mark(xStack) + " stack " + f_mark(xFalse) + " 78.6FB " + f_mark(xWeek) + " weekly")
+    stopNow = not ent ? SL : na(fTrail) ? (fState == 3 ? fEntry : SL) : isLong ? math.max(fState == 3 ? fEntry : SL, fTrail) : math.min(fState == 3 ? fEntry : SL, fTrail)
+    table.cell(tbl, 0, 0, "KL-Fib checklist", text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, 0, "")
+    table.cell(tbl, 2, 0, not tableDetail ? "" : mode + " · box ±" + f_pips(half) + " " + unitTxt, text_color = color.silver, text_size = tSize, text_halign = text.align_left)
+    f_row(1, "Key level boxes", showLevels, "major " + f_px(majorStep) + " / mid " + f_px(midStep))
+    f_row(2, "Range", rState != 1, rangeTxt)
+    f_row(3, "Weekly (context)", wTrend != 0 and wTrend == biasDir, f_trendTxt(wTrend) + (biasDir != 0 and wTrend == biasDir ? " · agrees (+1)" : ""))
+    f_row(4, "Daily trend", biasDir != 0, f_trendTxt(dTrend) + (biasDir == 0 ? " · no trade" : ""))
+    f_row(5, "4H health", biasDir != 0 and not hChallenged, healthTxt)
+    f_row(6, "Daily POI", not na(poiLo), poiTxt)
+    f_row(7, "Impulse (2H)", hasFib, (hasFib ? (fK == 2 ? "Retest after breakout, " : "In trend, ") + (isLong ? "up " : "down ") + f_pips(math.abs(fB - fA)) + " " + unitTxt +
+         (f_inKeyBox(fB) ? ", ends at key level" : "") : biasDir == 0 ? "no fib: Daily not trending" :
+         not na(brkWait) ? "breakout: waiting for retest of " + f_px(brkWait) : "none active") + tfWarn)
+    f_row(8, "Fibs placed", hasFib, (hasFib ? "2H A " + f_px(fA) + " → B " + f_px(fB) : "2H -") + (gLive ? " · Daily ✓" : "") + (hLive ? " · 4H ✓" : ""))
+    f_row(9, "REQ: fib level hit", ent or (hasFib and fZone), hasFib ? lvlNow : "-")
+    f_row(10, "REQ: reversal closed", ent or (hasFib and rqCdl), hasFib ? candTxt : "-")
+    f_row(11, "Extras (need 1+)", ent or confNow >= minConf, hasFib ? extrasTxt : "-")
+    f_row(12, "Confluences ≥ " + str.tostring(minConf), hasFib and confNow >= minConf, hasFib ? str.tostring(confNow) + " · grade " + grade : "-")
+    f_info(13, "Status", fDir == 0 ? "No setup" : f_stateText(fState), fState == 2 or fState == 3 ? color.lime : fState < 0 or fState == 6 ? color.orange : color.white)
+    f_info(14, "Limits filled", not tableDetail ? "" : not hasFib ? "-" : fDeep >= 0.618 ? "38.2 + 50 + 61.8" : fDeep >= 0.5 ? "38.2 + 50" : fDeep >= 0.382 ? "38.2" : "none yet", color.silver)
+    f_info(15, "Plan", not tableDetail ? "" : hasFib ? "Stop " + f_px(stopNow) + (not na(fTrail) ? " (trail)" : "") + " · TP1 " + f_px(TP1) + " · TP2 " + f_px(TP2) : "-", color.silver)
+    // R:R once the minimum confluences line up: estimated entry = weighted average of the limits
+    // filled so far (38.2 / 50 / 61.8 at their lot weights), or the latest close if none filled yet
+    fw382 = fDeep >= 0.382 ? w382 : 0.0
+    fw50  = fDeep >= 0.5 ? w50 : 0.0
+    fw618 = fDeep >= 0.618 ? w618 : 0.0
+    fwSum = fw382 + fw50 + fw618
+    estE  = ent and not na(fEntry) ? fEntry : fwSum > 0 ? (fw382 * L382 + fw50 * L50 + fw618 * L618) / fwSum : close
+    rrOn  = hasFib and confNow >= minConf
+    // 38.2 is the starter entry (smallest lot, so the move is not missed): judged on the full ladder plan
+    starter = fState < 2 and fDeep < 0.5
+    planE = (w382 * L382 + w50 * L50 + w618 * L618) / math.max(w382 + w50 + w618, 1e-9)
+    rr1   = rrOn ? f_rr(starter ? planE : estE, TP1) : na
+    rrOk  = rrOn and rr1 >= minRR
+    table.cell(tbl, 0, 16, "R:R (TP1 / TP2)", text_color = color.white, text_size = tSize, text_halign = text.align_left)
+    table.cell(tbl, 1, 16, rrOn ? f_mark(rrOk) : "")
+    table.cell(tbl, 2, 16, not hasFib ? "-" : not rrOn ? "shown at " + str.tostring(minConf) + " confluences" :
+         (starter ? "38.2 starter " + f_rrTxt(L382) + " · full ladder " + f_rrTxt(planE) : f_rrTxt(estE) + " from " + f_px(estE)) +
+         (rrOk ? " · good (≥ " : " · below ") + str.tostring(minRR, "#.#") + "R)",
+         text_color = rrOn ? (rrOk ? color.lime : color.orange) : color.silver, text_size = tSize, text_halign = text.align_left)
+    f_info(17, "Daily fib (context)", not tableDetail ? "" : not gLive ? "none active" : "A " + f_px(gA) + " → B " + f_px(gB), color.silver)
+
+// ─────────────────────────────────────────────────────────── Alerts (alert() only: strategies cannot use alertcondition)
+if longSig or shortSig
+    alert((longSig ? "LONG " : "SHORT ") + syminfo.ticker + " " + timeframe.period + " grade " + (fConf >= 5 ? "A+" : fConf == 4 ? "A" : "B") + " (" + str.tostring(fConf) + ") " + fCandle +
+         " + " + fExtras + " entry " + f_px(fEntry) + " SL " + f_px(SL) + " TP1 " + f_px(TP1) + " TP2 " + f_px(TP2), alert.freq_once_per_bar_close)
+if rangeBrokeUp or rangeBrokeDn
+    alert(syminfo.ticker + " range broke " + (rangeBrokeUp ? "UP" : "DOWN") + ", target " + f_px(rTarget), alert.freq_once_per_bar_close)
+if trailEvent
+    alert(syminfo.ticker + " trail stop to " + f_px(fTrail), alert.freq_once_per_bar_close)
+if partEvent
+    alert(syminfo.ticker + " at key level " + f_px(partLvl) + " before TP1: consider 30-50% partials", alert.freq_once_per_bar_close)
+if doneEvent
+    alert(syminfo.ticker + " reversal candle at a key level / extension: market may be done", alert.freq_once_per_bar_close)
+if exitEvent
+    alert(syminfo.ticker + " STRUCTURE EXIT: Daily closed beyond the last Daily " + (fDir == 1 ? "higher low" : "lower high"), alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────── Strategy: orders
+grpX = "Strategy (backtest)"
+entryMode  = input.string("Reversal candle close", "Entry mode", options = ["Reversal candle close", "Limit ladder 38.2 / 50 / 61.8"], display = display.none, group = grpX,
+     tooltip = "Reversal candle close: one market entry when the setup completes (fib hit + closed reversal candle + extras). Limit ladder: buy / sell limits at 38.2 / 50 / 61.8 (1:2:3) placed as soon as the fib is live, with no candle needed.")
+tp1Pct     = input.float(50, "Close at TP1 (%)", minval = 1, maxval = 100, display = display.none, group = grpX)
+useTrail   = input.bool(true, "Trail the stop under new 4H higher lows (over lower highs)", display = display.none, group = grpX)
+useStructX = input.bool(true, "Exit on a Daily close beyond the last Daily HL / LH", display = display.none, group = grpX)
+// Size: "Risk if all three limits fill (%)" of current equity, split 1:2:3 in ladder mode
+
+f_qty(float entry, float stop, float share) =>
+    dist = math.abs(entry - stop) * syminfo.pointvalue
+    dist > 0 ? strategy.equity * riskPct / 100 * share / dist : 0.0
+
+var float tSL      = na    // levels frozen when the orders are placed
+var float tTP1     = na
+var float tTP2     = na
+var float tStop    = na
+var int   tOpenT   = na
+var bool  tTp1Done = false
+var float tMaxQty  = 0.0
+var int   ladderBt = na    // fib (B time) the open ladder belongs to
+var int   usedBt   = na    // fib that already traded: never traded twice
+
+flat    = strategy.position_size == 0
+wasFlat = nz(strategy.position_size[1]) == 0
+
+// a position just closed: cancel any ladder orders left and forget the trade
+if flat and not wasFlat
+    strategy.cancel_all()
+    usedBt   := not na(ladderBt) ? ladderBt : usedBt
+    ladderBt := na
+    tStop    := na
+    tTp1Done := false
+    tMaxQty  := 0.0
+
+// entries
+if flat and entryMode == "Reversal candle close" and (longSig or shortSig)
+    strategy.entry(longSig ? "Long" : "Short", longSig ? strategy.long : strategy.short, qty = f_qty(close, SL, 1.0))
+    tSL    := SL
+    tTP1   := TP1
+    tTP2   := TP2
+    usedBt := fBt
+
+ladderOn = entryMode == "Limit ladder 38.2 / 50 / 61.8" and fDir != 0 and (fState == 0 or fState == 1) and biasDir == fDir and
+     not (blockInRange and inRange) and (na(usedBt) or fBt != usedBt)
+if flat and ladderOn
+    if not na(ladderBt) and ladderBt != fBt
+        strategy.cancel_all()          // a newer fib replaced the old one
+    wS   = math.max(w382 + w50 + w618, 1e-9)
+    side = fDir == 1 ? strategy.long : strategy.short
+    pre  = fDir == 1 ? "L" : "S"
+    strategy.entry(pre + "382", side, qty = f_qty(L382, SL, w382 / wS), limit = L382)
+    strategy.entry(pre + "50", side, qty = f_qty(L50, SL, w50 / wS), limit = L50)
+    strategy.entry(pre + "618", side, qty = f_qty(L618, SL, w618 / wS), limit = L618)
+    tSL      := SL
+    tTP1     := TP1
+    tTP2     := TP2
+    ladderBt := fBt
+else if flat and not na(ladderBt)
+    strategy.cancel_all()              // setup ended before any limit filled
+    ladderBt := na
+
+// management
+if not flat
+    isL = strategy.position_size > 0
+    if wasFlat
+        tOpenT   := time
+        tStop    := tSL
+        tTp1Done := false
+    tMaxQty := math.max(tMaxQty, math.abs(strategy.position_size))
+    if not tTp1Done and not wasFlat and math.abs(strategy.position_size) < tMaxQty
+        tTp1Done := true               // the TP1 partial filled
+    if tTp1Done
+        tStop := isL ? math.max(tStop, strategy.position_avg_price) : math.min(tStop, strategy.position_avg_price)
+    if useTrail and isL and newH4High and hH1t > tOpenT and not na(hL1t) and hL1t > tOpenT
+        tStop := math.max(tStop, hL1 - slPips * pip)
+    if useTrail and not isL and newH4Low and hL1t > tOpenT and not na(hH1t) and hH1t > tOpenT
+        tStop := math.min(tStop, hH1 + slPips * pip)
+    if useStructX and (isL ? dClose < dL1 : dClose > dH1)
+        strategy.close_all(comment = "Structure exit")
+    else
+        if not tTp1Done
+            strategy.exit("TP1", qty_percent = tp1Pct, limit = tTP1, stop = tStop, comment_profit = "TP1", comment_loss = "Stop")
+        strategy.exit("TP2", limit = tTP2, stop = tStop, comment_profit = "TP2", comment_loss = tTp1Done ? "BE / trail" : "Stop")
+
+plot(not flat ? tStop : na, "Strategy stop", color.orange, 1, plot.style_linebr, display = display.pane)
