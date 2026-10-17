@@ -120,20 +120,20 @@ def test_zone_and_nearest_level():
     assert sc.in_psych_zone(eu, 1.1741, 0.001)[0] and not sc.in_psych_zone(eu, 1.1600, 0.001)[0]
 
 
-def test_psych_zone_fixed_15_pips_fx_and_atr_where_unset():
+def test_psych_zone_fixed_10_pips_fx_and_atr_where_unset():
     eu, uj, xau = UNIVERSE["EURUSD"], UNIVERSE["USDJPY"], UNIVERSE["XAUUSD"]
-    assert sc.psych_zone_half_width(eu, 0.0004) == (pytest.approx(0.0015), "fixed")
-    assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.15), "fixed")
-    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(20.0), "fixed")  # gold +/- $20
-    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(20.0), "fixed")
-    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(20.0), "fixed")   # S&P follows gold
+    assert sc.psych_zone_half_width(eu, 0.0004) == (pytest.approx(0.0010), "fixed")
+    assert sc.psych_zone_half_width(uj, 0.04) == (pytest.approx(0.10), "fixed")
+    assert sc.psych_zone_half_width(xau, 1.7) == (pytest.approx(10.0), "fixed")  # gold +/- $10
+    assert sc.psych_zone_half_width(UNIVERSE["GC"], 1.7) == (pytest.approx(10.0), "fixed")
+    assert sc.psych_zone_half_width(UNIVERSE["ES"], 3.0) == (pytest.approx(10.0), "fixed")   # S&P +/- 10 points
     assert sc.psych_zone_half_width(UNIVERSE["WTI"], 0.3) == (pytest.approx(1.0), "fixed")  # oil: gold ratio
     assert all(i.psych_zone_hw is not None for i in UNIVERSE.values())                       # no ATR fallback left
-    # gold 3,300 major: 3,282 is inside the $3,280-$3,320 zone, 3,278 is outside
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[1:] == (pytest.approx(3300.0), "major")
-    assert sc.in_psych_zone(xau, 3282.0, 20.0)[0] and not sc.in_psych_zone(xau, 3278.0, 20.0)[0]
-    # 1.1736 is 14 pips under the 1.1750 mid level: inside; 1.1734 is 16 pips under: outside
-    assert sc.in_psych_zone(eu, 1.1736, 0.0015)[0] and not sc.in_psych_zone(eu, 1.1734, 0.0015)[0]
+    # gold 3,300 major: 3,292 is inside the $3,290-$3,310 zone, 3,288 is outside
+    assert sc.in_psych_zone(xau, 3292.0, 10.0)[1:] == (pytest.approx(3300.0), "major")
+    assert sc.in_psych_zone(xau, 3292.0, 10.0)[0] and not sc.in_psych_zone(xau, 3288.0, 10.0)[0]
+    # 1.1741 is 9 pips under the 1.1750 mid level: inside; 1.1739 is 11 pips under: outside
+    assert sc.in_psych_zone(eu, 1.1741, 0.0010)[0] and not sc.in_psych_zone(eu, 1.1739, 0.0010)[0]
 
 
 def test_zone_wick_tests_long_and_short():
@@ -543,8 +543,9 @@ def test_demo_end_to_end(tmp_path):
     # gold rules apply to both directions (the zone lookup once overwrote the instrument kind)
     gold = [r for r in rows if r["symbol"] in ("XAUUSD", "GC")]
     assert gold and all(r["weekly"] for r in gold)
-    # gold C1 = Weekly + Daily; the 4H is ignored
-    assert all(r["c1"] == (r["daily_bias"] == r["direction"] == r["weekly"]) for r in gold)
+    # gold C1 = the Daily trend alone (cfg-0.13.1); the Weekly only adds a ranking point
+    assert all(r["c1"] == (r["daily_bias"] == r["direction"]) for r in gold)
+    assert all(r["weekly_points"] == int(r["weekly"] == r["direction"]) for r in gold)
     assert not any(r["grade"] == "B" for r in rows if r["symbol"] in ("SPX500", "ES", "WTI", "CL"))
     assert all(r["grade"] in ("A", "B") for r in rows if r["section"] == "qualified")
     assert all(r["grade"] == "A" and r["c4"] for r in rows if r["group"] == "FX cross" and r["section"] == "qualified")
@@ -649,7 +650,7 @@ def test_setup_label_and_confluence_text():
     row = {"c1": True, "c2": False, "c3": False, "c4": True, "c5": "True", "c6": "False"}
     assert sc.setup_label(row) == "C1+C4+C5"
     assert sc.confluences_text(row) == "C1 Trend alignment; C4 Reversal at the zone; C5 2H EMA momentum"
-    assert sc.confluences_text(row, met=False) == "C2 Key level zone; C3 Fibonacci retracement; C6 Market structure"
+    assert sc.confluences_text(row, met=False) == "C2 Key level zone; C3 Fibonacci retracement; C6 4H health"
     assert sc.setup_label({}) == "none"
 
 
@@ -746,3 +747,81 @@ def test_prune_only_old_intraday_html_and_csv(tmp_path):
     assert sc.prune_outputs(tmp_path, pd.Timestamp("2026-10-07 12:05", tz="UTC"), 14) == 2
     left = sorted(p.name for p in tmp_path.iterdir())
     assert left == ["scan_20260901T1205Z_preNY.html", "scan_20260901T1405Z_intraday.json", "scan_20261006T1405Z_intraday.html"]
+
+
+def test_gold_and_spx_pattern_tolerance_keeps_old_basis():
+    # cfg-0.11.0: zones narrowed to 10, chart-pattern tolerances still scale from 20
+    for sym in ("XAUUSD", "GC", "ES"):
+        inst = UNIVERSE[sym]
+        assert inst.psych_zone_hw == pytest.approx(10.0)
+        assert inst.pattern_zone_hw == pytest.approx(20.0)
+    assert UNIVERSE["WTI"].pattern_zone_hw is None      # oil: patterns use the zone width
+
+
+def test_fx_pattern_tolerance_and_near_zone_config():
+    # cfg-0.12.0: FX zone 10 pips, patterns keep the 15 pip basis, near zone 10 pips; off for non-FX
+    eu, uj = UNIVERSE["EURUSD"], UNIVERSE["USDJPY"]
+    assert eu.psych_zone_hw == pytest.approx(0.0010) and eu.pattern_zone_hw == pytest.approx(0.0015)
+    assert uj.psych_zone_hw == pytest.approx(0.10) and uj.pattern_zone_hw == pytest.approx(0.15)
+    assert eu.near_zone_w == pytest.approx(0.0010) and uj.near_zone_w == pytest.approx(0.10)
+    assert UNIVERSE["XAUUSD"].near_zone_w is None and UNIVERSE["ES"].near_zone_w is None
+
+
+def _near(checks, golden=False, stacked=False):
+    r = gr(checks, golden, stacked)
+    r.c2_near, r.c2_near_note = True, "Near key level: 4.0 pips outside the 1.3 major zone"
+    return r
+
+
+def test_near_zone_lists_developing_never_graded():
+    # C1 + C5 near the zone: would be B with C2, so developing with that hint
+    s, g, note = sc.grade_setup(_near("15"), "major")
+    assert (s, g) == ("developing", "") and "Near key level" in note and "becomes B" in note
+    # one other check is enough to list it
+    s, g, note = sc.grade_setup(_near("5"), "major")
+    assert (s, g) == ("developing", "") and "Near key level" in note and "becomes" not in note
+    # nothing else: not shown
+    assert sc.grade_setup(_near(""), "major")[0] == "not shown"
+    # already qualified without C2 (C1 + golden C3 + C5): stays qualified
+    assert sc.grade_setup(_near("135", golden=True), "major")[:2] == ("qualified", "B")
+    # minor pair near the zone is developing too
+    assert sc.grade_setup(_near("1"), "minor")[0] == "developing"
+
+
+# --------------------------------------------------------------- market structure (cfg-0.13.0)
+def test_find_swings_needs_reaction_of_1_5_atr():
+    # swing high 5.0 at bar 3; ATR fixed at 1.0, so price must trade down to 3.5 before it counts
+    h = [2, 3, 4, 5, 4.6, 4.5, 4.4, 4.3, 3.4, 3.3]
+    l = [x - 0.2 for x in h]
+    df = bars(h, l, freq="1D")
+    a = np.full(len(h), 1.0)
+    hs = [p for p in sc.find_swings(df, 3, 1.5, a) if p.kind == "H"]
+    assert len(hs) == 1 and hs[0].k == 3 and hs[0].confirm == 8      # first bar with low <= 3.5
+    # a wiggle that never reacts 1.5 ATR is not a swing
+    df2 = bars(h[:8], l[:8], freq="1D")
+    assert not [p for p in sc.find_swings(df2, 3, 1.5, a[:8]) if p.kind == "H"]
+
+
+def test_structure_health_c6_passes_pullback_fails_4h_close_beyond_daily_hl():
+    idx = pd.date_range("2026-09-01", periods=3, freq="4h", tz="UTC")
+    bias = sc.BiasState(sc.LONG, 1.1000, False, None)
+    pull = pd.DataFrame({"open": 1.11, "high": 1.11, "low": 1.10, "close": [1.115, 1.108, 1.104]}, index=idx)
+    ok, why = sc.structure_health(pull, bias, sc.LONG)
+    assert ok and "healthy" in why                     # lower closes on the 4H, still above the Daily HL
+    broke = pull.assign(close=[1.108, 1.104, 1.0990])
+    ok, why = sc.structure_health(broke, bias, sc.LONG)
+    assert not ok and "challenged" in why
+    assert not sc.structure_health(pull, bias, sc.SHORT)[0]   # Daily not trending short
+
+
+def test_daily_poi_clusters_swings_and_key_levels_within_radius():
+    eu = UNIVERSE["EURUSD"]
+    P = sc.Pivot
+    sw = [P(0, "L", 1.2440, 1), P(5, "H", 1.2700, 6), P(10, "L", 1.2530, 11), P(15, "H", 1.2800, 16)]
+    # anchor 1.2530 (last HL) +/- 10 pips, radius 40 pips: the 1.2500 major box joins; 1.2440 / 1.2700 / 1.2800 do not
+    lo, hi, n = sc.daily_poi(eu, sw, 20, 1.2530, 0.0010, 0.0040)
+    assert lo == pytest.approx(1.2490) and hi == pytest.approx(1.2540) and n == 2
+    # a wider radius also takes in the earlier swing low 1.2440
+    lo, hi, n = sc.daily_poi(eu, sw, 20, 1.2530, 0.0010, 0.0100)
+    assert lo == pytest.approx(1.2440) and n == 3
+    assert sc.daily_poi(eu, sw, 20, None, 0.0010, 0.0040) == (None, None, 0)

@@ -20,14 +20,15 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
     1. Key levels are zones, not lines.                       psych_zone_half_width, in_psych_zone
        Every major and mid grid level gets a box of fixed half-width (grids.*.zone_half_width):
          market        major / mid level spacing      zone half-width
-         FX            500 / 250 pips                 15 pips   (1.3000 -> 1.2985 to 1.3015)
-         JPY pairs     5.00 / 2.50                    0.15      (15 pips)
-         Gold          $100 / $50                     $20       (3,300 -> 3,280 to 3,320)
-         S&P           100 / 50 points                20 points (follows gold for now)
+         FX            500 / 250 pips                 10 pips   (1.3000 -> 1.2990 to 1.3010)
+         JPY pairs     5.00 / 2.50                    0.10      (10 pips)
+         Gold          $100 / $50                     $10       (3,300 -> 3,290 to 3,310; $1 = 10 pips)
+         S&P           100 / 50 points                10 points (3,300 -> 3,290 to 3,310)
          Oil           $5.00 / $2.50                  $1.00     (gold's 20% of major spacing; placeholder)
        Why: institutions' orders sit spread around a round number, so price reacts across an area.
-       Gold gets a wider box because news-driven overshoots of $15-25 are not breaks.
-       C2 = latest completed 2H close inside the zone. Fib (C3) and trend line (C6) tolerance still
+       Gold is +/-$10 (100 pips each side) per the owner, cfg-0.10.0 (was $20).
+       C2 = latest completed 2H close inside the zone. FX (cfg-0.12.0): a close up to 10 pips outside
+       the zone is "near zone" and the setup is listed as developing, never graded (grids.*.near_zone_width). Fib (C3) and trend line (C6) tolerance still
        use the v1.0 ATR width (zone_half_width).
 
     2. Wick principle (early alert, never scored).           zone_wick_tests
@@ -50,8 +51,9 @@ Trading method (owner rules, cfg-0.2.0 to cfg-0.4.1)
        B setup    = C1 + (C2 or C3 at 50/61.8) + one of C4, C5, C6.
        FX crosses = only an A setup with a closed C4 counts.
        S&P, oil   = only an A setup counts.
-       Gold       = C1 is Weekly + Daily (no 4H); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
-       Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0).
+       Gold       = C1 is the Daily trend (cfg-0.13.1; Weekly is context like the rest); B = C1 + C2 + C3; A = B + golden Fib stacked + C4. DXY is context.
+       Developing = any 2 or more of C1-C6 that are not graded (cfg-0.7.0), or an FX close up to 10 pips
+       outside a key level zone plus one other check (near zone, cfg-0.12.0).
        C6 = 4H market structure holding (higher low / lower high not closed through).  structure_holding
        A and B rows carry section "qualified" plus grade "A" or "B". Ranking: A, B, developing, then total;
        equal totals rank Daily confirmations above 4H, and 4H above 2H.
@@ -96,7 +98,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 import zlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -145,6 +147,8 @@ class Instrument:
     short_test: bool = False      # gold and S&P: carry v1.0 short experiment flag
     roll: Optional[str] = None
     psych_zone_hw: Optional[float] = None  # fixed zone half-width around grid levels; None = not set
+    pattern_zone_hw: Optional[float] = None  # width that scales chart-pattern tolerances; None = psych_zone_hw
+    near_zone_w: Optional[float] = None    # band just outside the zone that marks a setup developing; None = off
 
     @property
     def calendar_currencies(self) -> list[str]:
@@ -175,13 +179,13 @@ def load_config(path: Path) -> dict:
     return cfg
 
 
-def _grid_zone_hw(g: dict) -> Optional[float]:
-    v = g.get("zone_half_width")
+def _grid_zone_hw(g: dict, key: str = "zone_half_width") -> Optional[float]:
+    v = g.get(key)
     if v is None:
         return None
     v = float(v)
     if v <= 0:
-        raise ValueError(f"grid zone_half_width must be positive, got {v}")
+        raise ValueError(f"grid {key} must be positive, got {v}")
     return v
 
 
@@ -195,13 +199,17 @@ def build_universe(cfg: dict) -> list[Instrument]:
             g = grids["jpy" if jpy else "fx"]
             out.append(Instrument(symbol=sym, group=grp, asset="fx", tick=0.001 if jpy else 0.00001,
                                   grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                                  psych_zone_hw=_grid_zone_hw(g), tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
+                                  psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                                  near_zone_w=_grid_zone_hw(g, "near_zone_width"),
+                                  tv_symbol=sym, tv_exchange=cfg["fx"].get("tv_exchange", "OANDA"),
                                   base=base, quote=quote))
     for it in cfg.get("other_instruments", []):
         g = grids[it["grid"]]
         out.append(Instrument(symbol=it["symbol"], group=it["group"], asset=it["asset"], tick=float(it["tick"]),
                               grid_major=float(g["major"]), grid_mid=float(g["mid"]),
-                              psych_zone_hw=_grid_zone_hw(g), tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
+                              psych_zone_hw=_grid_zone_hw(g), pattern_zone_hw=_grid_zone_hw(g, "pattern_zone_half_width"),
+                              near_zone_w=_grid_zone_hw(g, "near_zone_width"),
+                              tv_symbol=it["tv_symbol"], tv_exchange=it["tv_exchange"],
                               fut_contract=it.get("fut_contract"), underlying=it.get("underlying"),
                               cot=it.get("cot"), short_test=bool(it.get("short_test", False)),
                               roll=it.get("roll"), base=it.get("base"), quote=it.get("quote")))
@@ -680,6 +688,48 @@ def find_pivots(df: pd.DataFrame, width: int = 2) -> list[Pivot]:
     return out
 
 
+def find_swings(df: pd.DataFrame, width: int, react_atr: float, atr_arr: np.ndarray) -> list[Pivot]:
+    """[OWNER cfg-0.13.0] Market-structure swings: a strict pivot with `width` bars each side that do not exceed it,
+    which counts only once price has moved at least react_atr x ATR (ATR at the pivot bar) away from it. The swing
+    becomes usable at the bar where both conditions are met. Used for trend, C1, C6, the Weekly read and the
+    Daily POI; impulses, chart patterns and the trend line keep their own pivots."""
+    h, l = df["high"].values, df["low"].values
+    out: list[Pivot] = []
+    for p in find_pivots(df, width):
+        a = atr_arr[p.k] if p.k < len(atr_arr) else np.nan
+        need = react_atr * a if np.isfinite(a) else 0.0
+        conf = None
+        ext = p.price
+        for t in range(p.k + 1, len(h)):
+            ext = min(ext, l[t]) if p.kind == "H" else max(ext, h[t])
+            if t >= p.confirm and abs(p.price - ext) >= need:
+                conf = t
+                break
+        if conf is not None:
+            out.append(Pivot(p.k, p.kind, p.price, conf))
+    return out
+
+
+def daily_poi(inst: Instrument, swings: list[Pivot], t: int, anchor: Optional[float], zhw: float,
+              radius: float) -> tuple[Optional[float], Optional[float], int]:
+    """[OWNER cfg-0.13.0] Daily POI: the last Daily higher low (uptrend) / lower high (downtrend) +/- the key box
+    width, widened to take in earlier Daily swings and key level boxes within `radius` (0.5 x Daily ATR).
+    Returns (low, high, number of levels clustered)."""
+    if anchor is None or not np.isfinite(anchor):
+        return None, None, 0
+    lo, hi, n = anchor - zhw, anchor + zhw, 1
+    seq = alternating_upto(swings, t)
+    for p in seq[-6:]:
+        if abs(p.price - anchor) > 1e-12 and abs(p.price - anchor) <= radius:
+            lo, hi, n = min(lo, p.price), max(hi, p.price), n + 1
+    base = round(anchor / inst.grid_mid) * inst.grid_mid
+    for k in (-1, 0, 1):
+        kl = base + k * inst.grid_mid
+        if abs(kl - anchor) <= radius:
+            lo, hi, n = min(lo, kl - zhw), max(hi, kl + zhw), n + 1
+    return lo, hi, n
+
+
 def add_alternating(seq: list[Pivot], p: Pivot) -> None:
     """[v1.0 2] Same type in a row keeps the more extreme one; equal prices keep the earlier."""
     if seq and seq[-1].kind == p.kind:
@@ -847,7 +897,7 @@ def zone_half_width(inst: Instrument, atr4_value: float, fcfg: dict) -> float:
 
 def psych_zone_half_width(inst: Instrument, atr_hw: float) -> tuple[float, str]:
     """[OWNER cfg-0.2.0] Key levels are zones, not lines. Half-width around every major and mid grid
-    level: the fixed width from config (FX +/-15 pips, gold +/-$20), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
+    level: the fixed width from config (FX +/-10 pips, gold +/-$10), else the ATR width. Returns (half_width, source) with source 'fixed' or 'atr'."""
     if inst.psych_zone_hw is not None:
         return inst.psych_zone_hw, "fixed"
     return atr_hw, "atr"
@@ -892,11 +942,13 @@ def in_psych_zone(inst: Instrument, price: float, hw: float) -> tuple[bool, floa
 # [OWNER cfg-0.7.0] Plain-language C1-C6 definitions: one source for the dashboard, the journal and the
 # trade gate, so every logged trade names the checks it had. Edit with the code that tests them.
 CONFLUENCES = {
-    "c1": ("Trend alignment", "Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade "
-                              "direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H)."),
+    "c1": ("Trend alignment", "The Daily trend points in the trade direction: the last 2 swing highs and the last 2 "
+                              "swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and "
+                              "no Daily close has broken the last swing. Daily ranging = no trade. A Weekly trend "
+                              "that agrees lifts the ranking."),
     "c2": ("Key level zone", "Price is at or around a major or mid level: the latest completed 2H close is inside "
-                             "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-15 "
-                             "pips; JPY pairs every 5.00 and 2.50, +/-0.15; gold and S&P every 100 and 50, +/-20; "
+                             "that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), +/-10 "
+                             "pips; JPY pairs every 5.00 and 2.50, +/-0.10; gold and S&P every 100 and 50, +/-10; "
                              "oil every 5.00 and 2.50, +/-1.00."),
     "c3": ("Fibonacci retracement", "Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, "
                                     "primary) or 38.2% (valid, lower conviction) retracement of the most recent clean "
@@ -906,9 +958,9 @@ CONFLUENCES = {
                                    "morning or evening star, reversal + marubozu, or a double top/bottom or head and "
                                    "shoulders closed beyond the neckline."),
     "c5": ("2H EMA momentum", "On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short."),
-    "c6": ("Market structure", "4H structure holds at entry: the latest 4H swing low is a higher low (a lower high "
-                               "for a short) and no 2H close has broken it since. A close through it means structure "
-                               "is compromised: skip."),
+    "c6": ("4H health", "The 4H has not closed beyond the last Daily higher low (lower high for a short). A 4H "
+                        "pullback against the Daily is the setup forming and passes; a 4H close beyond that level "
+                        "means the Daily trend is being challenged."),
 }
 CONF_KEYS = tuple(CONFLUENCES)
 
@@ -923,12 +975,13 @@ SETUP_RULES = (
                     "orders alone; size smaller than on majors."),
     ("S&P and oil", "SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing."),
     ("Gold", "B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close "
-             "(morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for "
+             "(morning star or bullish engulfing preferred). C1 is the Daily trend; a Weekly that agrees lifts the ranking. DXY falling is extra conviction for "
              "longs; check the Fed and safe-haven news."),
     ("Stop and targets", "Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. "
                          "TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to "
                          "breakeven."),
-    ("Developing", "Any 2 or more of C1-C6 that do not make a B setup. Watch only."),
+    ("Developing", "Any 2 or more of C1-C6 that do not make a B setup, or an FX close up to 10 pips outside a key "
+                    "level zone plus one other check (near zone). Watch only."),
 )
 GOLDEN_FIBS = (0.5, 0.618)
 
@@ -1062,14 +1115,16 @@ def chart_pattern(df: pd.DataFrame, pivots: list[Pivot], direction: str, inst: I
     """[OWNER cfg-0.4.0, C4] Double bottom/top and (inverse) head and shoulders on Daily or 4H, confirmed by a
     candle CLOSE beyond the neckline (a wick does not count) within the last break_max_age_bars bars,
     with the latest close still beyond it. The reversal extreme (a bottom, or the head) must sit in a key
-    level zone. Tolerances scale with the instrument's zone half-width. Returns '' if none."""
+    level zone. Tolerances scale with the instrument's pattern width (grids.*.pattern_zone_half_width, cfg-0.11.0),
+    which defaults to the zone half-width. Returns '' if none."""
     t = len(df) - 1
     c = df["close"].values
     seq = alternating_upto(pivots, t)
     ext = "L" if direction == LONG else "H"
     idx = [i for i, q in enumerate(seq) if q.kind == ext]
-    tol = float(cp["match_tol_zone_mult"][tf]) * zone_hw
-    margin = float(cp["head_margin_zone_mult"][tf]) * zone_hw
+    pat_hw = inst.pattern_zone_hw if inst.pattern_zone_hw is not None else zone_hw
+    tol = float(cp["match_tol_zone_mult"][tf]) * pat_hw
+    margin = float(cp["head_margin_zone_mult"][tf]) * pat_hw
     min_gap = int(cp["min_gap_bars"])
     max_age = int(cp["break_max_age_bars"])
     beyond = (lambda x, lvl: x > lvl) if direction == LONG else (lambda x, lvl: x < lvl)
@@ -1133,6 +1188,19 @@ def structure_holding(df4: pd.DataFrame, pivots4: list[Pivot], df2: pd.DataFrame
     if len(closes) and ((closes.min() < p1.price) if direction == LONG else (closes.max() > p1.price)):
         return False, f"2H closed through the 4H {name} {_fmt(p1.price, 6)}: structure compromised"
     return True, f"4H {name} {_fmt(p1.price, 6)} holding (prior {_fmt(p0.price, 6)})"
+
+
+def structure_health(df4: pd.DataFrame, bias: "BiasState", direction: str) -> tuple[bool, str]:
+    """[OWNER cfg-0.13.0, C6] 4H health check. A 4H pullback against the Daily (lower highs and lows in an uptrend)
+    is the setup forming, not a reason to skip. The check fails only when the latest completed 4H bar closed beyond
+    the last Daily higher low (long) / lower high (short), the level a Daily close would break the trend at."""
+    if bias.bias != direction or bias.invalidation is None:
+        return False, "Daily not trending this way"
+    c = float(df4["close"].values[-1])
+    name = "higher low" if direction == LONG else "lower high"
+    if (c < bias.invalidation) if direction == LONG else (c > bias.invalidation):
+        return False, f"challenged: 4H closed beyond the last Daily {name} {_fmt(bias.invalidation, 6)}"
+    return True, f"healthy: 4H holding the last Daily {name} {_fmt(bias.invalidation, 6)}"
 
 
 def weekly_from_daily(dfd: pd.DataFrame) -> pd.DataFrame:
@@ -1778,7 +1846,12 @@ class Row:
     c3_levels: str = ""            # retracements hit, e.g. "50.0 61.8"
     c3_golden: bool = False        # 50% or 61.8% hit
     stacked: bool = False          # a hit 50%/61.8% level sits inside the C2 zone
-    weekly: str = ""               # Weekly structure (gold C1)
+    weekly: str = ""               # Weekly structure: context and +1 rank when it agrees (cfg-0.13.0)
+    weekly_points: int = 0         # 1 when the Weekly trend agrees with this direction (ranking only)
+    poi_low: Optional[float] = None    # Daily POI zone (cfg-0.13.0), only when the Daily trends this way
+    poi_high: Optional[float] = None
+    poi_levels: int = 0
+    at_poi: bool = False
     dxy: str = ""                  # gold: DXY Daily bias and what it means for this direction
     plan: dict = field(default_factory=dict)   # stop 78.6/89 %, TP1 -27 %, TP2 -61.8 % from the impulse
     cot_points: int = 0
@@ -1793,6 +1866,8 @@ class Row:
     zone_high: Optional[float] = None
     zone_width_source: str = ""
     zone_wicks: int = 0
+    c2_near: bool = False          # [OWNER cfg-0.12.0] close is outside the zone but within near_zone_width of it
+    c2_near_note: str = ""
     daily_bias: str = ""
     bias_invalidation: Optional[float] = None
     structure_4h: str = ""
@@ -1824,6 +1899,17 @@ class InstrumentResult:
 
 
 def grade_setup(r: "Row", kind: str = "major") -> tuple[str, str, str]:
+    """[OWNER cfg-0.12.0] Near zone: a setup whose close sits just outside the key level zone (and has at least
+    one other check) is listed as developing, with the grade it would get on a close inside the zone."""
+    section, grade, note = _grade_core(r, kind)
+    if section == "qualified" or not r.c2_near or r.technical < 1:
+        return section, grade, note
+    if_in = _grade_core(replace(r, c2=True, c2_near=False, technical=r.technical + 1), kind)
+    hint = f"; becomes {if_in[1]} on a 2H close inside the zone" if if_in[0] == "qualified" else ""
+    return "developing", "", r.c2_near_note + hint + (". " + note if note else "")
+
+
+def _grade_core(r: "Row", kind: str = "major") -> tuple[str, str, str]:
     """[OWNER cfg-0.8.0] Position Trading Confluence System. Returns (section, grade, note).
     kind: 'major' (FX majors), 'minor' (FX crosses), 'a_only' (S&P, oil) or 'gold' (XAUUSD, GC).
     A: C1 + C2 + C3 at 50/61.8 stacked in the C2 zone + one of C4/C5/C6.  B: C1 + (C2 or golden C3) + one of C4/C5/C6.
@@ -1900,21 +1986,24 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
     f = cfg["features"]
     dfd, df4, df2 = bars[TF_D], bars[TF_4H], bars[TF_2H]
     w = int(f["pivot_width"])
-    piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)
+    piv_d, piv_4 = find_pivots(dfd, w), find_pivots(df4, w)   # impulses, chart patterns, trend line
     skind = setup_kind(inst)
-    s_wk = None
-    if skind == "gold":   # [OWNER cfg-0.8.0] gold needs the Weekly to agree too
-        wk = weekly_from_daily(dfd)
-        s_wk = structure(alternating_upto(find_pivots(wk, w), len(wk) - 1)) if len(wk) else None
     atr4 = atr(df4, int(f["atr_period"]))
     atr2 = atr(df2, int(f["atr_period"]))
     atrd = atr(dfd, int(f["atr_period"]))
+    # [OWNER cfg-0.13.0] market structure: 3 bars each side + a 1.5 x ATR reaction, same rule on every timeframe
+    st = f.get("structure", {})
+    sw_w, sw_r = int(st.get("pivot_width", w)), float(st.get("reaction_atr", 0.0))
+    sw_d, sw_4 = find_swings(dfd, sw_w, sw_r, atrd), find_swings(df4, sw_w, sw_r, atr4)
+    wk = weekly_from_daily(dfd)
+    s_wk = (structure(alternating_upto(find_swings(wk, sw_w, sw_r, atr(wk, int(f["atr_period"]))), len(wk) - 1))
+            if len(wk) else None)
     c2h = df2["close"].values
     e_fast, e_slow = (ema(c2h, int(n)) for n in f["ema_2h"])
     ed20, ed50 = (ema(dfd["close"].values, int(n)) for n in f["ema_daily"])
-    bias = daily_bias(dfd, piv_d)
-    s4 = structure(alternating_upto(piv_4, len(df4) - 1))
-    sd_struct = structure(alternating_upto(piv_d, len(dfd) - 1))
+    bias = daily_bias(dfd, sw_d)
+    s4 = structure(alternating_upto(sw_4, len(df4) - 1))
+    sd_struct = structure(alternating_upto(sw_d, len(dfd) - 1))
     P = float(c2h[-1])
     rows = []
     for direction in (LONG, SHORT):
@@ -1924,11 +2013,11 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.structure_4h = s4 or "mixed"
         if bias.invalidated_on_last_bar:
             r.flags.append("Daily bias invalidated on latest Daily bar")
-        # C1 [v1.0 D01 + D02]
-        r.c1 = bias.bias == direction and s4 == direction
-        if skind == "gold":
-            r.weekly = s_wk or "mixed"
-            r.c1 = bias.bias == direction and s_wk == direction   # [OWNER cfg-0.8.0] Weekly + Daily, no 4H
+        # C1 [OWNER cfg-0.13.0] the Daily trend alone sets direction; the 4H is a health check (C6), not a gate
+        r.c1 = bias.bias == direction
+        r.weekly = s_wk or "mixed"
+        r.weekly_points = int(s_wk == direction)   # [OWNER cfg-0.13.0] Weekly agreeing lifts the ranking
+        if skind == "gold":   # [OWNER cfg-0.13.1] gold C1 is the Daily trend too; DXY stays context
             r.dxy = ("unavailable" if dxy is None else
                      f"DXY {'falling' if dxy == SHORT else 'rising'}: "
                      + ("extra conviction" if (dxy == SHORT) == (direction == LONG) else "against this trade")
@@ -1947,6 +2036,13 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         ok, lvl, kind = in_psych_zone(inst, P, zhw)
         r.c2, r.zone_level, r.zone_kind = ok, lvl, kind
         r.zone_low, r.zone_high = lvl - zhw, lvl + zhw
+        # [OWNER cfg-0.12.0] Near zone: close just outside the box. Listed as developing, never scores C2.
+        if not ok and inst.near_zone_w is not None and abs(P - lvl) <= zhw + inst.near_zone_w + 1e-12:
+            out = abs(P - lvl) - zhw
+            dist = f"{out / (inst.tick * 10):.1f} pips" if inst.asset == "fx" else f"{out:g}"
+            r.c2_near = True
+            r.c2_near_note = f"Near key level: {dist} outside the {lvl:g} {kind} zone"
+            r.flags.append(f"near zone: {dist} outside {lvl:g}")
         # [OWNER cfg-0.2.0] Wick principle: wicks testing the zone are an early alert, never a scored check
         wcfg = f.get("zone_wicks", {})
         r.zone_wicks = zone_wick_tests(df2, direction, r.zone_low, r.zone_high, int(wcfg.get("lookback_2h_bars", 6)))
@@ -1982,8 +2078,16 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         if np.isfinite(e_fast[-1]) and np.isfinite(e_slow[-1]):
             # bool(): numpy bools were saved to the scan JSON as the text "True"/"False"
             r.c5 = bool(e_fast[-1] > e_slow[-1] if direction == LONG else e_fast[-1] < e_slow[-1])
-        # [OWNER cfg-0.8.0] C6 = 4H market structure holding; the trend line is kept as information only
-        r.c6, r.trendline = structure_holding(df4, piv_4, df2, direction)
+        # [OWNER cfg-0.13.0] C6 = 4H health: a pullback passes; a 4H close beyond the last Daily HL / LH fails
+        r.c6, r.trendline = structure_health(df4, bias, direction)
+        # [OWNER cfg-0.13.0] Daily POI around the last higher low / lower high, clustered within 0.5 x Daily ATR
+        if bias.bias == direction and np.isfinite(atrd[-1]):
+            r.poi_low, r.poi_high, r.poi_levels = daily_poi(inst, sw_d, len(dfd) - 1, bias.invalidation, zhw,
+                                                            float(st.get("poi_atr", 0.5)) * float(atrd[-1]))
+            if r.poi_low is not None:
+                r.at_poi = bool(r.poi_low <= P <= r.poi_high)
+                r.flags.append(f"Daily POI {_fmt(r.poi_low, 6)}-{_fmt(r.poi_high, 6)} ({r.poi_levels} level"
+                               f"{'' if r.poi_levels == 1 else 's'}){': price at POI' if r.at_poi else ''}")
         tl_ok, tl_txt = trendline_signal(df4, piv_4, df2, direction, hw)
         if tl_ok:
             r.flags.append(f"trend line: {tl_txt}")
@@ -2002,7 +2106,7 @@ def score_instrument(inst: Instrument, bars: dict[str, pd.DataFrame], cfg: dict,
         r.sentiment_points = sent_engine.points(sent.get("S"), sent.get("thin", True), direction)
         r.sentiment = dict(sent)
         r.calendar = dict(cal)
-        r.total = r.technical + r.cot_points + r.sentiment_points
+        r.total = r.technical + r.cot_points + r.sentiment_points + r.weekly_points
         # Section and grade [OWNER cfg-0.8.0]
         r.section, r.grade, r.grade_note = grade_setup(r, skind)
         if skind == "gold" and r.dxy and r.section != "not shown":
@@ -2030,13 +2134,10 @@ def rejection_reason(rows: list[Row]) -> str:
     if bias == "neutral":
         return "Daily bias neutral"
     r = next(x for x in rows if x.direction == bias)
-    if r.weekly:   # gold: Weekly + Daily, no 4H
-        if r.weekly != bias:
-            return "Weekly disagrees (gold)"
-    elif r.structure_4h != bias:
-        return "4H disagrees"
+    if not r.c6:
+        return f"4H {r.trendline}"
     if not r.c2 and not r.c3:
-        return "not at a key level zone or Fib level"
+        return r.c2_near_note or "not at a key level zone or Fib level"
     return r.grade_note or f"technical score {r.technical}"
 
 
@@ -2109,7 +2210,10 @@ def _plan_html(r: "Row") -> str:
         out += (f"<br><span class='muted'>stop 78.6/89% {stops}<br>TP1 -27% {_fmt(p.get('tp1'), 6)} · "
                 f"TP2 -61.8% {_fmt(p.get('tp2'), 6)}</span>")
     if r.weekly:
-        out += f"<br><span class='muted'>Weekly {e(r.weekly)}</span>"
+        out += f"<br><span class='muted'>Weekly {e(r.weekly)}{' (agrees, +1 rank)' if r.weekly_points else ''}</span>"
+    if r.poi_low is not None:
+        out += (f"<br><span class='muted'>Daily POI {_fmt(r.poi_low, 6)}-{_fmt(r.poi_high, 6)} · {r.poi_levels} level"
+                f"{'' if r.poi_levels == 1 else 's'}{' · <b>price at POI</b>' if r.at_poi else ''}</span>")
     if r.grade_note:
         out += f"<br>{e(r.grade_note)}"
     return out
@@ -2316,7 +2420,8 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     dev = sorted([r for r in all_rows if r.section == "developing"],
                  key=lambda r: (-r.total, -r.technical, -r.c4_tf_rank, r.symbol, r.direction))
     body += (f"<h2>Developing setups ({len(dev)})</h2><p class='muted'>Two or more of C1-C6 but not a B setup "
-             "(B needs C1 + C2 or a 50%/61.8% Fib + one of C4, C5, C6). Watch these; they are not a trade yet.</p>")
+             "(B needs C1 + C2 or a 50%/61.8% Fib + one of C4, C5, C6), or an FX close up to 10 pips outside a key level "
+             "zone (near zone). Watch these; they are not a trade yet.</p>")
     if dev:
         body += ("<div class='wrap'><table><tr><th>Instrument</th><th>Dir</th><th>Setup</th>" + _conf_th()
                  + "<th class='num'>Tech</th><th class='num'>COT</th><th class='num'>Sent</th><th class='num'>Total</th>"
@@ -2342,7 +2447,7 @@ def render_html(meta: dict, top: list[Row], all_rows: list[Row], footer: list[di
     body += "</table></div>"
     body += ("<p class='muted' style='margin-top:18px'>Rules: Position Trading Confluence System (cfg-0.8.0) on "
              "Scanner Addendum v0.1 and Trading Algorithm Specification v1.0. "
-             "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-15 pips around every major "
+             "C2 and C3 are tested at the latest completed 2H close. Key levels are zones (FX +/-10 pips around every major "
              "and mid level); wicks counts recent 2H wick rejections inside the zone, an early alert only. "
              "C4 counts a candlestick reversal pattern only when it forms inside the key level zone. TradingView and Forex Factory access are unofficial and may stop "
              "without notice. FinBERT tone on FX and commodity headlines is untested.</p>")
@@ -2361,7 +2466,7 @@ def write_outputs(out_dir: Path, meta: dict, top: list[Row], all_rows: list[Row]
         payload["broker"] = {k: v for k, v in broker.items() if k != "account"}
     paths["json"].write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     flat_keys = ["symbol", "group", "direction", "section", "rank", "c1", "c2", "c3", "c4", "c5", "c6", "technical",
-                 "setup", "grade", "grade_note", "c3_levels", "c3_golden", "stacked", "weekly", "dxy", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
+                 "setup", "grade", "grade_note", "c3_levels", "c3_golden", "stacked", "weekly", "weekly_points", "poi_low", "poi_high", "poi_levels", "at_poi", "dxy", "cot_points", "sentiment_points", "total", "ref_price", "ref_time", "zone_level", "zone_kind",
                  "zone_half_width", "zone_low", "zone_high", "zone_width_source", "zone_wicks", "daily_bias", "bias_invalidation", "structure_4h", "candle", "c4_tf", "trendline",
                  "impulse_note", "short_test", "same_underlying", "roll"]
     with open(paths["csv"], "w", newline="", encoding="utf-8") as fh:

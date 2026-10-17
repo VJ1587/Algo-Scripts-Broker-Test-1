@@ -76,10 +76,38 @@ python broker_v11_algo.py --data-dir ./quotes --route L --news news.csv --out re
 
 See the script header for the CSV format used by `--data-dir` and `--news`.
 
+## Market structure reference (`structure/`)
+
+The owner's market structure rules (swings, HH / HL / LH / LL, trend, Weekly / Daily / 4H read, Daily POI) in three matching versions: Python (`structure/python/market_structure.py`), MQL5 (`structure/mql5/MarketStructure.mqh` + chart indicator `MarketStructure.mq5`) and Pine (`structure/pine/market_structure.pine`). Rules, defaults and known differences: [`structure/README.md`](structure/README.md).
+
+## TradingView indicator (`tradingview/kl_fib_confluence_setup.pine`)
+
+A Pine Script v6 overlay for **The Complete Setup System**. Paste it into the Pine Editor, *Add to chart*, and use it on the **2H** chart (the table warns if you're on another timeframe). It draws and checks the nine checklist items:
+
+| Step | What the indicator does |
+| --- | --- |
+| 1 Key levels | Boxes at every major (500 pips / $100 gold) and mid (250 pips / $50 gold) level. Box half-width is ±10 pips for FX; ±$10 for gold ($1 = 10 pips, so ±100 pips). On FX a fib level up to 10 pips outside a box is labelled NEAR BOX (developing), but does not count as the key level confluence. |
+| 2 Range | Finds a consolidation whose top and bottom each have ≥2 separate touches (by default both must sit at key levels). Draws the range box; on a **close** beyond the box ± half-width it clones the box in the breakout direction as the target. Signals are suppressed while price is inside an unbroken range. |
+| 3–4 Structure | **Swing point** = 3 candles on each side that do not exceed it, and price then moves at least 1.5 × ATR away; same rule on every timeframe. **Trend** = the last 2 swing highs and the last 2 swing lows step the same way; closes confirm. **Weekly** is context (agreeing with the Daily adds one confluence). **Daily** sets direction; ranging = no trade. **4H** is a health check: a pullback against the Daily is the setup forming; a 4H close beyond the last Daily higher low / lower high is a warning. **Daily POI** = last higher low / lower high ± the box width, widened to include earlier Daily swings and key level boxes within 0.5 × Daily ATR (drawn in yellow with the level count). Optional HH / HL / LH / LL labels on the chart's own timeframe. All higher timeframes use their last closed bar (no repainting). |
+| 5 Impulse | Daily ranging = no Fib. When the Daily trends, the Fib goes on the most recent clean impulse in the Daily direction, found on the 2H whatever chart you are on. Clean = swing low → swing high (or high → low), at least 2.5 × ATR, 3 to 40 candles, 60%+ closing in the move direction, average body 50%+ of range, slope 50%+ clean. A move that escapes a tight range (under 4 ATR over the 20 bars before A) or blows through a major key level box is a breakout: no Fib until price retests the broken level, then the Fib runs from the retest low (high) to the breakout high (low). A setup is dropped on a close beyond 78.6 or B, when the Daily trend is lost, or 60 2H bars after the impulse with no entry. |
+| 5b Daily + 4H fibs | The same impulse rules on the Daily (drawn in purple) and the 4H. The 2H level price reached sitting inside the Daily or 4H 38.2–61.8 band counts as the "stack" extra. |
+| 6 Fib ladder | 38.2 / 50 / 61.8 buy or sell limits with small / medium / large lot weights (1:2:3) and sizes from account and risk %. SL a few pips (default 5) beyond the 78.6. A close beyond 78.6 before entry marks the setup invalid. |
+| 7 Confluence | **Required:** price reaches the 2H 38.2 / 50 / 61.8, and a reversal candle (engulfing, hammer / shooting star, morning / evening star) **closes** at the zone. **Plus at least 1 extra:** fib level in a key box or the Daily POI; 2H structure shift (close beyond the last 2H lower high / higher low of the pullback); 8/14 EMA on the right side or crossed within 5 candles; Daily or 4H fib stacking; 78.6 false break (wick beyond, close back inside); Weekly agrees. Grade B = 3, A = 4, A+ = 5 or more. Risk stays one fixed % (1:2:3 ladder); you size up by grade. |
+| 7b R:R | Each limit label shows its R:R to TP1 / TP2 (distance to target ÷ distance to stop). Once the minimum confluences line up, the checklist shows R:R from the estimated entry (weighted average of the limits filled so far at 1:2:3, or the latest close if none) and marks it good at 2R+ to TP1 (adjustable). The signal label adds R:R from the candle close. The 38.2 is the starter entry (smallest lot, so a move is not missed): while only it has filled, the verdict uses the full 38.2/50/61.8 ladder plan, and the 38.2 R:R is shown alongside. |
+| 8 Manage | TP1 at -0.27 (partials, stop to breakeven), TP2 at -0.618. Trailing stop: after each new 4H higher high (lower low) the stop moves just beyond the new 4H higher low (lower high). Alerts for partials at a key level before TP1, "market may be done" (key level or extension plus a closed reversal candle on the 2H or 4H), and a **structure exit** on a Daily close beyond the last Daily higher low / lower high. |
+
+**Strategy version for backtesting:** `tradingview/kl_fib_confluence_strategy.pine` is the same script as a Pine `strategy()`, so it runs in TradingView's Strategy Tester. Entry mode is either a market entry at the close of the reversal candle that completes the setup (default) or the 38.2 / 50 / 61.8 limit ladder (1:2:3) placed as soon as the Fib is live. Size = "Risk if all three limits fill (%)" of equity. Stop 5 pips beyond the 78.6, TP1 -0.27 (50% by default, then the stop moves to breakeven), TP2 -0.618, optional 4H trail and optional exit on a Daily close beyond the last Daily higher low / lower high. Each Fib trades once. Margin is set to 1% (1:100); set commission and slippage in the Strategy Tester properties. When the indicator changes, copy the change into the strategy too.
+
+The checklist table sits bottom left by default. Settings › Display can hide it, move it, change its text size, or drop the detail column for a narrow version.
+
+Alerts: long setup, short setup, price entered fib zone, range breakout, TP1 hit, setup invalid / stopped, trail stop, partials at key level, market may be done, structure exit (plus `alert()` messages with grade, extras, entry, SL and targets).
+
+Zones match the scanner: FX ±10 pips (cfg-0.12.0), gold ±$10 and S&P ±10 points (cfg-0.10.0 / 0.11.0); on S&P "pips" in the table are index points. Lot sizes assume the quote currency is the account currency (true for EURUSD, GBPUSD, XAUUSD with a USD account).
+
 # Daily Instrument Scanner (Addendum v0.1)
 
 Python implementation of **Daily Instrument Scanner Addendum v0.1** (October 2, 2026) on top of
-**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.9.0`.
+**Trading Algorithm Specification v1.0** (September 30, 2026). Code version 0.9.0, config `cfg-0.13.1` (market structure rules, see 5f).
 
 Twice a day it scores 34 instruments in both directions against v1.0 confluences C1 to C6, adds a
 COT overlay and a headline sentiment overlay (each capped at ±2), and writes an HTML dashboard of the
@@ -97,12 +125,12 @@ The names and definitions live in `CONFLUENCES` in `scanner.py`. The dashboard, 
 
 | Check | Name | Passes when |
 |---|---|---|
-| C1 | Trend alignment | Daily bias and 4H structure (HH/HL bullish, LH/LL bearish) point in the trade direction; if they conflict, no trade. Gold uses Weekly and Daily instead (no 4H). |
-| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±15 pips; JPY pairs every 5.00 and 2.50, ±0.15; gold and S&P every 100 and 50, ±20; oil every 5.00 and 2.50, ±1.00. |
+| C1 | Trend alignment | The Daily trend points in the trade direction: the last 2 swing highs and the last 2 swing lows both step that way (swing = 3 bars each side + a 1.5 x ATR reaction) and no Daily close has broken the last swing. Daily ranging = no trade. A Weekly trend that agrees lifts the ranking. |
+| C2 | Key level zone | Price is at or around a major or mid level: the latest completed 2H close is inside that level's zone. FX majors every 500 pips (1.3000), mids halfway (1.3250), ±10 pips; JPY pairs every 5.00 and 2.50, ±0.10; gold and S&P every 100 and 50, ±10; oil every 5.00 and 2.50, ±1.00. |
 | C3 | Fibonacci retracement | Latest 2H close is within the ATR zone width of the 50% or 61.8% (golden, primary) or 38.2% (valid, lower conviction) retracement of the most recent clean 4H impulse. Stacked: a 50% or 61.8% level inside the C2 zone. |
 | C4 | Reversal at the zone | A reversal that started in the key level zone and closed on the Daily, 4H or 2H chart: hammer, inverted hammer, shooting star, hanging man, engulfing, tweezer, morning or evening star, reversal + marubozu, or a double top/bottom or head and shoulders closed beyond the neckline. |
 | C5 | 2H EMA momentum | On the 2H chart the 8 EMA is above the 14 EMA for a long, below it for a short. |
-| C6 | Market structure | 4H structure holds at entry: the latest 4H swing low is a higher low (a lower high for a short) and no 2H close has broken it since. A close through it means structure is compromised: skip. |
+| C6 | 4H health | The 4H has not closed beyond the last Daily higher low (lower high for a short). A 4H pullback against the Daily is the setup forming and passes; a 4H close beyond that level means the Daily trend is being challenged. |
 
 ### Setup rules
 
@@ -115,13 +143,13 @@ These live in `SETUP_RULES` and `grade_setup` in `scanner.py`. A and B setups ca
 | B setup | C1 + (C2 or C3 at 50%/61.8%) + one of C4, C5, C6 (3). Smaller size; a limit order is still valid if C1 + C3 are clean. |
 | Minor pairs | FX crosses: only a strong A setup with a closed C4 reversal candle counts. Do not rely on limit orders alone; size smaller than on majors. |
 | S&P and oil | SPX500, ES, WTI and CL: only an A setup counts; a B setup is listed as developing. |
-| Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is Weekly and Daily, no 4H. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
+| Gold | B minimum is C1 + C2 + C3 (size very small); A adds a 50%/61.8% Fib stacked in the zone and a C4 close (morning star or bullish engulfing preferred). C1 is the Daily trend; a Weekly that agrees lifts the ranking. DXY falling is extra conviction for longs; check the Fed and safe-haven news. |
 | Stop and targets | Stop at the 78.6% or 89% retracement; a close beyond it means the retracement went too deep. TP1 at the -27% extension (take 50-75% off), TP2 at -61.8%; after TP1 move the stop to breakeven. |
-| Developing | Any 2 or more of C1-C6 that do not make a B setup. Watch only. |
+| Developing | Any 2 or more of C1-C6 that do not make a B setup, or an FX close up to 10 pips outside a key level zone plus one other check ("near zone", cfg-0.12.0). Watch only. |
 
 Owner decisions (October 7, 2026): majors are the 7 USD majors in the config (EURUSD, GBPUSD, USDJPY,
-USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 is Weekly + Daily without the
-4H; S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
+USDCHF, USDCAD, AUDUSD, NZDUSD) and every other pair is a minor; gold C1 was Weekly + Daily without the
+4H (Daily only since cfg-0.13.1); S&P and oil trade A setups only. C4 keeps the full owner pattern list (cfg-0.3.0, cfg-0.4.0), and
 every candle and chart pattern counts only at a key level zone; chart patterns name the level they
 formed at. The trade gate already uses the system's targets (TP1 -27 %, TP2 -61.8 %) and the 89.3 %
 stop for FX; it does not yet move the stop to breakeven after TP1.
@@ -232,7 +260,7 @@ config). Nothing in the scanner sends, changes or closes orders.
 | Completed bars only, 250 bar checks, OHLC sanity (v1.0 §2) | `completed`, `check_bars` |
 | EMA seeded with SMA, Wilder ATR14 (v1.0 §2) | `ema`, `atr` |
 | Strict 2 bar pivots, confirm at k+2, alternation (v1.0 §2) | `find_pivots`, `add_alternating` |
-| Daily bias D01, 4H agreement D02 | `daily_bias`, `structure` |
+| Daily bias D01 (cfg-0.13.0 swings), 4H health C6 | `find_swings`, `daily_bias`, `structure`, `structure_health` |
 | Impulse I01 (6 bar recency, 3 to 30 bars, 2×ATR, efficiency 0.60, break of prior swing) | `select_impulse` |
 | Zones Z01, C1 to C6 | `in_psych_zone`, `candle_signal`, `structure_holding`, `grade_setup`, `score_instrument` |
 | COT index, pair mapping, ±2 table (Add 6.2) | `cot_for_instrument`, `cot_points` |
@@ -254,10 +282,16 @@ config). Nothing in the scanner sends, changes or closes orders.
 4. **Impulse void.** An impulse is dropped once a 4H close passes its origin A (config switch).
 5. **No impulse.** If no impulse qualifies, C3 is false and zone width uses the latest 4H ATR.
 5a. **Key levels are zones (cfg-0.2.0).** Every major and mid grid level is a zone of fixed
-   half-width `grids.<grid>.zone_half_width`: FX 0.0015 (15 pips), JPY pairs 0.15, gold $20 (XAUUSD
-   and GC), S&P 20 points, oil $1.00 (gold's 20% of major spacing; $20 would overlap the $2.50 oil
-   grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
-   to the ATR width and is flagged "zone width not set". C3 tolerance still uses the ATR width.
+   half-width `grids.<grid>.zone_half_width`: FX 0.0010 (10 pips; was 15 before cfg-0.12.0), JPY pairs 0.10, gold $10 (XAUUSD
+   and GC; $1 = 10 pips, so +/-100 pips; was $20 before cfg-0.10.0), S&P 10 points (was 20 before cfg-0.11.0), oil $1.00
+   (placeholder; a $10-20 box would overlap the $2.50 oil grid). C2 and the fib ladder test against this zone. A grid with `zone_half_width: null` falls back
+   to the ATR width and is flagged "zone width not set". Chart-pattern (C4) tolerances scale from
+   `pattern_zone_half_width` when set: FX keeps 15 pips (JPY 0.15), gold and S&P keep 20, so narrowing
+   the zones (cfg-0.10.0 to 0.12.0) did not change pattern detection.
+5c. **Near zone (cfg-0.12.0, FX only).** A 2H close outside the zone but within `near_zone_width`
+   (10 pips) of its edge does not score C2. With at least one other check the setup is listed as
+   developing, with a note such as "Near key level: 4.0 pips outside the 1.3 major zone; becomes B on a
+   2H close inside the zone". It is never graded A or B. C3 tolerance still uses the ATR width.
 5b. **Wick principle (flag only).** The scanner counts completed 2H candles in the last 6 whose wick
    reaches into the zone and is rejected in the trade direction (wick at least the body and the
    opposite wick, close not through the zone). Two or more adds a "zone tested: N wicks" flag. It never
@@ -280,6 +314,14 @@ config). Nothing in the scanner sends, changes or closes orders.
 5e. **Grades (cfg-0.8.0).** A, B and developing as in Setup rules above. cfg-0.4.0 required C4 for every
    qualified setup; an A setup no longer does. On equal totals a Daily confirmation ranks above 4H, and
    4H above 2H.
+5f. **Market structure (cfg-0.13.0).** Swings used for trend, C1, C6, the Weekly read and the Daily POI need
+   3 bars each side and a 1.5 x ATR reaction before they count (`features.structure`); impulses, chart
+   patterns and the trend line keep `pivot_width: 2`, so pattern detection is unchanged. C1 is the Daily
+   trend alone (gold too since cfg-0.13.1). C6 is a 4H health check: a 4H pullback passes; a 4H close
+   beyond the last Daily higher low / lower high fails it. A Weekly trend that agrees adds 1 to the ranking
+   total. The Daily POI (last HL / LH +/- the zone, widened to earlier Daily swings and key boxes within
+   0.5 x Daily ATR) is shown under the plan and in the flags. Stops are unchanged: 78.6 / 89 on the
+   dashboard, 89.3 in the trade gate.
 6. **COT publication time.** Assumed position date + 3 days at 15:30 Eastern; holiday delays not
    modelled. Live, the CFTC API only returns published data, so this matters mainly for CSV
    backtests. Cross pair "weekly change" is the change in the rescaled cross index.
